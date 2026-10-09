@@ -20,7 +20,7 @@ const RANKS = {
 const TYPES = {
   '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 2, hit: 85, best: 1,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
-  '槍兵': { hp: 28, atk: 12, def: 5, spd: 5, rng: 2, act: 1, hit: 80, best: 2,
+  '槍兵': { hp: 28, atk: 16, def: 5, spd: 5, rng: 2, act: 1, hit: 80, best: 2,
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 1.0, pow: 1.0 } } },
   '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2, hit: 80, best: 2,
             falloff: { 1: { hit: 0.6,  pow: 1.0 },    // 近すぎて狙いにくいが威力はある
