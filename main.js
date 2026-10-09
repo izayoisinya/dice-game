@@ -43,14 +43,30 @@ const MOVE_DIV = 4;           // 移動力 = 階級補正後SPD ÷ 4（切り上
 const ACT_PER_ATTACK = 5;     // 行動ゲージがこの値たまるごとに1回攻撃できる
 const ACT_GAUGE_MAX = 10;     // ゲージの上限（ため込みすぎ防止）
 
+// 固有能力: ステータスの予算からコストを払って持つ（階級が上がるとコストも同じ比率で上がる）
+const TRAITS = {
+  zoc:    { name: '足止め', cost: 4 },  // 隣接したマスに入った敵はそこで移動が止まる
+  charge: { name: '突撃',   cost: 2 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
+};
+const CHARGE_MIN = 2;         // 突撃になる最低直進マス数
+const CHARGE_BONUS = 0.3;     // 直進1マスあたりの威力上昇（初撃のみ）
+
+// 兵種の相性（剣・槍・弓の三すくみ）。攻撃側 → 防御側 のダメージ倍率。書いていない組み合わせは ×1.0
+//   槍 → 剣: リーチで制す / 剣 → 弓: 詰め寄って斬る / 弓 → 槍: 鈍重な槍兵を射る
+const MATCHUP = {
+  '槍兵': { '剣兵': 1.35, '弓兵': 0.85 },
+  '剣兵': { '弓兵': 1.3,  '槍兵': 0.75 },
+  '弓兵': { '槍兵': 1.2,  '剣兵': 0.75 },
+};
+
 // 兵種: 雑兵（コスト50）のステータスプリセット
-//   HP / ATK / DEF / SPD / ACT と RNG の合計（RNGは rngCost で換算）= 50
+//   HP / ATK / DEF / SPD / ACT + RNG（rngCost で換算）+ 固有能力のコスト = 50
 // HIT = 基本命中率(%)
 // falloff[距離] = { hit: 命中倍率, pow: 威力倍率 }。best = 最も性能を発揮する距離
 // rear = 後衛（前衛より前に出ない）
 const TYPES = {
   // 近距離特化、足と手数が速い
-  '剣兵': { stats: { hp: 10, atk: 11, def: 9, spd: 10, act: 9 }, rng: 1, hit: 85, best: 1,
+  '剣兵': { stats: { hp: 12, atk: 10, def: 9, spd: 10, act: 8 }, rng: 1, hit: 85, best: 1,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 打たれ強く射程2、攻撃速度はやや遅い
   '槍兵': { stats: { hp: 12, atk: 10, def: 10, spd: 8, act: 6 }, rng: 2, hit: 80, best: 2,
@@ -64,7 +80,18 @@ const TYPES = {
                        3: { hit: 1.0, pow: 1.0 },    // 最大性能（前衛越しの基本距離）
                        4: { hit: 0.9, pow: 0.9 },    // 準最大
                        5: { hit: 0.7, pow: 0.7 } } },// 最低
+  // 被ダメも与ダメも低い壁役。足止め（ZOC）で敵の進軍を止める
+  '盾兵': { stats: { hp: 14, atk: 7, def: 14, spd: 5, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['zoc'],
+            falloff: { 1: { hit: 1.0, pow: 1.0 } } },
+  // 移動速度重視。一直線に走り込んでの突撃が武器
+  '騎兵': { stats: { hp: 11, atk: 11, def: 8, spd: 12, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
+            falloff: { 1: { hit: 1.0, pow: 1.0 } } },
 };
+
+/** 兵種の固有能力のコスト合計 */
+function traitCost(t) {
+  return (t.traits || []).reduce((s, k) => s + TRAITS[k].cost, 0);
+}
 
 /**
  * 雑兵プリセットを階級のコストまで比例拡大する。射程の値はそのまま（コストは比率分払う）。
@@ -72,7 +99,7 @@ const TYPES = {
  */
 function scaleStats(type, cost) {
   const t = TYPES[type];
-  const budget = cost - rngCost(t.rng) * cost / BASE_COST;
+  const budget = cost - (rngCost(t.rng) + traitCost(t)) * cost / BASE_COST;
   const baseSum = STAT_KEYS.reduce((s, k) => s + t.stats[k], 0);
   const out = {};
   for (const k of STAT_KEYS) out[k] = Math.round(t.stats[k] * budget / baseSum);
@@ -84,7 +111,7 @@ function scaleStats(type, cost) {
 
 // 起動時にプリセットの合計がコストと一致しているか確認する
 for (const [name, t] of Object.entries(TYPES)) {
-  const sum = STAT_KEYS.reduce((s, k) => s + t.stats[k], 0) + rngCost(t.rng);
+  const sum = STAT_KEYS.reduce((s, k) => s + t.stats[k], 0) + rngCost(t.rng) + traitCost(t);
   if (sum !== BASE_COST) console.warn(`${name} のステータス合計が ${sum}（${BASE_COST} であるべき）`);
 }
 
@@ -143,6 +170,7 @@ class Unit {
     this.best = t.best;
     this.falloff = t.falloff;
     this.rear = !!t.rear;
+    this.traits = t.traits || [];
     this.x = x;
     this.y = y;
   }
@@ -272,10 +300,10 @@ function nearestEnemy(unit) {
 /**
  * 攻撃判定:
  *   命中率 = HIT × 距離の命中倍率。1d100 が命中率以下なら命中
- *   ダメージ = max(1, (ATK − DEF × 0.5 + 1d6) × 距離の威力倍率)  ※四捨五入
+ *   ダメージ = max(1, (ATK − DEF × 0.5 + 1d6) × 距離の威力倍率 × 相性 × 突撃)  ※四捨五入
  *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
-function calcAttack(attacker, defender) {
+function calcAttack(attacker, defender, bonus = 1) {
   const f = attacker.falloff[distance(attacker, defender)];
   const hitRate = Math.round(attacker.hit * f.hit);
   const hitRoll = d(100);
@@ -283,7 +311,8 @@ function calcAttack(attacker, defender) {
   const die = d(6);
   const crit = die === 6;
   const atk = crit ? Math.floor(attacker.atk * 1.5) : attacker.atk;
-  const dmg = Math.max(1, Math.round((atk - defender.def * 0.5 + die) * f.pow));
+  const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus;
+  const dmg = Math.max(1, Math.round((atk - defender.def * 0.5 + die) * mult));
   return { hit: true, hitRate, hitRoll, dmg, die, crit };
 }
 
@@ -313,10 +342,15 @@ function withinFrontLine(unit, p) {
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // 上下左右の4方向
 
+/** 地点 (x,y) が、unit から見て敵の足止め（ZOC）範囲（上下左右に隣接）か */
+function inEnemyZoc(unit, x, y) {
+  return enemiesOf(unit).some(e => e.traits.includes('zoc') && Math.abs(e.x - x) + Math.abs(e.y - y) === 1);
+}
+
 /**
  * 最大 steps マス以内で到達できるマスのうち、score が最小のマスへ移動する。
  * 4方向に1マスずつ進む（幅優先探索）。味方のいるマスは通過できるが止まれない。
- * 敵のいるマスは通過も不可。マップの外には出られない。
+ * 敵のいるマスは通過も不可。敵の足止め（ZOC）範囲に入ったらそこで止まる。マップの外には出られない。
  * 今の位置より良いマスがなければ動かない。動いたら true を返す。
  */
 function moveUnit(unit, steps, score) {
@@ -334,7 +368,7 @@ function moveUnit(unit, steps, score) {
         const other = unitAt(nx, ny);
         if (other && other.side !== unit.side) continue;   // 敵は通り抜け不可
         seen.add(key);
-        next.push([nx, ny]);
+        if (!inEnemyZoc(unit, nx, ny)) next.push([nx, ny]);   // ZOC 内からは先へ進めない
         if (other) continue;                               // 味方のマスには止まれない
         const sc = score({ x: nx, y: ny });
         if (sc < bestScore) { bestScore = sc; best = [nx, ny]; }
@@ -345,6 +379,43 @@ function moveUnit(unit, steps, score) {
   if (best[0] === unit.x && best[1] === unit.y) return false;
   [unit.x, unit.y] = best;
   return true;
+}
+
+/**
+ * 突撃できる経路を探す。上下左右いずれかに一直線に CHARGE_MIN マス以上走り、
+ * 走った先の隣（同じ直線上）に敵がいれば突撃になる。最も長く走れる経路を返す。
+ * 味方のマスは通過できるが止まれない。敵の ZOC 範囲に入ったらそこで止まる。
+ */
+function findCharge(unit) {
+  const { w, h } = state.map;
+  let best = null;
+  for (const [dx, dy] of DIRS) {
+    for (let k = 1; k <= unit.move + 1; k++) {
+      const x = unit.x + dx * k, y = unit.y + dy * k;
+      if (x < 0 || y < 0 || x >= w || y >= h) break;
+      const other = unitAt(x, y);
+      if (other && other.side !== unit.side) {
+        const run = k - 1;   // 敵の手前まで走ったマス数
+        const sx = x - dx, sy = y - dy;
+        const stopFree = run === 0 || !unitAt(sx, sy);
+        if (run >= CHARGE_MIN && stopFree && (!best || run > best.run)) {
+          best = { run, x: sx, y: sy, target: other };
+        }
+        break;
+      }
+      if (k > unit.move) break;
+      if (inEnemyZoc(unit, x, y)) {
+        if (other) break;   // ZOC 内の味方マスには止まれず、先にも進めない
+        // ZOC で止まる。止まったマスの隣（直線上）に敵がいれば突撃は成立する
+        const nx = x + dx, ny = y + dy, ahead = unitAt(nx, ny);
+        if (k >= CHARGE_MIN && ahead && ahead.side !== unit.side && (!best || k > best.run)) {
+          best = { run: k, x, y, target: ahead };
+        }
+        break;
+      }
+    }
+  }
+  return best;
 }
 
 /** 1ユニット分の行動（AI） */
@@ -359,7 +430,18 @@ function actUnit(unit) {
     log(`${unit.name} は本陣で戦況を見守っている。`, unit.side);
     return;
   }
-  if (!holding && distance(unit, target) > unit.best) {
+  // 突撃（騎兵など）: 一直線に走り込める敵がいれば優先する
+  let charge = null;
+  if (!holding && unit.traits.includes('charge')) {
+    charge = findCharge(unit);
+    if (charge) {
+      const before = unit.posText;
+      [unit.x, unit.y] = [charge.x, charge.y];
+      log(`🐎 ${unit.name} の突撃！ ${before} → ${unit.posText}（${charge.run}マス直進）`, unit.side);
+      target = charge.target;
+    }
+  }
+  if (!charge && !holding && distance(unit, target) > unit.best) {
     const before = unit.posText;
     // 最も近い敵との距離が最適距離にできるだけ近いマスへ（近すぎるマスは避ける）
     // 後衛は前衛より前のマスには止まらない
@@ -390,18 +472,23 @@ function actUnit(unit) {
 
   // 射程内 → 行動ゲージが ACT_PER_ATTACK たまっている分だけ攻撃
   unit.gauge = Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  let first = true;
   while (unit.gauge >= ACT_PER_ATTACK) {
-    target = nearestEnemy(unit);
+    // 突撃した相手が生きていれば、まずその相手を攻撃する
+    target = charge && charge.target.alive ? charge.target : nearestEnemy(unit);
     if (!target || distance(unit, target) > unit.rng) break;
     unit.gauge -= ACT_PER_ATTACK;
     const dist = distance(unit, target);
-    const r = calcAttack(unit, target);
+    // 突撃ボーナスは初撃のみ
+    const bonus = charge && first ? 1 + CHARGE_BONUS * charge.run : 1;
+    first = false;
+    const r = calcAttack(unit, target, bonus);
     if (!r.hit) {
       log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
       continue;
     }
     target.hp = Math.max(0, target.hp - r.dmg);
-    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
+    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
     if (!target.alive) {
       log(`☠ ${target.name} は倒れた！`, 'death');
       if (checkVictory()) return;
@@ -529,7 +616,7 @@ function renderField(acting) {
       field.appendChild(cell);
     }
   }
-  const legend = '★総大将 ◆部隊長 / 剣=剣兵 槍=槍兵 弓=弓兵 / 青=プレイヤー 赤=CPU';
+  const legend = '★総大将 ◆部隊長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲${wd} / 高さ ${MAP_MIN_H}+🎲${hd}）` +
     (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
