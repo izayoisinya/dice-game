@@ -17,7 +17,7 @@ const RANKS = {
 // 兵種: 基礎ステータス
 // RNG = 攻撃射程, ACT = 攻撃速度（1回の行動で攻撃する回数）
 const TYPES = {
-  '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 3 },
+  '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 2 },
   '槍兵': { hp: 28, atk: 12, def: 5, spd: 5, rng: 2, act: 1 },
   '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2 },
 };
@@ -71,6 +71,8 @@ class Unit {
   get isCommander() { return this.rank === '総大将'; }
   /** 1回の行動で移動できるマス数（SPDが高いほど多い） */
   get move() { return Math.max(1, Math.ceil(this.spd / 3)); }
+  /** 後退できるマス数（移動力の半分・端数切り上げ） */
+  get retreat() { return Math.ceil(this.move / 2); }
 }
 
 // ============================================================
@@ -171,6 +173,23 @@ function buildQueue() {
     .map(x => x.u);
 }
 
+/**
+ * dir 方向へ最大 steps マス、1マスずつ移動する。
+ * 味方のいるマスは追い越せるが、敵のいるマスには入れない（通り抜け不可）。
+ * 戦場の端でも止まる。実際に動いたマス数を返す。
+ */
+function moveUnit(unit, dir, steps) {
+  let moved = 0;
+  while (moved < steps) {
+    const next = unit.pos + dir;
+    if (next < 0 || next >= FIELD_SIZE) break;
+    if (enemiesOf(unit).some(e => e.pos === next)) break;
+    unit.pos = next;
+    moved++;
+  }
+  return moved;
+}
+
 /** 1ユニット分の行動（AI） */
 function actUnit(unit) {
   let target = nearestEnemy(unit);
@@ -187,21 +206,21 @@ function actUnit(unit) {
     const before = unit.pos;
     // 射程に入るまで、最大 move マス進む
     const need = distance(unit, target) - unit.rng;
-    const step = Math.min(unit.move, need);
-    unit.pos += dir * step;
-    log(`${unit.name} は前進した。(位置 ${before} → ${unit.pos})`, unit.side);
+    if (moveUnit(unit, dir, Math.min(unit.move, need)) > 0) {
+      log(`${unit.name} は前進した。(位置 ${before} → ${unit.pos})`, unit.side);
+    } else {
+      log(`${unit.name} は敵に阻まれて前進できない。`, unit.side);
+    }
     // 前進後に射程内に入っていなければ行動終了
     target = nearestEnemy(unit);
     if (!target || distance(unit, target) > unit.rng) return;
   }
 
-  // 射程で勝っていて敵が近すぎる → 自分の最大射程まで後退（引き撃ち）
+  // 射程で勝っていて敵が近すぎる → 最大射程に向けて後退（引き撃ち、移動力の半分まで）
   if (unit.rng > target.rng && distance(unit, target) < unit.rng) {
     const dir = Math.sign(unit.pos - target.pos) || (unit.side === 'player' ? -1 : 1);
     const before = unit.pos;
-    const step = Math.min(unit.move, unit.rng - distance(unit, target));
-    unit.pos = Math.max(0, Math.min(FIELD_SIZE - 1, unit.pos + dir * step));
-    if (unit.pos !== before) {
+    if (moveUnit(unit, dir, Math.min(unit.retreat, unit.rng - distance(unit, target))) > 0) {
       log(`${unit.name} は間合いを取った。(位置 ${before} → ${unit.pos})`, unit.side);
     }
     target = nearestEnemy(unit);
