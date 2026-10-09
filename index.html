@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ダイス戦記 プロトタイプ</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>ダイス戦記 <small>プロトタイプ</small></h1>
+    <div class="controls">
+      <button id="btn-form">🎲 編成</button>
+      <button id="btn-start" disabled>⚔ 戦闘開始</button>
+      <button id="btn-reset">↺ リセット</button>
+      <label>速度
+        <select id="speed">
+          <option value="600">遅い</option>
+          <option value="250" selected>普通</option>
+          <option value="60">速い</option>
+          <option value="0">一瞬</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <div id="result" class="result hidden"></div>
+
+  <section class="armies">
+    <div class="army player">
+      <h2>プレイヤー軍 <span id="player-dice" class="dice"></span></h2>
+      <div id="player-summary" class="summary"></div>
+      <table>
+        <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>位置</th></tr></thead>
+        <tbody id="player-units"></tbody>
+      </table>
+    </div>
+    <div class="army cpu">
+      <h2>CPU軍 <span id="cpu-dice" class="dice"></span></h2>
+      <div id="cpu-summary" class="summary"></div>
+      <table>
+        <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>位置</th></tr></thead>
+        <tbody id="cpu-units"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>戦場 <small id="turn-label"></small></h2>
+    <div id="field" class="field"></div>
+  </section>
+
+  <section>
+    <h2>バトルログ</h2>
+    <div id="log" class="log"></div>
+  </section>
+
+  <script src="main.js"></script>
+</body>
+</html>
