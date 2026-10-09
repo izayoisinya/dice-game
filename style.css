@@ -94,3 +94,4 @@ tr.rank-部隊長 td:first-child { color: #9fe39f; }
   color: #ffd76f;
 }
 .hidden { display: none; }
+.sub { color: #999; margin-left: 2px; font-size: 0.75rem; }

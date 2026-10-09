@@ -15,31 +15,79 @@ const DEPLOY_ROWS = 3;        // 自陣として布陣できる列数（後方�
 // マップタイプ（今は平野のみ。市街戦・山間部などは地形ギミックと合わせて今後追加）
 const MAP_TYPES = ['平野'];
 
-// 階級: コストとステータス倍率
-const RANKS = {
-  '雑兵':   { cost: 50,  hp: 1.0, atk: 1.0, def: 1.0, spd: 0 },
-  '部隊長': { cost: 100, hp: 1.6, atk: 1.4, def: 1.4, spd: 1 },
-  '総大将': { cost: 200, hp: 3.0, atk: 1.8, def: 1.8, spd: 2 },
-};
+// ------------------------------------------------------------
+// コスト制ステータス
+//   各ユニットは「ステータス値の合計 = 階級のコスト」になるよう作る。
+//   射程は強力なので、RNG だけは 1 上げるごとに 3 ポイント払う（rngCost）。
+//   雑兵のプリセット（合計50）を基準に、上の階級はコスト比で拡大する（部隊長 ×2、総大将 ×4）。
+//   射程の値は階級で変わらないが、払うコストも同じ比率で上がるので兵種間の比率は保たれる。
+// ------------------------------------------------------------
 
-// 兵種: 基礎ステータス
-// RNG = 攻撃射程, ACT = 攻撃速度（1回の行動で攻撃する回数）, HIT = 基本命中率(%)
+// 階級: コスト = ステータス合計の予算
+const RANKS = {
+  '雑兵':   { cost: 50 },
+  '部隊長': { cost: 100 },
+  '総大将': { cost: 200 },
+};
+const BASE_COST = RANKS['雑兵'].cost;
+const STAT_KEYS = ['hp', 'atk', 'def', 'spd', 'act'];   // 射程以外の比例拡大するステータス
+
+/** 射程に払うコスト（RNG1=1, 2=4, 3=7, 4=10, 5=13） */
+function rngCost(rng) {
+  return rng * 3 - 2;
+}
+
+// ステータス値 → ゲーム内の値への換算
+const HP_SCALE = 3;           // 実HP = HP値 × 3
+const MOVE_DIV = 4;           // 移動力 = 階級補正後SPD ÷ 4（切り上げ）
+const ACT_PER_ATTACK = 5;     // 行動ゲージがこの値たまるごとに1回攻撃できる
+const ACT_GAUGE_MAX = 10;     // ゲージの上限（ため込みすぎ防止）
+
+// 兵種: 雑兵（コスト50）のステータスプリセット
+//   HP / ATK / DEF / SPD / ACT と RNG の合計（RNGは rngCost で換算）= 50
+// HIT = 基本命中率(%)
 // falloff[距離] = { hit: 命中倍率, pow: 威力倍率 }。best = 最も性能を発揮する距離
 // rear = 後衛（前衛より前に出ない）
 const TYPES = {
-  '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 2, hit: 85, best: 1,
+  // 近距離特化、足と手数が速い
+  '剣兵': { stats: { hp: 10, atk: 11, def: 9, spd: 10, act: 9 }, rng: 1, hit: 85, best: 1,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
-  '槍兵': { hp: 28, atk: 16, def: 7, spd: 5, rng: 2, act: 1, hit: 80, best: 2,
+  // 打たれ強く射程2、攻撃速度はやや遅い
+  '槍兵': { stats: { hp: 12, atk: 10, def: 10, spd: 8, act: 6 }, rng: 2, hit: 80, best: 2,
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 0.85, pow: 1.0 } } },
+  // 遠距離攻撃の代わりに脆い。
   // 平面（マンハッタン距離）向け: 斜め方向は距離が長く数えられ、前衛越しに撃つと距離3〜4になるため
-  // 最適帯を2〜3に広げ、射程を5に延長している
-  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 5, act: 2, hit: 80, best: 3, rear: true,
+  // 最適帯を2〜3に広げ、射程を5にしている
+  '弓兵': { stats: { hp: 7, atk: 11, def: 4, spd: 8, act: 7 }, rng: 5, hit: 80, best: 3, rear: true,
             falloff: { 1: { hit: 0.6, pow: 1.0 },    // 近すぎて狙いにくいが威力はある
                        2: { hit: 1.0, pow: 1.0 },    // 最大性能
                        3: { hit: 1.0, pow: 1.0 },    // 最大性能（前衛越しの基本距離）
                        4: { hit: 0.9, pow: 0.9 },    // 準最大
                        5: { hit: 0.7, pow: 0.7 } } },// 最低
 };
+
+/**
+ * 雑兵プリセットを階級のコストまで比例拡大する。射程の値はそのまま（コストは比率分払う）。
+ * 端数で合計がずれた分は、いちばん大きいステータスで調整する。
+ */
+function scaleStats(type, cost) {
+  const t = TYPES[type];
+  const budget = cost - rngCost(t.rng) * cost / BASE_COST;
+  const baseSum = STAT_KEYS.reduce((s, k) => s + t.stats[k], 0);
+  const out = {};
+  for (const k of STAT_KEYS) out[k] = Math.round(t.stats[k] * budget / baseSum);
+  const diff = budget - STAT_KEYS.reduce((s, k) => s + out[k], 0);
+  const top = STAT_KEYS.reduce((a, k) => (out[k] > out[a] ? k : a), STAT_KEYS[0]);
+  out[top] += diff;
+  return out;
+}
+
+// 起動時にプリセットの合計がコストと一致しているか確認する
+for (const [name, t] of Object.entries(TYPES)) {
+  const sum = STAT_KEYS.reduce((s, k) => s + t.stats[k], 0) + rngCost(t.rng);
+  if (sum !== BASE_COST) console.warn(`${name} のステータス合計が ${sum}（${BASE_COST} であるべき）`);
+}
+
 const HIT_SPREAD = 5;   // 命中率の個体差 ±5%
 const TYPE_NAMES = Object.keys(TYPES);
 
@@ -71,19 +119,26 @@ class Unit {
   constructor(side, rank, type, name, x, y) {
     const r = RANKS[rank];
     const t = TYPES[type];
+    const st = scaleStats(type, r.cost);
+    // テンポ系（移動・攻撃頻度）は階級で伸びすぎないよう、雑兵基準に割り戻して使う
+    const rankFactor = r.cost / BASE_COST;
     this.id = ++unitSeq;
     this.side = side;           // 'player' | 'cpu'
     this.name = name;
     this.rank = rank;
     this.type = type;
     this.cost = r.cost;
-    this.maxHp = Math.round(t.hp * r.hp);
+    this.stats = st;                       // コスト制のステータス値（合計 = cost）
+    this.maxHp = st.hp * HP_SCALE;
     this.hp = this.maxHp;
-    this.atk = Math.round(t.atk * r.atk);
-    this.def = Math.round(t.def * r.def);
-    this.spd = t.spd + r.spd + d(3) - 1;   // 個体差 +0〜2
+    this.atk = st.atk;
+    this.def = st.def;
+    this.spd = st.spd + d(3) - 1;          // 行動順。個体差 +0〜2
     this.rng = t.rng;
-    this.act = t.act;
+    this.act = st.act;
+    this.move = Math.max(1, Math.ceil(st.spd / rankFactor / MOVE_DIV));
+    this.actRate = st.act / rankFactor;    // 1行動ごとに行動ゲージにたまる量
+    this.gauge = d(ACT_PER_ATTACK) - 1;    // 初期ゲージ（全員が同じタイミングで動かないようずらす）
     this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
     this.best = t.best;
     this.falloff = t.falloff;
@@ -95,8 +150,6 @@ class Unit {
   get alive() { return this.hp > 0; }
   get isCommander() { return this.rank === '総大将'; }
   get posText() { return `(${this.x},${this.y})`; }
-  /** 1回の行動で移動できるマス数（SPDが高いほど多い） */
-  get move() { return Math.max(1, Math.ceil(this.spd / 3)); }
   /** 後退できるマス数（移動力の半分・端数切り上げ） */
   get retreat() { return Math.ceil(this.move / 2); }
 }
@@ -213,7 +266,7 @@ function nearestEnemy(unit) {
 /**
  * 攻撃判定:
  *   命中率 = HIT × 距離の命中倍率。1d100 が命中率以下なら命中
- *   ダメージ = max(1, (ATK + 1d6 − DEF) × 距離の威力倍率)  ※四捨五入
+ *   ダメージ = max(1, (ATK − DEF × 0.5 + 1d6) × 距離の威力倍率)  ※四捨五入
  *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
 function calcAttack(attacker, defender) {
@@ -224,7 +277,7 @@ function calcAttack(attacker, defender) {
   const die = d(6);
   const crit = die === 6;
   const atk = crit ? Math.floor(attacker.atk * 1.5) : attacker.atk;
-  const dmg = Math.max(1, Math.round((atk + die - defender.def) * f.pow));
+  const dmg = Math.max(1, Math.round((atk - defender.def * 0.5 + die) * f.pow));
   return { hit: true, hitRate, hitRoll, dmg, die, crit };
 }
 
@@ -329,10 +382,12 @@ function actUnit(unit) {
     target = nearestEnemy(unit);
   }
 
-  // 射程内 → ACT 回攻撃
-  for (let i = 0; i < unit.act; i++) {
+  // 射程内 → 行動ゲージが ACT_PER_ATTACK たまっている分だけ攻撃
+  unit.gauge = Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  while (unit.gauge >= ACT_PER_ATTACK) {
     target = nearestEnemy(unit);
     if (!target || distance(unit, target) > unit.rng) break;
+    unit.gauge -= ACT_PER_ATTACK;
     const dist = distance(unit, target);
     const r = calcAttack(unit, target);
     if (!r.hit) {
@@ -439,7 +494,7 @@ function renderArmy(army, side, acting) {
     tr.innerHTML = `
       <td>${u.name}</td><td>${u.rank}</td><td>${u.type}</td>
       <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
-      <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}</td><td>${u.hit}%</td><td>${u.posText}</td>`;
+      <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}<small class="sub">(${(u.actRate / ACT_PER_ATTACK).toFixed(1)}回)</small></td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
   }
   const alive = army.units.filter(u => u.alive);
