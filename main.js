@@ -25,12 +25,13 @@ const RANKS = {
 // 兵種: 基礎ステータス
 // RNG = 攻撃射程, ACT = 攻撃速度（1回の行動で攻撃する回数）, HIT = 基本命中率(%)
 // falloff[距離] = { hit: 命中倍率, pow: 威力倍率 }。best = 最も性能を発揮する距離
+// rear = 後衛（前衛より前に出ない）
 const TYPES = {
   '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 2, hit: 85, best: 1,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   '槍兵': { hp: 28, atk: 16, def: 7, spd: 5, rng: 2, act: 1, hit: 80, best: 2,
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 1.0, pow: 1.0 } } },
-  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2, hit: 80, best: 2,
+  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2, hit: 80, best: 2, rear: true,
             falloff: { 1: { hit: 0.6,  pow: 1.0 },    // 近すぎて狙いにくいが威力はある
                        2: { hit: 1.0,  pow: 1.0 },    // 最も性能を発揮
                        3: { hit: 0.85, pow: 0.85 },   // 命中・威力とも準最大
@@ -83,6 +84,7 @@ class Unit {
     this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
     this.best = t.best;
     this.falloff = t.falloff;
+    this.rear = !!t.rear;
     this.x = x;
     this.y = y;
   }
@@ -232,6 +234,21 @@ function buildQueue() {
     .map(x => x.u);
 }
 
+/**
+ * 後衛が地点 p に立ってよいか。
+ * 味方の前衛（総大将以外の後衛でないユニット）のうち最も前にいる者より前には出ない。
+ * 前衛が残っていなければ制限なし。
+ */
+function withinFrontLine(unit, p) {
+  if (!unit.rear) return true;
+  const front = alliesOf(unit).filter(a => !a.rear && !a.isCommander);
+  if (front.length === 0) return true;
+  // プレイヤーは y が小さいほど前、CPU は y が大きいほど前
+  return unit.side === 'player'
+    ? p.y >= Math.min(...front.map(a => a.y))
+    : p.y <= Math.max(...front.map(a => a.y));
+}
+
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // 上下左右の4方向
 
 /**
@@ -283,14 +300,16 @@ function actUnit(unit) {
   if (!holding && distance(unit, target) > unit.best) {
     const before = unit.posText;
     // 最も近い敵との距離が最適距離にできるだけ近いマスへ（近すぎるマスは避ける）
+    // 後衛は前衛より前のマスには止まらない
     const moved = moveUnit(unit, unit.move, p => {
+      if (!withinFrontLine(unit, p)) return Infinity;
       const m = nearestEnemyDist(unit, p);
       return Math.abs(m - unit.best) * 10 + (m < unit.best ? 5 : 0) + distance(p, target) * 0.01;
     });
     if (moved) {
       log(`${unit.name} は前進した。${before} → ${unit.posText}`, unit.side);
     } else {
-      log(`${unit.name} は進路を阻まれて前進できない。`, unit.side);
+      log(unit.rear ? `${unit.name} は前衛の後ろで待機している。` : `${unit.name} は進路を阻まれて前進できない。`, unit.side);
     }
     // 前進後に射程内に入っていなければ行動終了
     target = nearestEnemy(unit);
@@ -300,7 +319,8 @@ function actUnit(unit) {
   // 射程で勝っていて敵が最適距離より近い → 最適距離に向けて後退（引き撃ち、移動力の半分まで）
   if (unit.rng > target.rng && distance(unit, target) < unit.best) {
     const before = unit.posText;
-    if (moveUnit(unit, unit.retreat, p => Math.abs(nearestEnemyDist(unit, p) - unit.best))) {
+    if (moveUnit(unit, unit.retreat, p =>
+          withinFrontLine(unit, p) ? Math.abs(nearestEnemyDist(unit, p) - unit.best) : Infinity)) {
       log(`${unit.name} は間合いを取った。${before} → ${unit.posText}`, unit.side);
     }
     target = nearestEnemy(unit);
