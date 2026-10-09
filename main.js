@@ -17,9 +17,9 @@ const RANKS = {
 // 兵種: 基礎ステータス
 // RNG = 攻撃射程, ACT = 攻撃速度（1回の行動で攻撃する回数）
 const TYPES = {
-  '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 2 },
+  '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 3 },
   '槍兵': { hp: 28, atk: 12, def: 5, spd: 5, rng: 2, act: 1 },
-  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 1 },
+  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2 },
 };
 const TYPE_NAMES = Object.keys(TYPES);
 
@@ -193,6 +193,18 @@ function actUnit(unit) {
     // 前進後に射程内に入っていなければ行動終了
     target = nearestEnemy(unit);
     if (!target || distance(unit, target) > unit.rng) return;
+  }
+
+  // 射程で勝っていて敵が近すぎる → 自分の最大射程まで後退（引き撃ち）
+  if (unit.rng > target.rng && distance(unit, target) < unit.rng) {
+    const dir = Math.sign(unit.pos - target.pos) || (unit.side === 'player' ? -1 : 1);
+    const before = unit.pos;
+    const step = Math.min(unit.move, unit.rng - distance(unit, target));
+    unit.pos = Math.max(0, Math.min(FIELD_SIZE - 1, unit.pos + dir * step));
+    if (unit.pos !== before) {
+      log(`${unit.name} は間合いを取った。(位置 ${before} → ${unit.pos})`, unit.side);
+    }
+    target = nearestEnemy(unit);
   }
 
   // 射程内 → ACT 回攻撃
