@@ -44,16 +44,28 @@ tr.rank-部隊長 td:first-child { color: #9fe39f; }
 
 .field {
   display: grid;
-  grid-template-columns: repeat(21, 1fr);
   gap: 2px;
   background: #262930;
   padding: 6px;
   border-radius: 8px;
+  max-width: 640px;
 }
-.cell { min-height: 54px; background: #30343c; border-radius: 4px; font-size: 0.7rem; text-align: center; padding: 2px 0; }
-.cell .idx { color: #777; }
-.cell .p { color: #6fb3ff; }
-.cell .c { color: #ff7a6f; }
+.cell {
+  position: relative;
+  aspect-ratio: 1;
+  background: #3a4a32;   /* 平野 */
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(0.55rem, 1.6vw, 0.85rem);
+  font-weight: bold;
+  overflow: hidden;
+}
+.cell.p { background: #2d4f7c; color: #cfe5ff; }
+.cell.c { background: #7c2d2d; color: #ffd9d4; }
+.cell.acting { outline: 2px solid #ffd76f; outline-offset: -2px; }
+.cell .mini-hp { position: absolute; left: 0; bottom: 0; height: 3px; background: #5c5; }
 
 .log {
   height: 280px;

@@ -4,8 +4,16 @@
 // 定数・マスターデータ
 // ============================================================
 
-const FIELD_SIZE = 21;        // 戦場の長さ（位置 0〜20 の一次元）
 const MAX_TURNS = 100;        // 決着がつかない場合の打ち切りターン
+
+// マップの広さ: 最低値 + 1d6 で決定（幅 9〜14 × 高さ 10〜15）
+// 幅の最低値は、最大編成（3d6=18体）が自陣3列に収まるよう 9 にしている
+const MAP_MIN_W = 8;
+const MAP_MIN_H = 9;
+const DEPLOY_ROWS = 3;        // 自陣として布陣できる列数（後方から）
+
+// マップタイプ（今は平野のみ。市街戦・山間部などは地形ギミックと合わせて今後追加）
+const MAP_TYPES = ['平野'];
 
 // 階級: コストとステータス倍率
 const RANKS = {
@@ -56,7 +64,7 @@ function pick(arr) {
 let unitSeq = 0;
 
 class Unit {
-  constructor(side, rank, type, name, pos) {
+  constructor(side, rank, type, name, x, y) {
     const r = RANKS[rank];
     const t = TYPES[type];
     this.id = ++unitSeq;
@@ -75,11 +83,13 @@ class Unit {
     this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
     this.best = t.best;
     this.falloff = t.falloff;
-    this.pos = pos;
+    this.x = x;
+    this.y = y;
   }
 
   get alive() { return this.hp > 0; }
   get isCommander() { return this.rank === '総大将'; }
+  get posText() { return `(${this.x},${this.y})`; }
   /** 1回の行動で移動できるマス数（SPDが高いほど多い） */
   get move() { return Math.max(1, Math.ceil(this.spd / 3)); }
   /** 後退できるマス数（移動力の半分・端数切り上げ） */
@@ -95,29 +105,51 @@ class Unit {
  * 出目合計 N = 部隊長 + 雑兵 の総数。部隊長は N/6 人（最低1人）、残りが雑兵。
  * これとは別に総大将が1人つく。
  */
-function formArmy(side) {
+function formArmy(side, map) {
   const r = roll(3, 6);
   const n = r.total;
   const leaders = Math.max(1, Math.floor(n / 6));
   const soldiers = n - leaders;
 
   const label = side === 'player' ? 'P' : 'C';
-  // プレイヤーは左端(0)側、CPUは右端(20)側に布陣。総大将は最後尾。
-  const back = side === 'player' ? 0 : FIELD_SIZE - 1;
-  const dir = side === 'player' ? 1 : -1;
-  const frontPos = () => back + dir * (1 + Math.floor(Math.random() * 3)); // 最後尾から1〜3マス前
+  // プレイヤーは下端、CPUは上端に布陣。総大将は最後列の中央。
+  const back = side === 'player' ? map.h - 1 : 0;
+  const dir = side === 'player' ? -1 : 1;
+  const cx = Math.floor(map.w / 2);
+
+  // 自陣（後方 DEPLOY_ROWS 列）の空きマスをシャッフルして配下を置く
+  const cells = [];
+  for (let r = 0; r < DEPLOY_ROWS; r++) {
+    for (let x = 0; x < map.w; x++) {
+      if (r === 0 && x === cx) continue;
+      cells.push([x, back + dir * r]);
+    }
+  }
+  // シャッフルしてから前の列優先で並べる（前列から埋まる）
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+  cells.sort((a, b) => Math.abs(b[1] - back) - Math.abs(a[1] - back));
 
   const units = [];
-  units.push(new Unit(side, '総大将', pick(TYPE_NAMES), `${label}総大将`, back));
+  units.push(new Unit(side, '総大将', pick(TYPE_NAMES), `${label}総大将`, cx, back));
+  let c = 0;
   for (let i = 1; i <= leaders; i++) {
     const type = pick(TYPE_NAMES);
-    units.push(new Unit(side, '部隊長', type, `${label}${type}長${i}`, frontPos()));
+    units.push(new Unit(side, '部隊長', type, `${label}${type}長${i}`, ...cells[c++]));
   }
   for (let i = 1; i <= soldiers; i++) {
     const type = pick(TYPE_NAMES);
-    units.push(new Unit(side, '雑兵', type, `${label}${type}${i}`, frontPos()));
+    units.push(new Unit(side, '雑兵', type, `${label}${type}${i}`, ...cells[c++]));
   }
   return { dice: r, units, leaders, soldiers };
+}
+
+/** マップの広さとタイプをダイスで決める */
+function formMap() {
+  const wd = d(6), hd = d(6);
+  return { type: pick(MAP_TYPES), w: MAP_MIN_W + wd, h: MAP_MIN_H + hd, wd, hd };
 }
 
 // ============================================================
@@ -125,6 +157,7 @@ function formArmy(side) {
 // ============================================================
 
 const state = {
+  map: null,
   player: null,
   cpu: null,
   turn: 0,
@@ -147,8 +180,18 @@ function alliesOf(unit) {
   return army.units.filter(u => u.alive && u !== unit);
 }
 
+/** マンハッタン距離（4方向移動なので斜めは距離2） */
 function distance(a, b) {
-  return Math.abs(a.pos - b.pos);
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function unitAt(x, y) {
+  return allUnits().find(u => u.alive && u.x === x && u.y === y);
+}
+
+/** 地点 p から最も近い敵までの距離 */
+function nearestEnemyDist(unit, p) {
+  return Math.min(...enemiesOf(unit).map(e => distance(p, e)));
 }
 
 function nearestEnemy(unit) {
@@ -189,21 +232,40 @@ function buildQueue() {
     .map(x => x.u);
 }
 
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // 上下左右の4方向
+
 /**
- * dir 方向へ最大 steps マス、1マスずつ移動する。
- * 味方のいるマスは追い越せるが、敵のいるマスには入れない（通り抜け不可）。
- * 戦場の端でも止まる。実際に動いたマス数を返す。
+ * 最大 steps マス以内で到達できるマスのうち、score が最小のマスへ移動する。
+ * 4方向に1マスずつ進む（幅優先探索）。味方のいるマスは通過できるが止まれない。
+ * 敵のいるマスは通過も不可。マップの外には出られない。
+ * 今の位置より良いマスがなければ動かない。動いたら true を返す。
  */
-function moveUnit(unit, dir, steps) {
-  let moved = 0;
-  while (moved < steps) {
-    const next = unit.pos + dir;
-    if (next < 0 || next >= FIELD_SIZE) break;
-    if (enemiesOf(unit).some(e => e.pos === next)) break;
-    unit.pos = next;
-    moved++;
+function moveUnit(unit, steps, score) {
+  const { w, h } = state.map;
+  const seen = new Set([`${unit.x},${unit.y}`]);
+  let frontier = [[unit.x, unit.y]];
+  let best = [unit.x, unit.y];
+  let bestScore = score({ x: unit.x, y: unit.y });
+  for (let s = 0; s < steps; s++) {
+    const next = [];
+    for (const [x, y] of frontier) {
+      for (const [dx, dy] of DIRS) {
+        const nx = x + dx, ny = y + dy, key = `${nx},${ny}`;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h || seen.has(key)) continue;
+        const other = unitAt(nx, ny);
+        if (other && other.side !== unit.side) continue;   // 敵は通り抜け不可
+        seen.add(key);
+        next.push([nx, ny]);
+        if (other) continue;                               // 味方のマスには止まれない
+        const sc = score({ x: nx, y: ny });
+        if (sc < bestScore) { bestScore = sc; best = [nx, ny]; }
+      }
+    }
+    frontier = next;
   }
-  return moved;
+  if (best[0] === unit.x && best[1] === unit.y) return false;
+  [unit.x, unit.y] = best;
+  return true;
 }
 
 /** 1ユニット分の行動（AI） */
@@ -219,14 +281,16 @@ function actUnit(unit) {
     return;
   }
   if (!holding && distance(unit, target) > unit.best) {
-    const dir = Math.sign(target.pos - unit.pos);
-    const before = unit.pos;
-    // 最適距離に入るまで、最大 move マス進む
-    const need = distance(unit, target) - unit.best;
-    if (moveUnit(unit, dir, Math.min(unit.move, need)) > 0) {
-      log(`${unit.name} は前進した。(位置 ${before} → ${unit.pos})`, unit.side);
+    const before = unit.posText;
+    // 最も近い敵との距離が最適距離にできるだけ近いマスへ（近すぎるマスは避ける）
+    const moved = moveUnit(unit, unit.move, p => {
+      const m = nearestEnemyDist(unit, p);
+      return Math.abs(m - unit.best) * 10 + (m < unit.best ? 5 : 0) + distance(p, target) * 0.01;
+    });
+    if (moved) {
+      log(`${unit.name} は前進した。${before} → ${unit.posText}`, unit.side);
     } else {
-      log(`${unit.name} は敵に阻まれて前進できない。`, unit.side);
+      log(`${unit.name} は進路を阻まれて前進できない。`, unit.side);
     }
     // 前進後に射程内に入っていなければ行動終了
     target = nearestEnemy(unit);
@@ -235,10 +299,9 @@ function actUnit(unit) {
 
   // 射程で勝っていて敵が最適距離より近い → 最適距離に向けて後退（引き撃ち、移動力の半分まで）
   if (unit.rng > target.rng && distance(unit, target) < unit.best) {
-    const dir = Math.sign(unit.pos - target.pos) || (unit.side === 'player' ? -1 : 1);
-    const before = unit.pos;
-    if (moveUnit(unit, dir, Math.min(unit.retreat, unit.best - distance(unit, target))) > 0) {
-      log(`${unit.name} は間合いを取った。(位置 ${before} → ${unit.pos})`, unit.side);
+    const before = unit.posText;
+    if (moveUnit(unit, unit.retreat, p => Math.abs(nearestEnemyDist(unit, p) - unit.best))) {
+      log(`${unit.name} は間合いを取った。${before} → ${unit.posText}`, unit.side);
     }
     target = nearestEnemy(unit);
   }
@@ -353,7 +416,7 @@ function renderArmy(army, side, acting) {
     tr.innerHTML = `
       <td>${u.name}</td><td>${u.rank}</td><td>${u.type}</td>
       <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
-      <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}</td><td>${u.hit}%</td><td>${u.pos}</td>`;
+      <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}</td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
   }
   const alive = army.units.filter(u => u.alive);
@@ -364,27 +427,35 @@ function renderArmy(army, side, acting) {
     `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
 
-function renderField() {
+function renderField(acting) {
+  const { w, h, type, wd, hd } = state.map;
   const field = $('field');
   field.innerHTML = '';
+  field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
   const short = u => (u.isCommander ? '★' : u.rank === '部隊長' ? '◆' : '') + u.type[0];
-  for (let x = 0; x < FIELD_SIZE; x++) {
-    const here = allUnits().filter(u => u.alive && u.pos === x);
-    const p = here.filter(u => u.side === 'player').map(short).join('');
-    const c = here.filter(u => u.side === 'cpu').map(short).join('');
-    const cell = document.createElement('div');
-    cell.className = 'cell';
-    cell.innerHTML = `<div class="idx">${x}</div><div class="p">${p}</div><div class="c">${c}</div>`;
-    field.appendChild(cell);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const u = unitAt(x, y);
+      const cell = document.createElement('div');
+      cell.className = 'cell' + (u ? ` ${u.side === 'player' ? 'p' : 'c'}` : '') + (u && u === acting ? ' acting' : '');
+      if (u) {
+        cell.title = `${u.name} HP ${u.hp}/${u.maxHp}`;
+        cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>`;
+      }
+      field.appendChild(cell);
+    }
   }
-  $('turn-label').textContent = state.turn ? `ターン ${state.turn}　(★総大将 ◆部隊長 / 剣=剣兵 槍=槍兵 弓=弓兵)` : '(★総大将 ◆部隊長 / 剣=剣兵 槍=槍兵 弓=弓兵)';
+  const legend = '★総大将 ◆部隊長 / 剣=剣兵 槍=槍兵 弓=弓兵 / 青=プレイヤー 赤=CPU';
+  $('turn-label').textContent =
+    `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲${wd} / 高さ ${MAP_MIN_H}+🎲${hd}）` +
+    (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
 }
 
 function render(acting = null) {
   if (!state.player) return;
   renderArmy(state.player, 'player', acting);
   renderArmy(state.cpu, 'cpu', acting);
-  renderField();
+  renderField(acting);
 }
 
 function updateButtons() {
@@ -398,8 +469,10 @@ function updateButtons() {
 
 $('btn-form').addEventListener('click', () => {
   reset();
-  state.player = formArmy('player');
-  state.cpu = formArmy('cpu');
+  state.map = formMap();
+  state.player = formArmy('player', state.map);
+  state.cpu = formArmy('cpu', state.map);
+  log(`🎲 マップ: ${state.map.type} 幅 ${MAP_MIN_W}+${state.map.wd} = ${state.map.w} / 高さ ${MAP_MIN_H}+${state.map.hd} = ${state.map.h}`);
   log(`🎲 プレイヤー軍 3d6 = [${state.player.dice.dice.join(', ')}] → 部隊数 ${state.player.dice.total}（部隊長${state.player.leaders} / 雑兵${state.player.soldiers}）`, 'player');
   log(`🎲 CPU軍 3d6 = [${state.cpu.dice.dice.join(', ')}] → 部隊数 ${state.cpu.dice.total}（部隊長${state.cpu.leaders} / 雑兵${state.cpu.soldiers}）`, 'cpu');
   log('編成完了。「戦闘開始」で開戦します。');
@@ -419,7 +492,7 @@ $('btn-reset').addEventListener('click', reset);
 
 function reset() {
   clearTimeout(state.timer);
-  Object.assign(state, { player: null, cpu: null, turn: 0, running: false, over: false, timer: null });
+  Object.assign(state, { map: null, player: null, cpu: null, turn: 0, running: false, over: false, timer: null });
   unitSeq = 0;
   $('log').innerHTML = '';
   $('result').classList.add('hidden');
