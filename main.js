@@ -31,11 +31,14 @@ const TYPES = {
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   '槍兵': { hp: 28, atk: 16, def: 7, spd: 5, rng: 2, act: 1, hit: 80, best: 2,
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 1.0, pow: 1.0 } } },
-  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2, hit: 80, best: 2, rear: true,
-            falloff: { 1: { hit: 0.6,  pow: 1.0 },    // 近すぎて狙いにくいが威力はある
-                       2: { hit: 1.0,  pow: 1.0 },    // 最も性能を発揮
-                       3: { hit: 0.85, pow: 0.85 },   // 命中・威力とも準最大
-                       4: { hit: 0.6,  pow: 0.6 } } },// 命中・威力とも最低
+  // 平面（マンハッタン距離）向け: 斜め方向は距離が長く数えられ、前衛越しに撃つと距離3〜4になるため
+  // 最適帯を2〜3に広げ、射程を5に延長している
+  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 5, act: 2, hit: 80, best: 3, rear: true,
+            falloff: { 1: { hit: 0.6, pow: 1.0 },    // 近すぎて狙いにくいが威力はある
+                       2: { hit: 1.0, pow: 1.0 },    // 最大性能
+                       3: { hit: 1.0, pow: 1.0 },    // 最大性能（前衛越しの基本距離）
+                       4: { hit: 0.9, pow: 0.9 },    // 準最大
+                       5: { hit: 0.7, pow: 0.7 } } },// 最低
 };
 const HIT_SPREAD = 5;   // 命中率の個体差 ±5%
 const TYPE_NAMES = Object.keys(TYPES);
