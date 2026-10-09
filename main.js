@@ -15,12 +15,20 @@ const RANKS = {
 };
 
 // 兵種: 基礎ステータス
-// RNG = 攻撃射程, ACT = 攻撃速度（1回の行動で攻撃する回数）
+// RNG = 攻撃射程, ACT = 攻撃速度（1回の行動で攻撃する回数）, HIT = 基本命中率(%)
+// falloff[距離] = { hit: 命中倍率, pow: 威力倍率 }。best = 最も性能を発揮する距離
 const TYPES = {
-  '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 2 },
-  '槍兵': { hp: 28, atk: 12, def: 5, spd: 5, rng: 2, act: 1 },
-  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2 },
+  '剣兵': { hp: 30, atk: 10, def: 6, spd: 6, rng: 1, act: 2, hit: 85, best: 1,
+            falloff: { 1: { hit: 1.0, pow: 1.0 } } },
+  '槍兵': { hp: 28, atk: 12, def: 5, spd: 5, rng: 2, act: 1, hit: 80, best: 2,
+            falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 1.0, pow: 1.0 } } },
+  '弓兵': { hp: 20, atk: 9,  def: 3, spd: 7, rng: 4, act: 2, hit: 80, best: 2,
+            falloff: { 1: { hit: 0.6,  pow: 1.0 },    // 近すぎて狙いにくいが威力はある
+                       2: { hit: 1.0,  pow: 1.0 },    // 最も性能を発揮
+                       3: { hit: 0.85, pow: 0.85 },   // 命中・威力とも準最大
+                       4: { hit: 0.6,  pow: 0.6 } } },// 命中・威力とも最低
 };
+const HIT_SPREAD = 5;   // 命中率の個体差 ±5%
 const TYPE_NAMES = Object.keys(TYPES);
 
 // ============================================================
@@ -64,6 +72,9 @@ class Unit {
     this.spd = t.spd + r.spd + d(3) - 1;   // 個体差 +0〜2
     this.rng = t.rng;
     this.act = t.act;
+    this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
+    this.best = t.best;
+    this.falloff = t.falloff;
     this.pos = pos;
   }
 
@@ -152,16 +163,21 @@ function nearestEnemy(unit) {
 }
 
 /**
- * ダメージ計算式:
- *   ダメージ = max(1, ATK + 1d6 − DEF)
- *   出目6はクリティカルで ATK × 1.5 として計算
+ * 攻撃判定:
+ *   命中率 = HIT × 距離の命中倍率。1d100 が命中率以下なら命中
+ *   ダメージ = max(1, (ATK + 1d6 − DEF) × 距離の威力倍率)  ※四捨五入
+ *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
-function calcDamage(attacker, defender) {
+function calcAttack(attacker, defender) {
+  const f = attacker.falloff[distance(attacker, defender)];
+  const hitRate = Math.round(attacker.hit * f.hit);
+  const hitRoll = d(100);
+  if (hitRoll > hitRate) return { hit: false, hitRate, hitRoll };
   const die = d(6);
   const crit = die === 6;
   const atk = crit ? Math.floor(attacker.atk * 1.5) : attacker.atk;
-  const dmg = Math.max(1, atk + die - defender.def);
-  return { dmg, die, crit };
+  const dmg = Math.max(1, Math.round((atk + die - defender.def) * f.pow));
+  return { hit: true, hitRate, hitRoll, dmg, die, crit };
 }
 
 /** SPD 降順で行動キューを作る（同値はランダム） */
@@ -195,17 +211,18 @@ function actUnit(unit) {
   let target = nearestEnemy(unit);
   if (!target) return;
 
-  // 射程外 → 前進
-  if (distance(unit, target) > unit.rng) {
-    // 総大将は配下が残っている間は本陣で待機
-    if (unit.isCommander && alliesOf(unit).length > 0) {
-      log(`${unit.name} は本陣で戦況を見守っている。`, unit.side);
-      return;
-    }
+  // 最適距離より遠い → 前進（射程外なら必ず、射程内でも最適距離まで詰める）
+  // 総大将は配下が残っている間は本陣から動かない（射程内に敵がいれば攻撃はする）
+  const holding = unit.isCommander && alliesOf(unit).length > 0;
+  if (holding && distance(unit, target) > unit.rng) {
+    log(`${unit.name} は本陣で戦況を見守っている。`, unit.side);
+    return;
+  }
+  if (!holding && distance(unit, target) > unit.best) {
     const dir = Math.sign(target.pos - unit.pos);
     const before = unit.pos;
-    // 射程に入るまで、最大 move マス進む
-    const need = distance(unit, target) - unit.rng;
+    // 最適距離に入るまで、最大 move マス進む
+    const need = distance(unit, target) - unit.best;
     if (moveUnit(unit, dir, Math.min(unit.move, need)) > 0) {
       log(`${unit.name} は前進した。(位置 ${before} → ${unit.pos})`, unit.side);
     } else {
@@ -216,11 +233,11 @@ function actUnit(unit) {
     if (!target || distance(unit, target) > unit.rng) return;
   }
 
-  // 射程で勝っていて敵が近すぎる → 最大射程に向けて後退（引き撃ち、移動力の半分まで）
-  if (unit.rng > target.rng && distance(unit, target) < unit.rng) {
+  // 射程で勝っていて敵が最適距離より近い → 最適距離に向けて後退（引き撃ち、移動力の半分まで）
+  if (unit.rng > target.rng && distance(unit, target) < unit.best) {
     const dir = Math.sign(unit.pos - target.pos) || (unit.side === 'player' ? -1 : 1);
     const before = unit.pos;
-    if (moveUnit(unit, dir, Math.min(unit.retreat, unit.rng - distance(unit, target))) > 0) {
+    if (moveUnit(unit, dir, Math.min(unit.retreat, unit.best - distance(unit, target))) > 0) {
       log(`${unit.name} は間合いを取った。(位置 ${before} → ${unit.pos})`, unit.side);
     }
     target = nearestEnemy(unit);
@@ -230,9 +247,14 @@ function actUnit(unit) {
   for (let i = 0; i < unit.act; i++) {
     target = nearestEnemy(unit);
     if (!target || distance(unit, target) > unit.rng) break;
-    const { dmg, die, crit } = calcDamage(unit, target);
-    target.hp = Math.max(0, target.hp - dmg);
-    log(`${unit.name} の攻撃！ [🎲${die}]${crit ? ' 会心の一撃！' : ''} ${target.name} に ${dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
+    const dist = distance(unit, target);
+    const r = calcAttack(unit, target);
+    if (!r.hit) {
+      log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
+      continue;
+    }
+    target.hp = Math.max(0, target.hp - r.dmg);
+    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
     if (!target.alive) {
       log(`☠ ${target.name} は倒れた！`, 'death');
       if (checkVictory()) return;
@@ -331,7 +353,7 @@ function renderArmy(army, side, acting) {
     tr.innerHTML = `
       <td>${u.name}</td><td>${u.rank}</td><td>${u.type}</td>
       <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
-      <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}</td><td>${u.pos}</td>`;
+      <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}</td><td>${u.hit}%</td><td>${u.pos}</td>`;
     tbody.appendChild(tr);
   }
   const alive = army.units.filter(u => u.alive);
