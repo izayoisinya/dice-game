@@ -183,7 +183,7 @@ function formArmy(side, map) {
       cells.push([x, back + dir * r]);
     }
   }
-  // シャッフルしてから前の列優先で並べる（前列から埋まる）
+  // シャッフルしてから前の列優先で並べる
   for (let i = cells.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [cells[i], cells[j]] = [cells[j], cells[i]];
@@ -192,14 +192,20 @@ function formArmy(side, map) {
 
   const units = [];
   units.push(new Unit(side, '総大将', pick(TYPE_NAMES), `${label}総大将`, cx, back));
-  let c = 0;
+  const troops = [];
   for (let i = 1; i <= leaders; i++) {
     const type = pick(TYPE_NAMES);
-    units.push(new Unit(side, '部隊長', type, `${label}${type}長${i}`, ...cells[c++]));
+    troops.push(new Unit(side, '部隊長', type, `${label}${type}長${i}`, 0, 0));
   }
   for (let i = 1; i <= soldiers; i++) {
     const type = pick(TYPE_NAMES);
-    units.push(new Unit(side, '雑兵', type, `${label}${type}${i}`, ...cells[c++]));
+    troops.push(new Unit(side, '雑兵', type, `${label}${type}${i}`, 0, 0));
+  }
+  // 前衛は前の列から、後衛（弓兵など）は後ろの列から埋める
+  let front = 0, rear = cells.length - 1;
+  for (const u of troops) {
+    [u.x, u.y] = u.rear ? cells[rear--] : cells[front++];
+    units.push(u);
   }
   return { dice: r, units, leaders, soldiers };
 }
