@@ -6,10 +6,11 @@
 
 const MAX_TURNS = 100;        // 決着がつかない場合の打ち切りターン
 
-// マップの広さ: 最低値 + 1d6 で決定（幅 9〜14 × 高さ 10〜15）
-// 幅の最低値は、最大編成（3d6=18体）が自陣3列に収まるよう 9 にしている
-const MAP_MIN_W = 8;
-const MAP_MIN_H = 9;
+// マップの広さ: 最低値 + 2d6 で決定（幅 14〜24 × 高さ 16〜26）
+// 2d6 なので中くらいの広さが出やすい。幅の最低値は最大編成（3d6=18体）が自陣3列に余裕をもって収まる値
+const MAP_MIN_W = 12;
+const MAP_MIN_H = 14;
+const MAP_DICE = 2;           // 広さに振るダイスの数（各 MAP_DICE d6）
 const DEPLOY_ROWS = 3;        // 自陣として布陣できる列数（後方から）
 
 // マップタイプ（今は平野のみ。市街戦・山間部などは地形ギミックと合わせて今後追加）
@@ -362,8 +363,8 @@ function formArmy(side, map) {
 
 /** マップの広さとタイプをダイスで決める */
 function formMap() {
-  const wd = d(6), hd = d(6);
-  return { type: pick(MAP_TYPES), w: MAP_MIN_W + wd, h: MAP_MIN_H + hd, wd, hd };
+  const wd = roll(MAP_DICE, 6), hd = roll(MAP_DICE, 6);
+  return { type: pick(MAP_TYPES), w: MAP_MIN_W + wd.total, h: MAP_MIN_H + hd.total, wd, hd };
 }
 
 // ============================================================
@@ -843,7 +844,7 @@ function renderField(acting) {
   }
   const legend = '★将=総大将 ◆部隊長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
   $('turn-label').textContent =
-    `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲${wd} / 高さ ${MAP_MIN_H}+🎲${hd}）` +
+    `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
     (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
 }
 
@@ -868,7 +869,7 @@ $('btn-form').addEventListener('click', () => {
   state.map = formMap();
   state.player = formArmy('player', state.map);
   state.cpu = formArmy('cpu', state.map);
-  log(`🎲 マップ: ${state.map.type} 幅 ${MAP_MIN_W}+${state.map.wd} = ${state.map.w} / 高さ ${MAP_MIN_H}+${state.map.hd} = ${state.map.h}`);
+  log(`🎲 マップ: ${state.map.type} 幅 ${MAP_MIN_W}+[${state.map.wd.dice.join(', ')}] = ${state.map.w} / 高さ ${MAP_MIN_H}+[${state.map.hd.dice.join(', ')}] = ${state.map.h}`);
   log(`🎲 プレイヤー軍 3d6 = [${state.player.dice.dice.join(', ')}] → 部隊数 ${state.player.dice.total}（部隊長${state.player.leaders} / 雑兵${state.player.soldiers}）`, 'player');
   log(`🎲 CPU軍 3d6 = [${state.cpu.dice.dice.join(', ')}] → 部隊数 ${state.cpu.dice.total}（部隊長${state.cpu.leaders} / 雑兵${state.cpu.soldiers}）`, 'cpu');
   log('編成完了。「戦闘開始」で開戦します。');

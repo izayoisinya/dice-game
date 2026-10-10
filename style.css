@@ -48,7 +48,7 @@ tr.rank-部隊長 td:first-child { color: #9fe39f; }
   background: #262930;
   padding: 6px;
   border-radius: 8px;
-  max-width: 640px;
+  max-width: 900px;
 }
 .cell {
   position: relative;
@@ -58,7 +58,7 @@ tr.rank-部隊長 td:first-child { color: #9fe39f; }
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(0.55rem, 1.6vw, 0.85rem);
+  font-size: clamp(0.5rem, 1.2vw, 0.8rem);
   font-weight: bold;
   overflow: hidden;
 }
