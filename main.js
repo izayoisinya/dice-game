@@ -81,7 +81,7 @@ const MATCHUP = {
 // rear = 後衛（前衛より前に出ない）
 const TYPES = {
   // 近距離特化、足と手数が速い
-  '剣兵': { stats: { hp: 120, atk: 100, def: 90, spd: 100, act: 80 }, rng: 1, hit: 85, best: 1,
+  '剣兵': { stats: { hp: 110, atk: 100, def: 90, spd: 100, act: 90 }, rng: 1, hit: 85, best: 1,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 打たれ強く射程2、攻撃速度はやや遅い
   '槍兵': { stats: { hp: 120, atk: 100, def: 100, spd: 80, act: 60 }, rng: 2, hit: 80, best: 2,
