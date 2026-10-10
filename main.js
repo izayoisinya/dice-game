@@ -46,6 +46,7 @@ const ACT_GAUGE_MAX = 100;    // ゲージの上限（ため込みすぎ防止�
 const DAMAGE_DIE_SCALE = 10;  // ダメージのダイス = 1d6 × 10（ステータスの桁に合わせる）
 const MIN_DAMAGE = 10;        // 最低ダメージ（固定値）
 const MIN_DAMAGE_RATE = 0.15; // 最低でも ATK のこの割合は通る（DEF が高すぎて削れない状態を防ぐ）
+const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
 
 // 総大将が本陣を出て前に出るタイミング（配下の残存率がこの値を下回ったら出撃）。
@@ -136,7 +137,7 @@ function scaleStats(type, cost) {
 //   手動プレイではプレイヤーが振り分ける想定。下の「型」はその例。
 //   ※型どうしのバランスは未解決（docs/design.md 参照）のため、オート時は全員 AUTO_BUILD を使う。
 // ------------------------------------------------------------
-const UPGRADE_MULT = 1.5;
+const UPGRADE_MULT = 1.0;
 const UPGRADE_CAP = { spd: 50, act: 50 };
 const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
 
@@ -166,7 +167,7 @@ const SKILLS = {
   '強撃':       { cost: 250, cooldown: 3, desc: '次の一撃の ATK ×1.15' },
   '鉄壁の構え': { cost: 200, cooldown: 3, desc: '次の自分の行動まで DEF +100%。その行動では移動しない' },
   '一斉指揮':   { cost: 300, cooldown: 4, desc: '自分と周囲3マスの味方の ATK +30% / DEF +15%（各自の行動2回分）' },
-  '一撃離脱':   { cost: 250, cooldown: 2, desc: '攻撃した後、敵から離れる方向へ移動力の分だけ下がる' },
+  '一撃離脱':   { cost: 250, cooldown: 2, desc: '攻撃の前に使う。この行動の攻撃は反撃を受けず、攻撃の後に移動力いっぱい動ける（移動 → 攻撃 → 移動）' },
   '遠隔狙撃':   { cost: 250, cooldown: 3, desc: 'この行動だけ射程 +1' },
 };
 const SMASH_MULT = 1.15;      // 強撃の ATK 倍率
@@ -295,6 +296,8 @@ class Unit {
     this.buffs = [];                       // { stat: 'atk' | 'def', value: +割合, turns: 残り行動回数 }
     this.rooted = false;                   // この行動では移動しない（鉄壁の構え）
     this.rngBonus = 0;                     // この行動だけの射程ボーナス（遠隔狙撃）
+    this.counteredBy = [];                 // この行動中にすでに反撃してきた敵の id（反撃は1行動につき1体1回）
+    this.hitAndRun = false;                // この行動では一撃離脱中（反撃を受けず、攻撃後に移動できる）
     this.x = x;
     this.y = y;
   }
@@ -473,6 +476,8 @@ function tickUnit(u) {
   u.buffs = u.buffs.filter(b => --b.turns > 0);
   u.rooted = false;
   u.rngBonus = 0;
+  u.counteredBy = [];
+  u.hitAndRun = false;
 }
 
 /** 攻撃対象に上下左右で隣接している、攻撃側の味方の数（攻撃者自身は除く） */
@@ -637,6 +642,32 @@ function performAttack(unit, target, bonus = 1, atkMult = 1) {
   if (!target.alive) {
     log(`☠ ${target.name} は倒れた！`, 'death');
     if (checkVictory()) return true;
+    return false;
+  }
+  return counterAttack(target, unit);
+}
+
+/**
+ * 反撃: 攻撃された側は、攻撃してきた相手が自分の射程内にいれば撃ち返す。
+ * 相手の1回の行動につき1回まで。行動ゲージは消費しない。決着したら true を返す。
+ * （射程4の弓兵が射程4未満の敵を撃った場合などは、届かないので反撃されない）
+ */
+function counterAttack(defender, attacker) {
+  if (!defender.alive || !attacker.alive) return false;
+  if (distance(defender, attacker) > defender.rng) return false;
+  if (attacker.counteredBy.includes(defender.id)) return false;
+  if (attacker.hitAndRun) return false;   // 一撃離脱中は反撃を受けない
+  attacker.counteredBy.push(defender.id);
+  const r = calcAttack(defender, attacker, COUNTER_MULT);
+  if (!r.hit) {
+    log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}% 🎲${r.hitRoll}] ${attacker.name} にかわされた！`, defender.side);
+    return false;
+  }
+  attacker.hp = Math.max(0, attacker.hp - r.dmg);
+  log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${attacker.name} に ${r.dmg} のダメージ！ (残HP ${attacker.hp}/${attacker.maxHp})`, defender.side);
+  if (!attacker.alive) {
+    log(`☠ ${attacker.name} は倒れた！`, 'death');
+    return checkVictory();
   }
   return false;
 }
@@ -732,11 +763,13 @@ function actUnit(unit) {
   }
   // 突撃（騎兵など）: 一直線に走り込める敵がいれば優先する
   let charge = null;
+  let movedBefore = false;   // 攻撃の前に移動したか（移動は1行動に1回。攻撃の後に回すこともできる）
   if (!holding && !unit.rooted && unit.traits.includes('charge')) {
     charge = findCharge(unit);
     if (charge) {
       const before = unit.posText;
       [unit.x, unit.y] = [charge.x, charge.y];
+      movedBefore = true;
       log(`🐎 ${unit.name} の突撃！ ${before} → ${unit.posText}（${charge.run}マス直進）`, unit.side);
       target = charge.target;
     }
@@ -746,6 +779,7 @@ function actUnit(unit) {
     // 「敵を最適距離で攻撃できる空きマス」（側面・背後を含む）に近づく。後衛は前衛より前に出ない
     const moved = moveUnit(unit, unit.move, advanceScorer(unit, target));
     if (moved) {
+      movedBefore = true;
       log(`${unit.name} は前進した。${before} → ${unit.posText}`, unit.side);
     } else {
       log(unit.rear ? `${unit.name} は前衛の後ろで待機している。` : `${unit.name} は進路を阻まれて前進できない。`, unit.side);
@@ -764,6 +798,7 @@ function actUnit(unit) {
     const before = unit.posText;
     if (moveUnit(unit, unit.retreat, p =>
           withinFrontLine(unit, p) ? Math.abs(nearestEnemyDist(unit, p) - unit.best) : Infinity)) {
+      movedBefore = true;
       log(`${unit.name} は間合いを取った。${before} → ${unit.posText}`, unit.side);
     }
     target = nearestEnemy(unit);
@@ -771,6 +806,12 @@ function actUnit(unit) {
 
   // 射程内 → 行動ゲージが ACT_PER_ATTACK たまっている分だけ攻撃
   unit.gauge = Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  // 一撃離脱: 攻撃できるなら攻撃の前に使う（反撃を受けず、攻撃後に離脱する）
+  if (!unit.rooted && skillReady(unit, '一撃離脱') && unit.gauge >= ACT_PER_ATTACK &&
+      target && distance(unit, target) <= effRng(unit)) {
+    useSkill(unit, '一撃離脱');
+    unit.hitAndRun = true;
+  }
   let first = true;
   let attacked = 0;
   while (unit.gauge >= ACT_PER_ATTACK) {
@@ -789,13 +830,24 @@ function actUnit(unit) {
     }
     first = false;
     if (performAttack(unit, target, bonus, atkMult)) return;
+    if (!unit.alive) return;   // 反撃で倒れた
   }
 
-  // 一撃離脱: 攻撃した後、敵からできるだけ離れる
-  if (attacked > 0 && !unit.rooted && skillReady(unit, '一撃離脱') && enemiesOf(unit).length) {
+  // 攻撃してから間合いを取る: まだ移動していない、射程で勝っている兵は、撃った後に下がる（移動力の半分まで）
+  const near = nearestEnemy(unit);
+  if (attacked > 0 && !movedBefore && !unit.hitAndRun && !unit.rooted && near && unit.rng > near.rng && distance(unit, near) <= near.rng + 1) {
+    const before = unit.posText;
+    if (moveUnit(unit, unit.retreat, p =>
+          withinFrontLine(unit, p) ? Math.abs(nearestEnemyDist(unit, p) - unit.best) : Infinity)) {
+      log(`${unit.name} は撃ってから間合いを取った。${before} → ${unit.posText}`, unit.side);
+    }
+    return;
+  }
+
+  // 一撃離脱（移動 → 攻撃 → 移動）: 攻撃の後に移動力いっぱい離れる
+  if (unit.hitAndRun && attacked > 0 && enemiesOf(unit).length) {
     const before = unit.posText;
     if (moveUnit(unit, unit.move, p => -nearestEnemyDist(unit, p))) {
-      useSkill(unit, '一撃離脱');
       log(`${unit.name} は離脱した。${before} → ${unit.posText}`, unit.side);
     }
   }
@@ -895,7 +947,7 @@ function beginManual(unit) {
   tickUnit(unit);
   state.current = unit.id;
   state.phase = 'move';
-  state.manual = { attacked: 0, smash: false, gaugeAdded: false, charge: null };
+  state.manual = { attacked: 0, smash: false, gaugeAdded: false, charge: null, moved: false };
   log(`▶ ${unit.name} の番です（マスをクリックして移動、敵をクリックして攻撃）`, 'player');
   render(unit);
   saveGame();
@@ -914,6 +966,12 @@ function enterAttack(unit) {
 function manualReach(unit) {
   if (state.phase === 'move' && !unit.rooted) return reachableCells(unit, unit.move);
   if (state.phase === 'retreat') return reachableCells(unit, unit.move);
+  // 一撃離脱中は、攻撃した後に移動力いっぱい動ける
+  if (state.phase === 'attack' && unit.hitAndRun && state.manual.attacked > 0) return reachableCells(unit, unit.move);
+  // 移動せずに攻撃した後は、移動力の半分まで動いて間合いを取れる
+  if (state.phase === 'attack' && !state.manual.moved && state.manual.attacked > 0 && !unit.rooted) {
+    return reachableCells(unit, unit.retreat);
+  }
   return [];
 }
 
@@ -965,6 +1023,13 @@ function onCellClick(x, y) {
     endManual();
     return;
   }
+  if (state.phase === 'attack') {
+    log(unit.hitAndRun ? `${unit.name} は離脱した。${before} → ${unit.posText}`
+                       : `${unit.name} は攻撃してから間合いを取った。${before} → ${unit.posText}`, unit.side);
+    endManual();
+    return;
+  }
+  state.manual.moved = true;
   const charge = manualCharge(unit, fromX, fromY);
   if (charge) {
     state.manual.charge = charge;
@@ -985,6 +1050,7 @@ function manualAttack(unit, target) {
   m.smash = false;
   m.attacked++;
   if (performAttack(unit, target, bonus, atkMult)) return;
+  if (!unit.alive) { endManual(); return; }   // 反撃で倒れた
   render(unit);
   saveGame();
 }
@@ -1006,7 +1072,7 @@ function onSkill(name) {
   } else if (name === '強撃') {
     state.manual.smash = true;
   } else if (name === '一撃離脱') {
-    state.phase = 'retreat';
+    unit.hitAndRun = true;
   }
   render(unit);
   saveGame();
@@ -1020,7 +1086,7 @@ function canUseSkill(unit, name) {
     case '一斉指揮': return p === 'move' || p === 'attack';
     case '遠隔狙撃': return (p === 'move' || p === 'attack') && unit.rngBonus === 0;
     case '強撃': return (p === 'move' || p === 'attack') && !state.manual.smash;
-    case '一撃離脱': return p === 'attack' && state.manual.attacked > 0;
+    case '一撃離脱': return (p === 'move' || p === 'attack') && state.manual.attacked === 0 && !unit.rooted;
   }
   return false;
 }
@@ -1172,7 +1238,11 @@ function renderActionPanel() {
   const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
   const hint = {
     move: '青いマスをクリックで移動（移動しないで攻撃も可）。赤枠の敵をクリックで攻撃。',
-    attack: '赤枠の敵をクリックで攻撃。終わったら「行動終了」。',
+    attack: state.manual && unit.hitAndRun && state.manual.attacked > 0
+      ? '赤枠の敵をクリックで攻撃。青いマスをクリックで離脱して終了（移動力いっぱい）。'
+      : state.manual && !state.manual.moved && state.manual.attacked > 0
+      ? '赤枠の敵をクリックで攻撃。青いマスをクリックで間合いを取って終了（移動力の半分まで）。'
+      : '赤枠の敵をクリックで攻撃。終わったら「行動終了」。',
     retreat: '一撃離脱: 青いマスをクリックで離脱先を選ぶ。',
   }[state.phase] || '';
   const skills = unit.skills.map(name => {
@@ -1184,7 +1254,7 @@ function renderActionPanel() {
   panel.innerHTML = `
     <div class="ap-head"><b>${unit.name}</b>（${unit.rank}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
       ／ 移動 ${unit.rooted ? '不可' : unit.move} ／ 射程 ${effRng(unit)} ／ 攻撃できる回数 ${Math.floor(gauge / ACT_PER_ATTACK)}
-      ${state.manual.smash ? ' ／ 強撃 準備中' : ''}${state.manual.charge ? ` ／ 突撃 ${state.manual.charge.run}マス` : ''}</div>
+      ${state.manual.smash ? ' ／ 強撃 準備中' : ''}${unit.hitAndRun ? ' ／ 一撃離脱中（反撃なし・攻撃後に移動可）' : ''}${state.manual.charge ? ` ／ 突撃 ${state.manual.charge.run}マス` : ''}</div>
     <div class="ap-hint">${hint}</div>
     <div class="ap-buttons">
       ${state.phase === 'move' ? '<button id="ap-stay">移動しない</button>' : ''}
