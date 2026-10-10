@@ -1566,7 +1566,9 @@ function autoForm(army) {
       added = false;
       for (const t of TYPE_NAMES) {
         if (q.pieces.length >= squadCap(army, q)) break;
-        const size = Math.min(PIECE_DEFAULT, quota[t], poolLeft(army, t));
+        let size = Math.min(PIECE_DEFAULT, quota[t], poolLeft(army, t));
+        // 端数が半端に残るなら、この駒にまとめる（50人 + 10人 ではなく 60人の1駒に）
+        if (Math.min(quota[t], poolLeft(army, t)) - size < PIECE_DEFAULT / 2) size = Math.min(quota[t], poolLeft(army, t));
         if (size < MIN_TROOPS) continue;
         q.pieces.push({ type: t, size });
         quota[t] -= size;
