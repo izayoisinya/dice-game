@@ -1534,9 +1534,12 @@ function poolLeft(army, type) {
   return army.totals[type] - assignedTroops(army, type);
 }
 
-/** 隊に入れられる兵士の駒の上限 = 隊長の統率力 + 隊にいる兵長の統率力 */
+/**
+ * 隊に入れられる兵士の駒の上限 = 隊長の統率力（配下の将の統率力は足さない）。
+ * 隊長が倒れて統率力の低い将が継ぐと上限を超えることがある（統率オーバー。戦略マップでは移動が遅くなる予定）
+ */
 function squadCap(army, q) {
-  return memberLdr(memberById(army, q.leader)) + q.members.reduce((s, id) => s + memberLdr(memberById(army, id)), 0);
+  return memberLdr(memberById(army, q.leader));
 }
 
 function squadKind(army, q) {
@@ -1810,7 +1813,7 @@ function renderCampaign() {
     const sgs = q.members.map(id => `<span class="chip">${desc(memberById(P, id))}
         <button class="x" data-act="rmsg" data-q="${q.id}" data-id="${id}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     return `<div class="squad">
-      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 駒 ${q.pieces.length}/${cap} ／ 兵 ${squadTroops(q)}人
+      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 駒 ${q.pieces.length}/${cap}${q.pieces.length > cap ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
         ${q.name !== '本隊' ? `<button class="small" data-act="disband" data-q="${q.id}">解散</button>` : ''}</div>
       <div>配下の将: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">${lead?.rank ? '副将・兵長' : '兵長'}を追加…</option>${sgOpts}</select>` : ''}</div>
       <div>兵士の駒: ${pieces}</div>
@@ -1924,7 +1927,7 @@ function onCampaignClick(e) {
       const size = Math.floor(+$('campaign').querySelector(`[data-role="psize"][data-q="${q.id}"]`).value / 10) * 10;
       if (size < MIN_TROOPS) return alert(`1駒は${MIN_TROOPS}人以上です。`);
       if (size > poolLeft(P, type)) return alert(`${type}の予備は${poolLeft(P, type)}人しかいません。`);
-      if (q.pieces.length >= squadCap(P, q)) return alert('統率力の上限です。兵長を加えるか、統率力を上げてください。');
+      if (q.pieces.length >= squadCap(P, q)) return alert('隊長の統率力の上限です。駒をまとめるか、隊長の統率力を上げてください。');
       q.pieces.push({ type, size });
       break;
     }
