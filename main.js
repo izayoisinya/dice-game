@@ -18,35 +18,37 @@ const MAP_TYPES = ['平野'];
 // ------------------------------------------------------------
 // コスト制ステータス
 //   各ユニットは「ステータス値の合計 = 階級のコスト」になるよう作る。
-//   射程は強力なので、RNG だけは 1 上げるごとに 3 ポイント払う（rngCost）。
-//   雑兵のプリセット（合計50）を基準に、上の階級はコスト比で拡大する（部隊長 ×2、総大将 ×4）。
+//   射程は強力なので、RNG だけは 1 上げるごとに 30 ポイント払う（rngCost）。
+//   雑兵のプリセット（合計500）を基準に、上の階級はコスト比で拡大する（部隊長 ×2、総大将 ×4）。
 //   射程の値は階級で変わらないが、払うコストも同じ比率で上がるので兵種間の比率は保たれる。
 // ------------------------------------------------------------
 
 // 階級: コスト = ステータス合計の予算
 const RANKS = {
-  '雑兵':   { cost: 50 },
-  '部隊長': { cost: 100 },
-  '総大将': { cost: 200 },
+  '雑兵':   { cost: 500 },
+  '部隊長': { cost: 1000 },
+  '総大将': { cost: 2000 },
 };
 const BASE_COST = RANKS['雑兵'].cost;
 const STAT_KEYS = ['hp', 'atk', 'def', 'spd', 'act'];   // 射程以外の比例拡大するステータス
 
-/** 射程に払うコスト（RNG1=1, 2=4, 3=7, 4=10, 5=13） */
+/** 射程に払うコスト（RNG1=10, 2=40, 3=70, 4=100, 5=130） */
 function rngCost(rng) {
-  return rng * 3 - 2;
+  return (rng * 3 - 2) * 10;
 }
 
 // ステータス値 → ゲーム内の値への換算
 const HP_SCALE = 3;           // 実HP = HP値 × 3
-const MOVE_DIV = 4;           // 移動力 = 階級補正後SPD ÷ 4（切り上げ）
-const ACT_PER_ATTACK = 5;     // 行動ゲージがこの値たまるごとに1回攻撃できる
-const ACT_GAUGE_MAX = 10;     // ゲージの上限（ため込みすぎ防止）
+const MOVE_DIV = 40;          // 移動力 = 階級補正後SPD ÷ 40（切り上げ）
+const ACT_PER_ATTACK = 50;    // 行動ゲージがこの値たまるごとに1回攻撃できる
+const ACT_GAUGE_MAX = 100;    // ゲージの上限（ため込みすぎ防止）
+const DAMAGE_DIE_SCALE = 10;  // ダメージのダイス = 1d6 × 10（ステータスの桁に合わせる）
+const MIN_DAMAGE = 10;        // 最低ダメージ
 
 // 固有能力: ステータスの予算からコストを払って持つ（階級が上がるとコストも同じ比率で上がる）
 const TRAITS = {
-  zoc:    { name: '足止め', cost: 4 },  // 隣接したマスに入った敵はそこで移動が止まる
-  charge: { name: '突撃',   cost: 2 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
+  zoc:    { name: '足止め', cost: 40 },  // 隣接したマスに入った敵はそこで移動が止まる
+  charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
 };
 const CHARGE_MIN = 2;         // 突撃になる最低直進マス数
 const CHARGE_BONUS = 0.3;     // 直進1マスあたりの威力上昇（初撃のみ）
@@ -59,36 +61,36 @@ const MATCHUP = {
   '弓兵': { '槍兵': 1.2,  '剣兵': 0.75 },
 };
 
-// 兵種: 雑兵（コスト50）のステータスプリセット
-//   HP / ATK / DEF / SPD / ACT + RNG（rngCost で換算）+ 固有能力のコスト = 50
+// 兵種: 雑兵（コスト500）のステータスプリセット
+//   HP / ATK / DEF / SPD / ACT + RNG（rngCost で換算）+ 固有能力のコスト = 500
 // HIT = 基本命中率(%)
 // falloff[距離] = { hit: 命中倍率, pow: 威力倍率 }。best = 最も性能を発揮する距離
 // rear = 後衛（前衛より前に出ない）
 const TYPES = {
   // 近距離特化、足と手数が速い
-  '剣兵': { stats: { hp: 12, atk: 10, def: 9, spd: 10, act: 8 }, rng: 1, hit: 85, best: 1,
+  '剣兵': { stats: { hp: 120, atk: 100, def: 90, spd: 100, act: 80 }, rng: 1, hit: 85, best: 1,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 打たれ強く射程2、攻撃速度はやや遅い
-  '槍兵': { stats: { hp: 12, atk: 10, def: 10, spd: 8, act: 6 }, rng: 2, hit: 80, best: 2,
+  '槍兵': { stats: { hp: 120, atk: 100, def: 100, spd: 80, act: 60 }, rng: 2, hit: 80, best: 2,
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 0.85, pow: 1.0 } } },
   // 遠距離攻撃の代わりに脆い。
   // 平面（マンハッタン距離）向け: 斜め方向は距離が長く数えられ、前衛越しに撃つと距離3〜4になるため
   // 最適帯を2〜3に広げ、射程を5にしている
-  '弓兵': { stats: { hp: 7, atk: 11, def: 4, spd: 8, act: 7 }, rng: 5, hit: 80, best: 3, rear: true,
+  '弓兵': { stats: { hp: 70, atk: 110, def: 40, spd: 80, act: 70 }, rng: 5, hit: 80, best: 3, rear: true,
             falloff: { 1: { hit: 0.6, pow: 1.0 },    // 近すぎて狙いにくいが威力はある
                        2: { hit: 1.0, pow: 1.0 },    // 最大性能
                        3: { hit: 1.0, pow: 1.0 },    // 最大性能（前衛越しの基本距離）
                        4: { hit: 0.9, pow: 0.9 },    // 準最大
                        5: { hit: 0.7, pow: 0.7 } } },// 最低
   // 被ダメも与ダメも低い壁役。足止め（ZOC）で敵の進軍を止める
-  '盾兵': { stats: { hp: 14, atk: 7, def: 14, spd: 5, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['zoc'],
+  '盾兵': { stats: { hp: 140, atk: 70, def: 140, spd: 50, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['zoc'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 移動速度重視。一直線に走り込んでの突撃が武器
-  '騎兵': { stats: { hp: 10, atk: 11, def: 8, spd: 13, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
+  '騎兵': { stats: { hp: 100, atk: 110, def: 80, spd: 130, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 総大将専用。三すくみの相性を持たず（与える側も受ける側も ×1.0）、総大将の強さは振り分けで決まる。
   // stats は固定枠（SPD / ACT）の基準値として使う。HP / ATK / DEF は振り分けで上書きされる
-  '将':   { stats: { hp: 12, atk: 11, def: 10, spd: 9, act: 7 }, rng: 1, hit: 85, best: 1, commanderOnly: true,
+  '将':   { stats: { hp: 120, atk: 110, def: 100, spd: 90, act: 70 }, rng: 1, hit: 85, best: 1, commanderOnly: true,
             falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
 };
 
@@ -123,7 +125,7 @@ function scaleStats(type, cost) {
 //   ※型どうしのバランスは未解決（docs/design.md 参照）のため、オート時は全員 AUTO_BUILD を使う。
 // ------------------------------------------------------------
 const UPGRADE_MULT = 2;
-const UPGRADE_CAP = { spd: 5, act: 5 };
+const UPGRADE_CAP = { spd: 50, act: 50 };
 const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
 
 /** 兵種の射程の上限 */
@@ -135,7 +137,7 @@ const COMMANDER_BUILDS = {
   'バランス型': { hp: 4, atk: 3, def: 3 },
   '攻撃型':     { hp: 3, atk: 5, def: 2 },
   '防御型':     { hp: 4, atk: 2, def: 4 },
-  '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 4 } },   // 騎乗して足を買う（移動力 3→4）分、他が薄い
+  '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 40 } },  // 騎乗して足を買う（移動力 3→4）分、他が薄い
 };
 
 /** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
@@ -214,12 +216,12 @@ class Unit {
     this.hp = this.maxHp;
     this.atk = st.atk;
     this.def = st.def;
-    this.spd = st.spd + d(3) - 1;          // 行動順。個体差 +0〜2
+    this.spd = st.spd + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
     this.rng = cs ? cs.rng : t.rng;
     this.act = st.act;
     this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV));
     this.actRate = st.act / tempoDiv;      // 1行動ごとに行動ゲージにたまる量
-    this.gauge = d(ACT_PER_ATTACK) - 1;    // 初期ゲージ（全員が同じタイミングで動かないようずらす）
+    this.gauge = (d(5) - 1) * 10;          // 初期ゲージ 0〜40（全員が同じタイミングで動かないようずらす）
     this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
     this.best = t.best;
     this.falloff = t.falloff;
@@ -354,7 +356,7 @@ function nearestEnemy(unit) {
 /**
  * 攻撃判定:
  *   命中率 = HIT × 距離の命中倍率。1d100 が命中率以下なら命中
- *   ダメージ = max(1, (ATK − DEF × 0.5 + 1d6) × 距離の威力倍率 × 相性 × 突撃)  ※四捨五入
+ *   ダメージ = max(10, (ATK − DEF × 0.5 + 1d6×10) × 距離の威力倍率 × 相性 × 突撃)  ※四捨五入
  *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
 function calcAttack(attacker, defender, bonus = 1) {
@@ -368,7 +370,7 @@ function calcAttack(attacker, defender, bonus = 1) {
   const crit = die === 6;
   const atk = crit ? Math.floor(attacker.atk * 1.5) : attacker.atk;
   const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus;
-  const dmg = Math.max(1, Math.round((atk - defender.def * 0.5 + die) * mult));
+  const dmg = Math.max(MIN_DAMAGE, Math.round((atk - defender.def * 0.5 + die * DAMAGE_DIE_SCALE) * mult));
   return { hit: true, hitRate, hitRoll, dmg, die, crit };
 }
 
