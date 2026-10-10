@@ -114,10 +114,17 @@ function scaleStats(type, cost) {
 //   SPD / ACT / RNG / 固有能力は兵種ごとの固定値（雑兵プリセットと同じ値）。
 //   固定枠の分は階級倍率分のコストを払い、残りを HP / ATK / DEF に自由に振り分ける。
 //   固定枠を上げたいときは、通常の UPGRADE_MULT 倍のポイントが必要（上限 UPGRADE_CAP）。
+//   射程の上限は兵種の基本値の RNG_CAP_RATE 倍（切り上げ）。弓より射程の長い剣などが生まれないようにする。
 //   オート時は下の「型」からランダムに選ぶ。手動プレイではプレイヤーが振り分ける想定。
 // ------------------------------------------------------------
 const UPGRADE_MULT = 2;
-const UPGRADE_CAP = { spd: 5, act: 5, rng: 1 };
+const UPGRADE_CAP = { spd: 5, act: 5 };
+const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
+
+/** 兵種の射程の上限 */
+function maxRng(type) {
+  return Math.ceil(TYPES[type].rng * RNG_CAP_RATE);
+}
 const COMMANDER_BUILDS = {
   'バランス型': { hp: 4, atk: 3, def: 3 },
   '攻撃型':     { hp: 3, atk: 5, def: 2 },
@@ -132,7 +139,7 @@ function commanderStats(type, cost, buildName) {
   const f = cost / BASE_COST;
   const buy = { spd: 0, act: 0, rng: 0, ...b.buy };
   for (const k of Object.keys(UPGRADE_CAP)) buy[k] = Math.min(buy[k], UPGRADE_CAP[k]);
-  const rng = t.rng + buy.rng;
+  const rng = Math.min(t.rng + buy.rng, maxRng(type));
   const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) + traitCost(t)) * f;
   const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
   const free = cost - fixedCost - upgradeCost;
