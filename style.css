@@ -114,3 +114,4 @@ button.skill { background: #7a5ea8; }
 .ed-preview { margin: 10px 0; line-height: 1.6; font-size: 0.9rem; }
 .ed-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .warn { color: #ff7a6f; }
+button.danger { background: #a14040; margin-left: auto; }

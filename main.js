@@ -24,6 +24,9 @@ const MAP_TYPES = ['平野'];
 //   射程の値は階級で変わらないが、払うコストも同じ比率で上がるので兵種間の比率は保たれる。
 // ------------------------------------------------------------
 
+// 階級の序列（大きいほど上）。戦局の決着は「お互いの最も階級が上の者」を倒したとき
+const RANK_ORDER = { '雑兵': 0, '部隊長': 1, '副将': 2, '総大将': 3 };
+
 // 階級: コスト = ステータス合計の予算
 const RANKS = {
   '雑兵':   { cost: 500 },
@@ -854,11 +857,14 @@ function actUnit(unit) {
 }
 
 /** 勝利判定。決着したら true を返す */
+/** その戦局でその陣営の最も階級が上のユニット（戦闘開始時点。決着・撤退の対象） */
+function leaderOf(army) {
+  return army.units.reduce((a, u) => (RANK_ORDER[u.rank] > RANK_ORDER[a.rank] ? u : a), army.units[0]);
+}
+
+/** 勝利判定: その戦局でお互いの最も階級が上の者を倒すか、全滅させたら決着。決着したら true */
 function checkVictory() {
-  const lost = army => {
-    const cmd = army.units.find(u => u.isCommander);
-    return !cmd.alive || army.units.every(u => !u.alive);
-  };
+  const lost = army => !leaderOf(army).alive || army.units.every(u => !u.alive);
   const pLost = lost(state.player);
   const cLost = lost(state.cpu);
   if (!pLost && !cLost) return false;
@@ -1091,6 +1097,19 @@ function canUseSkill(unit, name) {
   return false;
 }
 
+/**
+ * 撤退: その戦局の大将（最も階級が上のユニット）だけが選べる。
+ * 総大将の撤退は、その時点で自軍の敗北。（副将などの撤退は、戦略レイヤーができたら「その部隊が戦場から退く」扱いにする）
+ */
+function onWithdraw(unit) {
+  const msg = unit.isCommander
+    ? `${unit.name} を撤退させますか？\n総大将の撤退は、その時点で自軍の敗北になります。`
+    : `${unit.name} を撤退させますか？\nこの戦局は敗北になります。`;
+  if (typeof confirm === 'function' && !confirm(msg)) return;
+  log(`🏳 ${unit.name} は撤退した。`, unit.side);
+  endGame(unit.isCommander ? '🏳 総大将が撤退… プレイヤー軍の敗北' : '🏳 撤退… この戦局はプレイヤー軍の敗北');
+}
+
 function endManual() {
   const unit = currentUnit();
   state.current = null;
@@ -1260,6 +1279,7 @@ function renderActionPanel() {
       ${state.phase === 'move' ? '<button id="ap-stay">移動しない</button>' : ''}
       ${skills}
       ${state.phase !== 'retreat' ? '<button id="ap-end">行動終了</button>' : '<button id="ap-noretreat">離脱しない</button>'}
+      ${unit === leaderOf(state.player) ? '<button id="ap-withdraw" class="danger">撤退</button>' : ''}
     </div>`;
   const stay = $('ap-stay');
   if (stay) stay.onclick = () => { enterAttack(unit); render(unit); saveGame(); };
@@ -1267,6 +1287,8 @@ function renderActionPanel() {
   if (end) end.onclick = endManual;
   const nr = $('ap-noretreat');
   if (nr) nr.onclick = endManual;
+  const wd = $('ap-withdraw');
+  if (wd) wd.onclick = () => onWithdraw(unit);
   for (const b of panel.querySelectorAll('button.skill')) b.onclick = () => onSkill(b.dataset.skill);
 }
 
