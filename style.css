@@ -115,3 +115,20 @@ button.skill { background: #7a5ea8; }
 .ed-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .warn { color: #ff7a6f; }
 button.danger { background: #a14040; margin-left: auto; }
+
+/* 軍の編成 */
+#campaign-box summary { cursor: pointer; }
+#campaign-box summary h2 { display: inline; }
+.cp-head, .cp-pool, .sq-new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.cp-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .cp-cols { grid-template-columns: 1fr; } }
+.cp-cols > div { max-height: 220px; overflow-y: auto; }
+#campaign h3 { font-size: 1rem; margin: 10px 0 4px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: #33373f; border-radius: 12px; padding: 2px 8px; margin: 2px; font-size: 0.85rem; }
+.chip button.x { padding: 0 5px; font-size: 0.8rem; background: #6a3a3a; border-radius: 8px; }
+button.small { padding: 3px 8px; font-size: 0.8rem; }
+.squad { border: 1px solid #3c414b; border-radius: 8px; padding: 6px 10px; margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
+.sq-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sq-add, .sq-go { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sq-add input { width: 70px; }
+.cp-cpu { font-size: 0.85rem; color: #ccc; margin-top: 8px; }

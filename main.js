@@ -31,6 +31,7 @@ const RANK_ORDER = { '雑兵': 0, '兵長': 1, '副将': 2, '総大将': 3 };
 const RANKS = {
   '雑兵':   { cost: 500 },
   '兵長': { cost: 1000 },
+  '副将': { cost: 1500 },
   '総大将': { cost: 2000 },
 };
 const BASE_COST = RANKS['雑兵'].cost;
@@ -57,6 +58,7 @@ const BASE_TROOPS = 50;
 const MIN_TROOPS = 10;
 const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
+const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
 
@@ -149,6 +151,10 @@ function scaleStats(type, cost) {
 //   ※型どうしのバランスは未解決（docs/design.md 参照）のため、オート時は全員 AUTO_BUILD を使う。
 // ------------------------------------------------------------
 const UPGRADE_MULT = 1.0;
+// 統率力（総大将・副将は振り分けで買う）: 基本値は無料、1上げるごとに LDR_COST ポイント。隊に入れられる兵士の駒の上限になる
+const LDR_BASE = 3;
+const LDR_COST = 40;
+const LDR_MAX = 15;
 const UPGRADE_CAP = { spd: 50, act: 50 };
 const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
 
@@ -213,7 +219,7 @@ function clampShares(w) {
 }
 
 /** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
-function commanderStats(type, cost, build) {
+function commanderStats(type, cost, build, slots = SKILL_SLOTS['総大将']) {
   const t = TYPES[type];
   // 型の名前、または { hp, atk, def, buy, skills } の振り分け（手動プレイで使う）
   const b = typeof build === 'string' ? COMMANDER_BUILDS[build] : build;
@@ -223,14 +229,16 @@ function commanderStats(type, cost, build) {
   const rng = Math.min(t.rng + buy.rng, maxRng(type));
   const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) + traitCost(t)) * f;
   const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
-  const skills = [...new Set(b.skills || [])].slice(0, SKILL_SLOTS['総大将']);
+  const skills = [...new Set(b.skills || [])].slice(0, slots);
   const skillCost = skills.slice(1).reduce((s, k) => s + SKILLS[k].cost, 0);   // 1つ目は無料
-  const free = cost - fixedCost - upgradeCost - skillCost;
+  const ldr = Math.max(LDR_BASE, Math.min(LDR_MAX, b.ldr ?? LDR_BASE));
+  const ldrCost = (ldr - LDR_BASE) * LDR_COST;
+  const free = cost - fixedCost - upgradeCost - skillCost - ldrCost;
   const share = clampShares({ hp: b.hp, atk: b.atk, def: b.def });
   const atk = Math.round(free * share.atk);
   const def = Math.round(free * share.def);
   const stats = { hp: free - atk - def, atk, def, spd: t.stats.spd + buy.spd, act: t.stats.act + buy.act };
-  return { stats, rng, fixedCost, upgradeCost, skillCost, free, skills };
+  return { stats, rng, fixedCost, upgradeCost, skillCost, ldrCost, free, skills, ldr };
 }
 
 // 起動時にプリセットの合計がコストと一致しているか確認する
@@ -272,9 +280,9 @@ class Unit {
   constructor(side, rank, type, name, x, y, build = 'バランス型', troops = BASE_TROOPS) {
     const r = RANKS[rank];
     const t = TYPES[type];
-    const isCommander = rank === '総大将';
-    // 総大将は固定枠 + 自由振り分け、それ以外は雑兵プリセットの拡大
-    const cs = isCommander ? commanderStats(type, r.cost, build) : null;
+    // 総大将・副将は固定枠 + 自由振り分け、それ以外は雑兵プリセットの拡大
+    const isGeneral = rank === '総大将' || rank === '副将';
+    const cs = isGeneral ? commanderStats(type, r.cost, build, SKILL_SLOTS[rank]) : null;
     const st = cs ? cs.stats : scaleStats(type, r.cost);
     // テンポ系（移動・攻撃頻度）は階級で伸びすぎないよう、雑兵基準に割り戻して使う
     // （総大将の SPD / ACT は最初から雑兵基準の固定値なので割り戻さない）
@@ -286,6 +294,7 @@ class Unit {
     this.type = type;
     this.cost = r.cost;
     this.build = cs ? (typeof build === 'string' ? build : 'カスタム') : null;
+    this.ldr = cs ? cs.ldr : null;          // 統率力（総大将・副将。兵長は編成側で持つ）
     this.stats = st;                       // コスト制のステータス値（合計 = cost）
     // 雑兵の駒は人数を持つ（HP は人数に比例）。将は人数なし
     this.troops = rank === '雑兵' ? Math.max(MIN_TROOPS, troops) : null;
@@ -406,6 +415,7 @@ const state = {
   current: null,     // 手動プレイ: 入力待ちのユニット id
   phase: null,       // 手動プレイ: 'move' | 'attack' | 'retreat'
   manual: null,      // 手動プレイ: この行動の途中経過
+  campaignBattle: null, // 軍の編成から出陣した戦闘なら { player: 隊id, cpu: 隊id, before: {...} }
 };
 
 function allUnits() {
@@ -419,7 +429,7 @@ function enemiesOf(unit) {
 
 /** 総大将以外の配下のうち、生き残っている割合 */
 function troopRatio(side) {
-  const troops = state[side].units.filter(u => !u.isCommander);
+  const troops = state[side].units.filter(u => !isLeader(u));
   return troops.length ? troops.filter(u => u.alive).length / troops.length : 0;
 }
 
@@ -459,17 +469,23 @@ function nearestEnemy(unit) {
   return best;
 }
 
-/** 総大将の士気範囲内にいるか（総大将自身は対象外） */
+/** その戦局の大将の士気範囲内にいるか（大将自身は対象外） */
 function inMorale(u) {
-  if (u.isCommander) return false;
-  const cmd = state[u.side].units.find(c => c.isCommander && c.alive);
+  if (isLeader(u)) return false;
+  const cmd = leaderOf(state[u.side]);
+  if (!cmd.alive) return false;
   return !!cmd && distance(u, cmd) <= MORALE_RANGE;
 }
 
 /** バフと士気を合わせた能力の倍率 */
 function statMult(u, stat) {
   const buff = u.buffs.filter(b => b.stat === stat).reduce((s, b) => s + b.value, 0);
-  return 1 + buff + (inMorale(u) ? MORALE_BONUS : 0);
+  return 1 + buff + (inMorale(u) ? MORALE_BONUS : 0) + (hasSergeant(u) ? SERGEANT_BUFF : 0);
+}
+
+/** 兵士の駒に、同じ兵種の兵長（隊長）が同じ戦場で健在か */
+function hasSergeant(u) {
+  return u.rank === '雑兵' && alliesOf(u).some(a => a.rank === '兵長' && a.type === u.type);
 }
 
 function effAtk(u) { return u.atk * statMult(u, 'atk'); }
@@ -565,7 +581,7 @@ function buildQueue() {
  */
 function withinFrontLine(unit, p) {
   if (!unit.rear) return true;
-  const front = alliesOf(unit).filter(a => !a.rear && !a.isCommander);
+  const front = alliesOf(unit).filter(a => !a.rear && !isLeader(a));
   if (front.length === 0) return true;
   // プレイヤーは y が小さいほど前、CPU は y が大きいほど前
   return unit.side === 'player'
@@ -780,7 +796,7 @@ function actUnit(unit) {
 
   // 最適距離より遠い → 前進（射程外なら必ず、射程内でも最適距離まで詰める）
   // 総大将は配下が残っている間は本陣から動かない（射程内に敵がいれば攻撃はする）
-  const holding = unit.isCommander && alliesOf(unit).length > 0 && troopRatio(unit.side) >= advanceRatio(unit.side);
+  const holding = isLeader(unit) && alliesOf(unit).length > 0 && troopRatio(unit.side) >= advanceRatio(unit.side);
   // 遠隔狙撃: あと1マス届かない敵がいれば、その場から撃つ
   if (skillReady(unit, '遠隔狙撃') && distance(unit, target) === unit.rng + 1 && (holding || unit.rng > 1)) {
     useSkill(unit, '遠隔狙撃');
@@ -897,6 +913,11 @@ function leaderOf(army) {
   return army.units.reduce((a, u) => (RANK_ORDER[u.rank] > RANK_ORDER[a.rank] ? u : a), army.units[0]);
 }
 
+/** その戦局の大将か（本陣待機・士気・最後列の布陣などの対象） */
+function isLeader(u) {
+  return u === leaderOf(state[u.side]);
+}
+
 /** 勝利判定: その戦局でお互いの最も階級が上の者を倒すか、全滅させたら決着。決着したら true */
 function checkVictory() {
   const lost = army => !leaderOf(army).alive || army.units.every(u => !u.alive);
@@ -920,6 +941,7 @@ function endGame(msg) {
   state.phase = null;
   clearTimeout(state.timer);
   log(`=== ${msg} (${state.turn}ターン) ===`, 'turn');
+  if (state.campaignBattle) applyBattleResult(msg);
   showResult();
   updateButtons();
   render();
@@ -1169,6 +1191,7 @@ function saveGame() {
     mode: state.mode, map: state.map, player: state.player, cpu: state.cpu,
     turn: state.turn, queue: state.queue, running: state.running, over: state.over, result: state.result,
     logs: state.logs, cmdReady: state.cmdReady, current: state.current, phase: state.phase, manual: state.manual,
+    campaignBattle: state.campaignBattle,
     advance: { player: $('advance-player').value, cpu: $('advance-cpu').value },
   };
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* 保存できない環境では何もしない */ }
@@ -1190,6 +1213,7 @@ function loadGame() {
     mode: data.mode, map: data.map, player: revive(data.player), cpu: revive(data.cpu),
     turn: data.turn, queue: data.queue, running: data.running, over: data.over, result: data.result,
     logs: [], cmdReady: data.cmdReady, current: data.current, phase: data.phase, manual: data.manual, timer: null,
+    campaignBattle: data.campaignBattle || null,
   });
   unitSeq = data.unitSeq;
   $('mode').value = state.mode;
@@ -1244,10 +1268,14 @@ function renderArmy(army, side, acting) {
   }
   const alive = army.units.filter(u => u.alive);
   const cost = army.units.reduce((s, u) => s + u.cost, 0);
+  const count = r => army.units.filter(u => u.rank === r).length;
+  const troops = army.units.filter(u => u.troops).reduce((s, u) => s + (u.alive ? u.troopsNow : 0), 0);
   $(`${side}-summary`).textContent =
-    `総大将1 / 兵長${army.leaders} / 雑兵${army.soldiers}　生存 ${alive.length}/${army.units.length}　総コスト ${cost}`;
-  $(`${side}-dice`).textContent =
-    `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
+    ['総大将', '副将', '兵長', '雑兵'].filter(r => count(r)).map(r => `${r === '雑兵' ? '兵士の駒' : r}${count(r)}`).join(' / ') +
+    `　兵 ${troops}人　生存 ${alive.length}/${army.units.length}　総コスト ${cost}`;
+  $(`${side}-dice`).textContent = army.squadName
+    ? `【${army.squadName}】`
+    : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
 
 function renderField(acting) {
@@ -1255,7 +1283,7 @@ function renderField(acting) {
   const field = $('field');
   field.innerHTML = '';
   field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
-  const short = u => (u.isCommander ? '★' : u.rank === '兵長' ? '◆' : '') + u.type[0];
+  const short = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '') + u.type[0];
   const cur = currentUnit();
   const reach = new Set(cur ? manualReach(cur).map(([x, y]) => `${x},${y}`) : []);
   const targets = new Set(cur ? manualTargets(cur).map(u => u.id) : []);
@@ -1276,7 +1304,7 @@ function renderField(acting) {
       field.appendChild(cell);
     }
   }
-  const legend = '★将=総大将 ◆兵長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
+  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
     (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
@@ -1430,9 +1458,455 @@ function confirmEditor() {
   saveGame();
 }
 
+
+// ============================================================
+// 軍の編成（戦略レイヤーの第一歩）
+//   ダイスで兵種ごとの総数・副将・兵長を決め、本隊と分隊（小隊）に将と兵士を割り振る。
+//   編成した隊どうしを戦術戦闘で戦わせ、損害（兵の人数・倒れた将）を持ち帰る。
+// ============================================================
+
+const TROOP_DICE = { sides: 10, unit: 100 };            // 各兵種の総数 = 1d10 × 100（100〜1000人）
+const GENERAL_DICE = { n: 2, sides: 4, plus: 2 };       // 副将の人数 2d4+2（4〜10人）
+const SERGEANT_DICE = { n: 1, sides: 4, plus: 2 };      // 兵長の人数（兵種ごと）1d4+2（3〜6人）
+const SERGEANT_LDR_DICE = { n: 1, sides: 5, plus: 1 };  // 兵長の統率力 1d5+1（2〜6）
+const PIECE_DEFAULT = 50;                                // 兵士の駒を追加するときの初期人数
+const CAMPAIGN_KEY = 'dice-senki-campaign-v1';
+
+const campaign = { armies: null, editing: null };
+
+function rollExpr(e) {
+  const r = roll(e.n, e.sides);
+  return { dice: r.dice, total: r.total + e.plus };
+}
+
+function defaultBuild(ldr) {
+  const b = COMMANDER_BUILDS[AUTO_BUILD];
+  return { hp: b.hp, atk: b.atk, def: b.def, buy: { ...(b.buy || {}) }, skills: [...b.skills], ldr };
+}
+
+/** ダイスで新しい軍を作る（本隊だけがある状態） */
+function newArmy(side) {
+  const label = side === 'player' ? 'P' : 'C';
+  const totals = {}, troopDice = {}, sergeantDice = {};
+  for (const t of TYPE_NAMES) {
+    troopDice[t] = d(TROOP_DICE.sides);
+    totals[t] = troopDice[t] * TROOP_DICE.unit;
+  }
+  const generalRoll = rollExpr(GENERAL_DICE);
+  const generals = [{ id: `${side}-G0`, rank: '総大将', name: `${label}総大将`, build: defaultBuild(LDR_BASE + 4) }];
+  for (let i = 1; i <= generalRoll.total; i++) {
+    generals.push({ id: `${side}-G${i}`, rank: '副将', name: `${label}副将${i}`, build: defaultBuild(LDR_BASE + 2) });
+  }
+  const sergeants = [];
+  for (const t of TYPE_NAMES) {
+    sergeantDice[t] = rollExpr(SERGEANT_DICE);
+    for (let i = 1; i <= sergeantDice[t].total; i++) {
+      sergeants.push({ id: `${side}-S${t}${i}`, type: t, name: `${label}${t}長${i}`, ldr: rollExpr(SERGEANT_LDR_DICE).total });
+    }
+  }
+  return {
+    side, totals, troopDice, generalRoll, sergeantDice, generals, sergeants, seq: 1, defeated: false,
+    squads: [{ id: `${side}-Q0`, name: '本隊', leader: `${side}-G0`, sergeants: [], pieces: [] }],
+  };
+}
+
+function memberById(army, id) {
+  return army.generals.find(g => g.id === id) || army.sergeants.find(s => s.id === id);
+}
+
+/** 将の統率力（総大将・副将は振り分け、兵長はダイス） */
+function memberLdr(m) {
+  if (!m) return 0;
+  return m.rank ? commanderStats(COMMANDER_TYPE, RANKS[m.rank].cost, m.build, SKILL_SLOTS[m.rank]).ldr : m.ldr;
+}
+
+/** その将が所属している隊 */
+function squadOf(army, id) {
+  return army.squads.find(q => q.leader === id || q.sergeants.includes(id));
+}
+
+function assignedTroops(army, type) {
+  return army.squads.reduce((s, q) => s + q.pieces.filter(p => p.type === type).reduce((a, p) => a + p.size, 0), 0);
+}
+
+function poolLeft(army, type) {
+  return army.totals[type] - assignedTroops(army, type);
+}
+
+/** 隊に入れられる兵士の駒の上限 = 隊長の統率力 + 隊にいる兵長の統率力 */
+function squadCap(army, q) {
+  return memberLdr(memberById(army, q.leader)) + q.sergeants.reduce((s, id) => s + memberLdr(memberById(army, id)), 0);
+}
+
+function squadKind(army, q) {
+  if (q.name === '本隊') return '本隊';
+  return memberById(army, q.leader)?.rank === '副将' ? '分隊' : '小隊';
+}
+
+function squadTroops(q) {
+  return q.pieces.reduce((s, p) => s + p.size, 0);
+}
+
+/** おまかせ編成: 副将ごとに分隊を作り、兵長を順番に配り、兵士は各隊の統率の範囲で50人ずつの駒にする */
+function autoForm(army) {
+  const main = army.squads.find(q => q.name === '本隊');
+  main.sergeants = [];
+  main.pieces = [];
+  army.squads = [main];
+  for (const g of army.generals.filter(g => g.rank === '副将')) {
+    army.squads.push({ id: `${army.side}-Q${army.seq++}`, name: `${g.name}隊`, leader: g.id, sergeants: [], pieces: [] });
+  }
+  army.sergeants.forEach((s, i) => army.squads[i % army.squads.length].sergeants.push(s.id));
+  const n = army.squads.length;
+  for (const q of army.squads) {
+    const quota = {};
+    for (const t of TYPE_NAMES) quota[t] = Math.floor(army.totals[t] / n / 10) * 10;
+    let added = true;
+    while (added && q.pieces.length < squadCap(army, q)) {
+      added = false;
+      for (const t of TYPE_NAMES) {
+        if (q.pieces.length >= squadCap(army, q)) break;
+        const size = Math.min(PIECE_DEFAULT, quota[t], poolLeft(army, t));
+        if (size < MIN_TROOPS) continue;
+        q.pieces.push({ type: t, size });
+        quota[t] -= size;
+        added = true;
+      }
+    }
+  }
+}
+
+/** 将が倒れたときの処理（隊長が倒れた分隊は、兵長がいれば小隊になり、いなければ解散して兵は予備に戻る） */
+function removeMember(army, id) {
+  const q = squadOf(army, id);
+  army.generals = army.generals.filter(g => g.id !== id);
+  army.sergeants = army.sergeants.filter(s => s.id !== id);
+  if (!q) return;
+  if (q.leader === id) {
+    if (q.name === '本隊') { army.defeated = true; return; }
+    if (q.sergeants.length) {
+      q.leader = q.sergeants.shift();
+      q.name = `${memberById(army, q.leader).name}隊`;
+    } else {
+      army.squads = army.squads.filter(x => x !== q);
+    }
+  } else {
+    q.sergeants = q.sergeants.filter(x => x !== id);
+  }
+}
+
+// ------------------------------------------------------------
+// 隊 → 戦術戦闘の駒
+// ------------------------------------------------------------
+
+function buildBattleArmy(side, army, q, map) {
+  const back = side === 'player' ? map.h - 1 : 0;
+  const dir = side === 'player' ? -1 : 1;
+  const cx = Math.floor(map.w / 2);
+  const cells = [];
+  for (let r = 0; r < DEPLOY_ROWS; r++) {
+    for (let x = 0; x < map.w; x++) {
+      if (r === 0 && x === cx) continue;
+      cells.push([x, back + dir * r]);
+    }
+  }
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+  cells.sort((a, b) => Math.abs(b[1] - back) - Math.abs(a[1] - back));
+
+  const units = [];
+  const lead = memberById(army, q.leader);
+  const leader = lead.rank
+    ? new Unit(side, lead.rank, COMMANDER_TYPE, lead.name, cx, back, lead.build)
+    : new Unit(side, '兵長', lead.type, lead.name, cx, back);
+  leader.ref = { kind: 'member', id: lead.id };
+  units.push(leader);
+  const troops = [];
+  for (const id of q.sergeants) {
+    const sg = memberById(army, id);
+    const u = new Unit(side, '兵長', sg.type, sg.name, 0, 0);
+    u.ref = { kind: 'member', id };
+    troops.push(u);
+  }
+  const seq = {};
+  q.pieces.forEach((p, i) => {
+    seq[p.type] = (seq[p.type] || 0) + 1;
+    const u = new Unit(side, '雑兵', p.type, `${side === 'player' ? 'P' : 'C'}${p.type}${seq[p.type]}`, 0, 0, AUTO_BUILD, p.size);
+    u.ref = { kind: 'piece', index: i };
+    troops.push(u);
+  });
+  // 前衛は前の列から、後衛は後ろの列から。入りきらない駒は出陣できない
+  let front = 0, rear = cells.length - 1;
+  const benched = [];
+  for (const u of troops) {
+    if (front > rear) { if (u.ref.kind === 'piece') benched.push(u.ref.index); continue; }
+    [u.x, u.y] = u.rear ? cells[rear--] : cells[front++];
+    units.push(u);
+  }
+  return { units, benched, leaders: 0, soldiers: 0, dice: { dice: [], total: 0 }, squadName: `${q.name}（隊長 ${lead.name}）` };
+}
+
+function startCampaignBattle(pid, cid) {
+  const A = campaign.armies;
+  const pq = A.player.squads.find(q => q.id === pid);
+  const cq = A.cpu.squads.find(q => q.id === cid);
+  if (!pq || !cq || state.running) return;
+  reset();
+  state.mode = $('mode').value;
+  state.map = formMap();
+  state.player = buildBattleArmy('player', A.player, pq, state.map);
+  state.cpu = buildBattleArmy('cpu', A.cpu, cq, state.map);
+  state.cmdReady = true;
+  const before = side => {
+    const o = {};
+    for (const u of state[side].units) if (u.troops) o[u.type] = (o[u.type] || 0) + u.troops;
+    return o;
+  };
+  state.campaignBattle = { player: pid, cpu: cid, before: { player: before('player'), cpu: before('cpu') } };
+  log(`⚔ 出陣: ${pq.name} vs CPU ${cq.name}（マップ ${state.map.type} ${state.map.w}×${state.map.h}）`, 'turn');
+  log('「戦闘開始」で開戦します。', 'sys');
+  render();
+  renderEditor();
+  updateButtons();
+  saveGame();
+  $('field').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** 戦闘の結果を軍に持ち帰る: 兵士の駒は残った人数、倒れた将は軍から外れる */
+function applyBattleResult(msg) {
+  const cb = state.campaignBattle;
+  const A = campaign.armies;
+  if (!cb || cb.applied || !A) return;
+  for (const side of ['player', 'cpu']) {
+    const army = A[side];
+    const q = army.squads.find(x => x.id === cb[side]);
+    if (!q) continue;
+    const units = state[side].units;
+    // 布陣しきれず出陣しなかった駒はそのまま残る
+    q.pieces = [
+      ...(state[side].benched || []).map(i => q.pieces[i]),
+      ...units.filter(u => u.ref?.kind === 'piece' && u.alive).map(u => ({ type: u.type, size: u.troopsNow })),
+    ];
+    const after = {};
+    for (const u of units) if (u.ref?.kind === 'piece' && u.alive) after[u.type] = (after[u.type] || 0) + u.troopsNow;
+    const losses = [];
+    for (const [t, n] of Object.entries(cb.before[side])) {
+      const lost = n - (after[t] || 0);
+      army.totals[t] -= lost;
+      if (lost) losses.push(`${t}${lost}人`);
+    }
+    const fallen = units.filter(u => u.ref?.kind === 'member' && !u.alive);
+    for (const u of fallen) removeMember(army, u.ref.id);
+    log(`📜 ${side === 'player' ? '自軍' : 'CPU軍'}の損害: ${losses.join('・') || 'なし'}${fallen.length ? ` / 討ち死に: ${fallen.map(u => u.name).join('・')}` : ''}`, side);
+  }
+  if (/総大将が撤退/.test(msg)) A.player.defeated = true;
+  if (A.player.defeated) log('💀 総大将を失い、自軍は敗北した。', 'death');
+  if (A.cpu.defeated) log('🏆 CPU軍の総大将を討ち取った！ 自軍の勝利！', 'turn');
+  cb.applied = true;
+  saveCampaign();
+  renderCampaign();
+}
+
+// ------------------------------------------------------------
+// 保存
+// ------------------------------------------------------------
+
+function saveCampaign() {
+  try { localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(campaign.armies)); } catch (e) { /* 保存できない環境では何もしない */ }
+}
+
+function loadCampaign() {
+  try {
+    const a = JSON.parse(localStorage.getItem(CAMPAIGN_KEY));
+    if (a && a.player && a.cpu) campaign.armies = a;
+  } catch (e) { /* 同上 */ }
+}
+
+// ------------------------------------------------------------
+// 画面
+// ------------------------------------------------------------
+
+function renderCampaign() {
+  const box = $('campaign');
+  const A = campaign.armies;
+  if (!A) {
+    box.innerHTML = `<div class="cp-head"><button data-act="new">🎲 新しい軍を作る</button>
+      <span class="sub">兵種ごとの総数・副将・兵長をダイスで決め、本隊と分隊に割り振って出陣します。</span></div>`;
+    return;
+  }
+  const P = A.player;
+  const over = P.defeated || A.cpu.defeated;
+  const usedBy = id => squadOf(P, id)?.name || '予備';
+  const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
+  const generals = P.generals.map(g => `<tr><td>${g.name}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
+      <td><button class="small" data-act="edit" data-id="${g.id}">振り分け</button></td></tr>`).join('');
+  const sergeants = P.sergeants.map(sg => `<tr><td>${sg.name}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
+  const freeMembers = (filter) => [...P.generals.filter(g => g.rank === '副将'), ...P.sergeants]
+    .filter(m => !squadOf(P, m.id) && filter(m));
+  const cpuSquads = A.cpu.squads.map(q => `<option value="${q.id}">${q.name}（${q.pieces.length}駒・${squadTroops(q)}人）</option>`).join('');
+  const squads = P.squads.map(q => {
+    const lead = memberById(P, q.leader);
+    const cap = squadCap(P, q);
+    const sgOpts = freeMembers(m => !m.rank).map(m => `<option value="${m.id}">${m.name}（統率${m.ldr}）</option>`).join('');
+    const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type} ${p.size}人${P.sergeants.some(s => s.type === p.type && q.sergeants.includes(s.id)) || (lead && !lead.rank && lead.type === p.type) ? '★' : ''}
+        <button class="x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">×</button></span>`).join('') || '<span class="sub">なし</span>';
+    const sgs = q.sergeants.map(id => `<span class="chip">${memberById(P, id).name}（統率${memberById(P, id).ldr}）
+        <button class="x" data-act="rmsg" data-q="${q.id}" data-id="${id}">×</button></span>`).join('') || '<span class="sub">なし</span>';
+    return `<div class="squad">
+      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 駒 ${q.pieces.length}/${cap} ／ 兵 ${squadTroops(q)}人
+        ${q.name !== '本隊' ? `<button class="small" data-act="disband" data-q="${q.id}">解散</button>` : ''}</div>
+      <div>兵長: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">兵長を追加…</option>${sgOpts}</select>` : ''}</div>
+      <div>兵士の駒: ${pieces}</div>
+      <div class="sq-add">
+        <select data-role="ptype" data-q="${q.id}">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
+        <input type="number" data-role="psize" data-q="${q.id}" min="${MIN_TROOPS}" step="10" value="${PIECE_DEFAULT}">人
+        <button class="small" data-act="addpiece" data-q="${q.id}" ${q.pieces.length >= cap ? 'disabled' : ''}>駒を追加</button>
+        <span class="sub">（★=兵長が隊長、ATK/DEF+${SERGEANT_BUFF * 100}%）</span>
+      </div>
+      <div class="sq-go">相手: <select data-role="foe" data-q="${q.id}">${cpuSquads}</select>
+        <button data-act="sortie" data-q="${q.id}" ${(q.pieces.length || q.sergeants.length) && !over ? '' : 'disabled'}>出陣</button></div>
+    </div>`;
+  }).join('');
+  const leaderOpts = freeMembers(() => true).map(m => `<option value="${m.id}">${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）</option>`).join('');
+  box.innerHTML = `
+    <div class="cp-head">
+      <button data-act="new">🎲 新しい軍を作る</button>
+      <button data-act="auto">おまかせ編成</button>
+      ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}
+    </div>
+    <div class="cp-pool">兵力（予備 / 総数）: ${pool}
+      <span class="sub">副将 🎲[${P.generalRoll.dice.join('][')}]+${GENERAL_DICE.plus} = ${P.generalRoll.total}人 ／ 兵長 ${P.sergeants.length}人</span></div>
+    <div class="cp-cols">
+      <div><h3>将</h3><table><thead><tr><th>名前</th><th>階級</th><th>統率</th><th>所属</th><th></th></tr></thead><tbody>${generals}</tbody></table></div>
+      <div><h3>兵長</h3><table><thead><tr><th>名前</th><th>兵種</th><th>統率</th><th>所属</th></tr></thead><tbody>${sergeants}</tbody></table></div>
+    </div>
+    <div id="gen-editor"></div>
+    <h3>隊</h3>
+    ${squads}
+    <div class="sq-new">${leaderOpts ? `新しい隊（副将 → 分隊 / 兵長 → 小隊）: <select data-role="newleader"><option value="">隊長を選ぶ…</option>${leaderOpts}</select>` : '<span class="sub">隊長にできる将が残っていません</span>'}</div>
+    <details class="cp-cpu"><summary>CPU軍の編成</summary>
+      ${A.cpu.squads.map(q => `<div>${q.name}（${squadKind(A.cpu, q)}）: 兵長${q.sergeants.length} / ${q.pieces.map(p => `${p.type}${p.size}`).join('・')}</div>`).join('')}
+    </details>`;
+  if (campaign.editing) renderGeneralEditor();
+}
+
+function renderGeneralEditor() {
+  const P = campaign.armies.player;
+  const g = P.generals.find(x => x.id === campaign.editing);
+  const box = $('gen-editor');
+  if (!g || !box) return;
+  const b = g.build;
+  const slots = SKILL_SLOTS[g.rank];
+  const skillOpts = sel => Object.entries(SKILLS).map(([k, sk]) => `<option value="${k}" ${sel === k ? 'selected' : ''}>${k}（${sk.cost}）</option>`).join('');
+  const upOpts = sel => [0, 10, 20, 30, 40, 50].map(n => `<option value="${n}" ${sel === n ? 'selected' : ''}>+${n}</option>`).join('');
+  box.innerHTML = `<div class="panel">
+    <h3>${g.name}（${g.rank}）の振り分け</h3>
+    <div class="ed-grid">
+      <label>HP <input type="range" data-g="hp" min="1" max="10" step="0.5" value="${b.hp}"></label>
+      <label>ATK <input type="range" data-g="atk" min="1" max="10" step="0.5" value="${b.atk}"></label>
+      <label>DEF <input type="range" data-g="def" min="1" max="10" step="0.5" value="${b.def}"></label>
+      <label>統率力 <input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}"><span data-g="ldrv">${b.ldr}</span></label>
+      <label>SPD 強化 <select data-g="spd">${upOpts(b.buy?.spd || 0)}</select></label>
+      <label>ACT 強化 <select data-g="act">${upOpts(b.buy?.act || 0)}</select></label>
+      <label>スキル1 <select data-g="s1">${skillOpts(b.skills[0])}</select></label>
+      ${slots > 1 ? `<label>スキル2 <select data-g="s2"><option value="">なし</option>${skillOpts(b.skills[1])}</select></label>` : ''}
+    </div>
+    <div class="ed-preview" data-g="preview"></div>
+    <div class="ed-buttons"><button data-act="edok">決定</button><button data-act="edcancel">閉じる</button></div>
+  </div>`;
+  const read = () => {
+    const v = k => box.querySelector(`[data-g="${k}"]`);
+    return {
+      hp: +v('hp').value, atk: +v('atk').value, def: +v('def').value, ldr: +v('ldr').value,
+      buy: { spd: +v('spd').value, act: +v('act').value },
+      skills: [v('s1').value, v('s2')?.value].filter(Boolean),
+    };
+  };
+  const preview = () => {
+    const nb = read();
+    const cs = commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, nb, slots);
+    const tmp = new Unit('player', g.rank, COMMANDER_TYPE, '', 0, 0, nb);
+    unitSeq--;
+    box.querySelector('[data-g="ldrv"]').textContent = nb.ldr;
+    box.querySelector('[data-g="preview"]').innerHTML =
+      `コスト ${RANKS[g.rank].cost} − 固定枠 ${cs.fixedCost} − 強化 ${cs.upgradeCost} − スキル ${cs.skillCost} − 統率 ${cs.ldrCost} = <b>自由枠 ${cs.free}</b><br>
+       → 実HP <b>${tmp.maxHp}</b> / ATK <b>${tmp.atk}</b> / DEF <b>${tmp.def}</b> / 移動 ${tmp.move} / 統率 <b>${cs.ldr}</b>（兵士の駒 ${cs.ldr}つまで）/ スキル ${cs.skills.join('・')}
+       ${cs.free > 0 ? '' : '<br><span class="warn">自由枠が足りません</span>'}`;
+    box.querySelector('[data-act="edok"]').disabled = cs.free <= 0;
+  };
+  box.querySelectorAll('input, select').forEach(el => el.addEventListener('input', preview));
+  box.querySelector('[data-act="edok"]').onclick = () => {
+    g.build = read();
+    campaign.editing = null;
+    saveCampaign();
+    renderCampaign();
+  };
+  box.querySelector('[data-act="edcancel"]').onclick = () => { campaign.editing = null; renderCampaign(); };
+  preview();
+}
+
+function onCampaignClick(e) {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.closest('#gen-editor')) return;
+  const A = campaign.armies;
+  const P = A && A.player;
+  const q = P && P.squads.find(x => x.id === el.dataset.q);
+  switch (el.dataset.act) {
+    case 'new':
+      if (A && !confirm('今の軍を破棄して、新しい軍を作りますか？')) return;
+      campaign.armies = { player: newArmy('player'), cpu: newArmy('cpu') };
+      autoForm(campaign.armies.cpu);
+      break;
+    case 'auto': autoForm(P); break;
+    case 'edit': campaign.editing = el.dataset.id; break;
+    case 'disband': P.squads = P.squads.filter(x => x !== q); break;
+    case 'rmpiece': q.pieces.splice(+el.dataset.i, 1); break;
+    case 'rmsg': q.sergeants = q.sergeants.filter(id => id !== el.dataset.id); break;
+    case 'addpiece': {
+      const type = $('campaign').querySelector(`[data-role="ptype"][data-q="${q.id}"]`).value;
+      const size = Math.floor(+$('campaign').querySelector(`[data-role="psize"][data-q="${q.id}"]`).value / 10) * 10;
+      if (size < MIN_TROOPS) return alert(`1駒は${MIN_TROOPS}人以上です。`);
+      if (size > poolLeft(P, type)) return alert(`${type}の予備は${poolLeft(P, type)}人しかいません。`);
+      if (q.pieces.length >= squadCap(P, q)) return alert('統率力の上限です。兵長を加えるか、統率力を上げてください。');
+      q.pieces.push({ type, size });
+      break;
+    }
+    case 'sortie': {
+      const foe = $('campaign').querySelector(`[data-role="foe"][data-q="${q.id}"]`).value;
+      startCampaignBattle(q.id, foe);
+      return;
+    }
+    default: return;
+  }
+  saveCampaign();
+  renderCampaign();
+}
+
+function onCampaignChange(e) {
+  const el = e.target;
+  const P = campaign.armies && campaign.armies.player;
+  if (!P || !el.dataset.role) return;
+  if (el.dataset.role === 'sg' && el.value) {
+    const q = P.squads.find(x => x.id === el.dataset.q);
+    q.sergeants.push(el.value);
+  } else if (el.dataset.role === 'newleader' && el.value) {
+    const m = memberById(P, el.value);
+    P.squads.push({ id: `player-Q${P.seq++}`, name: `${m.name}隊`, leader: m.id, sergeants: [], pieces: [] });
+  } else {
+    return;
+  }
+  saveCampaign();
+  renderCampaign();
+}
+
 // ============================================================
 // イベント
 // ============================================================
+
+$('campaign').addEventListener('click', onCampaignClick);
+$('campaign').addEventListener('change', onCampaignChange);
 
 $('btn-form').addEventListener('click', () => {
   reset();
@@ -1477,7 +1951,7 @@ function reset() {
   clearTimeout(state.timer);
   Object.assign(state, {
     map: null, player: null, cpu: null, turn: 0, queue: [], running: false, over: false, result: null, timer: null,
-    logs: [], cmdReady: false, current: null, phase: null, manual: null,
+    logs: [], cmdReady: false, current: null, phase: null, manual: null, campaignBattle: null,
   });
   unitSeq = 0;
   $('log').innerHTML = '';
@@ -1496,6 +1970,8 @@ function reset() {
 }
 
 // 起動時: 保存があれば続きから、なければ初期状態
+loadCampaign();
+renderCampaign();
 if (loadGame()) {
   showResult();
   render();
