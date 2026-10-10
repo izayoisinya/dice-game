@@ -44,7 +44,7 @@ const ACT_PER_ATTACK = 50;    // 行動ゲージがこの値たまるごとに1�
 const ACT_GAUGE_MAX = 100;    // ゲージの上限（ため込みすぎ防止）
 const DAMAGE_DIE_SCALE = 10;  // ダメージのダイス = 1d6 × 10（ステータスの桁に合わせる）
 const MIN_DAMAGE = 10;        // 最低ダメージ（固定値）
-const MIN_DAMAGE_RATE = 0.25; // 最低でも ATK のこの割合は通る（DEF が高すぎて削れない状態を防ぐ）
+const MIN_DAMAGE_RATE = 0.15; // 最低でも ATK のこの割合は通る（DEF が高すぎて削れない状態を防ぐ）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
 
 // 総大将が本陣を出て前に出るタイミング（配下の残存率がこの値を下回ったら出撃）。
@@ -135,7 +135,7 @@ function scaleStats(type, cost) {
 //   手動プレイではプレイヤーが振り分ける想定。下の「型」はその例。
 //   ※型どうしのバランスは未解決（docs/design.md 参照）のため、オート時は全員 AUTO_BUILD を使う。
 // ------------------------------------------------------------
-const UPGRADE_MULT = 2;
+const UPGRADE_MULT = 1.5;
 const UPGRADE_CAP = { spd: 50, act: 50 };
 const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
 
@@ -148,11 +148,32 @@ const AUTO_BUILD = 'バランス型';
 const ALLOC_MIN = 0.2;
 const ALLOC_MAX = 0.5;
 const COMMANDER_BUILDS = {
-  'バランス型': { hp: 4, atk: 3, def: 3 },
-  '攻撃型':     { hp: 3, atk: 5, def: 2 },
-  '防御型':     { hp: 4, atk: 2, def: 4 },
-  '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 40 } },  // 騎乗して足を買う（移動力 3→4）分、他が薄い
+  'バランス型': { hp: 4, atk: 3, def: 3, skills: ['一斉指揮'] },
+  '攻撃型':     { hp: 3.5, atk: 3.5, def: 3, skills: ['強撃'] },
+  '防御型':     { hp: 3.5, atk: 2.5, def: 4, skills: ['鉄壁の構え'] },
+  '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 40 }, skills: ['一撃離脱'] },  // 騎乗して足を買う（移動力 3→4）分、他が薄い
 };
+
+// ------------------------------------------------------------
+// スキル
+//   総大将は2つ、副将は1つまで持てる（SKILL_SLOTS）。1つ目は無料、2つ目以降は自由枠のポイントを払う。
+//   いずれも「行動中に条件を満たしたら自動で使う」能動型。使うと cooldown（自分の行動回数）の間は使えない。
+//   スキルの使用は行動を消費しない。
+// ------------------------------------------------------------
+const SKILL_SLOTS = { '総大将': 2, '副将': 1 };
+const SKILLS = {
+  '強撃':       { cost: 250, cooldown: 3, desc: '次の一撃の ATK ×1.15' },
+  '鉄壁の構え': { cost: 200, cooldown: 3, desc: '次の自分の行動まで DEF +100%。その行動では移動しない' },
+  '一斉指揮':   { cost: 300, cooldown: 4, desc: '自分と周囲3マスの味方の ATK +30% / DEF +15%（各自の行動2回分）' },
+  '一撃離脱':   { cost: 250, cooldown: 2, desc: '攻撃した後、敵から離れる方向へ移動力の分だけ下がる' },
+  '遠隔狙撃':   { cost: 250, cooldown: 3, desc: 'この行動だけ射程 +1' },
+};
+const SMASH_MULT = 1.15;      // 強撃の ATK 倍率
+const COMMAND_RANGE = 3;      // 一斉指揮の範囲
+
+// 士気: 総大将の周囲 MORALE_RANGE マス以内の味方は、スキルとは別に常に ATK / DEF が少し上がる
+const MORALE_RANGE = 3;
+const MORALE_BONUS = 0.05;
 
 /**
  * HP / ATK / DEF の振り分け比を、合計1・各 ALLOC_MIN〜ALLOC_MAX に収める。
@@ -188,12 +209,14 @@ function commanderStats(type, cost, buildName) {
   const rng = Math.min(t.rng + buy.rng, maxRng(type));
   const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) + traitCost(t)) * f;
   const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
-  const free = cost - fixedCost - upgradeCost;
+  const skills = (b.skills || []).slice(0, SKILL_SLOTS['総大将']);
+  const skillCost = skills.slice(1).reduce((s, k) => s + SKILLS[k].cost, 0);   // 1つ目は無料
+  const free = cost - fixedCost - upgradeCost - skillCost;
   const share = clampShares({ hp: b.hp, atk: b.atk, def: b.def });
   const atk = Math.round(free * share.atk);
   const def = Math.round(free * share.def);
   const stats = { hp: free - atk - def, atk, def, spd: t.stats.spd + buy.spd, act: t.stats.act + buy.act };
-  return { stats, rng, fixedCost, upgradeCost, free };
+  return { stats, rng, fixedCost, upgradeCost, skillCost, free, skills };
 }
 
 // 起動時にプリセットの合計がコストと一致しているか確認する
@@ -265,6 +288,11 @@ class Unit {
     this.falloff = t.falloff;
     this.rear = !!t.rear;
     this.traits = t.traits || [];
+    this.skills = cs ? cs.skills : [];
+    this.cooldowns = {};                   // スキル名 → 残り行動回数
+    this.buffs = [];                       // { stat: 'atk' | 'def', value: +割合, turns: 残り行動回数 }
+    this.rooted = false;                   // この行動では移動しない（鉄壁の構え）
+    this.rngBonus = 0;                     // この行動だけの射程ボーナス（遠隔狙撃）
     this.x = x;
     this.y = y;
   }
@@ -403,6 +431,40 @@ function nearestEnemy(unit) {
   return best;
 }
 
+/** 総大将の士気範囲内にいるか（総大将自身は対象外） */
+function inMorale(u) {
+  if (u.isCommander) return false;
+  const cmd = state[u.side].units.find(c => c.isCommander && c.alive);
+  return !!cmd && distance(u, cmd) <= MORALE_RANGE;
+}
+
+/** バフと士気を合わせた能力の倍率 */
+function statMult(u, stat) {
+  const buff = u.buffs.filter(b => b.stat === stat).reduce((s, b) => s + b.value, 0);
+  return 1 + buff + (inMorale(u) ? MORALE_BONUS : 0);
+}
+
+function effAtk(u) { return u.atk * statMult(u, 'atk'); }
+function effDef(u) { return u.def * statMult(u, 'def'); }
+function effRng(u) { return u.rng + u.rngBonus; }
+
+function skillReady(u, name) {
+  return u.skills.includes(name) && !(u.cooldowns[name] > 0);
+}
+
+function useSkill(u, name) {
+  u.cooldowns[name] = SKILLS[name].cooldown;
+  log(`✨ ${u.name} の「${name}」！`, u.side);
+}
+
+/** 自分の行動の始めに、スキルの待ち時間とバフの残りを1つ進める */
+function tickUnit(u) {
+  for (const k of Object.keys(u.cooldowns)) if (u.cooldowns[k] > 0) u.cooldowns[k]--;
+  u.buffs = u.buffs.filter(b => --b.turns > 0);
+  u.rooted = false;
+  u.rngBonus = 0;
+}
+
 /** 攻撃対象に上下左右で隣接している、攻撃側の味方の数（攻撃者自身は除く） */
 function surroundCount(attacker, defender) {
   return alliesOf(attacker).filter(a => Math.abs(a.x - defender.x) + Math.abs(a.y - defender.y) === 1).length;
@@ -416,7 +478,7 @@ function surroundCount(attacker, defender) {
  *   包囲     = 1 + 0.1 × 攻撃対象に隣接する味方の数
  *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
-function calcAttack(attacker, defender, bonus = 1) {
+function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   // 射程を伸ばした総大将など、表にない距離はいちばん遠い距離の値を使う
   const dist = distance(attacker, defender);
   const f = attacker.falloff[dist] ?? attacker.falloff[Math.max(...Object.keys(attacker.falloff).map(Number))];
@@ -425,10 +487,11 @@ function calcAttack(attacker, defender, bonus = 1) {
   if (hitRoll > hitRate) return { hit: false, hitRate, hitRoll };
   const die = d(6);
   const crit = die === 6;
-  const atk = crit ? Math.floor(attacker.atk * 1.5) : attacker.atk;
+  const baseAtk = effAtk(attacker) * atkMult;
+  const atk = crit ? Math.floor(baseAtk * 1.5) : baseAtk;
   const surround = surroundCount(attacker, defender);
   const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus * (1 + SURROUND_BONUS * surround);
-  const base = Math.max(atk * MIN_DAMAGE_RATE, atk - defender.def * 0.5 + die * DAMAGE_DIE_SCALE);
+  const base = Math.max(atk * MIN_DAMAGE_RATE, atk - effDef(defender) * 0.5 + die * DAMAGE_DIE_SCALE);
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult));
   return { hit: true, hitRate, hitRoll, dmg, die, crit, surround };
 }
@@ -537,19 +600,43 @@ function findCharge(unit) {
 
 /** 1ユニット分の行動（AI） */
 function actUnit(unit) {
+  tickUnit(unit);
   let target = nearestEnemy(unit);
   if (!target) return;
+
+  // 一斉指揮: 周囲に味方がいて、敵が近づいてきたら使う
+  if (skillReady(unit, '一斉指揮')) {
+    const near = alliesOf(unit).filter(a => distance(a, unit) <= COMMAND_RANGE);
+    if (near.length >= 1 && distance(unit, target) <= 6) {
+      useSkill(unit, '一斉指揮');
+      for (const a of [unit, ...near]) a.buffs.push({ stat: 'atk', value: 0.3, turns: 3 }, { stat: 'def', value: 0.15, turns: 3 });
+    }
+  }
 
   // 最適距離より遠い → 前進（射程外なら必ず、射程内でも最適距離まで詰める）
   // 総大将は配下が残っている間は本陣から動かない（射程内に敵がいれば攻撃はする）
   const holding = unit.isCommander && alliesOf(unit).length > 0 && troopRatio(unit.side) >= advanceRatio(unit.side);
-  if (holding && distance(unit, target) > unit.rng) {
+  // 遠隔狙撃: あと1マス届かない敵がいれば、その場から撃つ
+  if (skillReady(unit, '遠隔狙撃') && distance(unit, target) === unit.rng + 1 && (holding || unit.rng > 1)) {
+    useSkill(unit, '遠隔狙撃');
+    unit.rngBonus = 1;
+  }
+  if (holding && distance(unit, target) > effRng(unit)) {
     log(`${unit.name} は本陣で戦況を見守っている。`, unit.side);
     return;
   }
+  // 鉄壁の構え: 敵2体以上に迫られているか、弱っていて敵が近いときに守りを固める
+  if (skillReady(unit, '鉄壁の構え')) {
+    const close = enemiesOf(unit).filter(e => distance(e, unit) <= 2).length;
+    if (close >= 2 || (unit.hp < unit.maxHp * 0.5 && distance(unit, target) <= 3)) {
+      useSkill(unit, '鉄壁の構え');
+      unit.buffs.push({ stat: 'def', value: 1.0, turns: 1 });
+      unit.rooted = true;
+    }
+  }
   // 突撃（騎兵など）: 一直線に走り込める敵がいれば優先する
   let charge = null;
-  if (!holding && unit.traits.includes('charge')) {
+  if (!holding && !unit.rooted && unit.traits.includes('charge')) {
     charge = findCharge(unit);
     if (charge) {
       const before = unit.posText;
@@ -558,7 +645,7 @@ function actUnit(unit) {
       target = charge.target;
     }
   }
-  if (!charge && !holding && distance(unit, target) > unit.best) {
+  if (!charge && !holding && !unit.rooted && distance(unit, target) > unit.best) {
     const before = unit.posText;
     // 最も近い敵との距離が最適距離にできるだけ近いマスへ（近すぎるマスは避ける）
     // 後衛は前衛より前のマスには止まらない
@@ -572,13 +659,17 @@ function actUnit(unit) {
     } else {
       log(unit.rear ? `${unit.name} は前衛の後ろで待機している。` : `${unit.name} は進路を阻まれて前進できない。`, unit.side);
     }
-    // 前進後に射程内に入っていなければ行動終了
+    // 前進後に射程内に入っていなければ行動終了（あと1マスなら遠隔狙撃）
     target = nearestEnemy(unit);
-    if (!target || distance(unit, target) > unit.rng) return;
+    if (target && skillReady(unit, '遠隔狙撃') && distance(unit, target) === unit.rng + 1) {
+      useSkill(unit, '遠隔狙撃');
+      unit.rngBonus = 1;
+    }
+    if (!target || distance(unit, target) > effRng(unit)) return;
   }
 
   // 射程で勝っていて敵が最適距離より近い → 最適距離に向けて後退（引き撃ち、移動力の半分まで）
-  if (unit.rng > target.rng && distance(unit, target) < unit.best) {
+  if (!unit.rooted && unit.rng > target.rng && distance(unit, target) < unit.best) {
     const before = unit.posText;
     if (moveUnit(unit, unit.retreat, p =>
           withinFrontLine(unit, p) ? Math.abs(nearestEnemyDist(unit, p) - unit.best) : Infinity)) {
@@ -590,16 +681,24 @@ function actUnit(unit) {
   // 射程内 → 行動ゲージが ACT_PER_ATTACK たまっている分だけ攻撃
   unit.gauge = Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
   let first = true;
+  let attacked = 0;
   while (unit.gauge >= ACT_PER_ATTACK) {
     // 突撃した相手が生きていれば、まずその相手を攻撃する
     target = charge && charge.target.alive ? charge.target : nearestEnemy(unit);
-    if (!target || distance(unit, target) > unit.rng) break;
+    if (!target || distance(unit, target) > effRng(unit)) break;
     unit.gauge -= ACT_PER_ATTACK;
+    attacked++;
     const dist = distance(unit, target);
     // 突撃ボーナスは初撃のみ
     const bonus = charge && first ? 1 + CHARGE_BONUS * charge.run : 1;
+    // 強撃: 攻撃できるときに初撃へ乗せる
+    let atkMult = 1;
+    if (first && skillReady(unit, '強撃')) {
+      useSkill(unit, '強撃');
+      atkMult = SMASH_MULT;
+    }
     first = false;
-    const r = calcAttack(unit, target, bonus);
+    const r = calcAttack(unit, target, bonus, atkMult);
     if (!r.hit) {
       log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
       continue;
@@ -609,6 +708,15 @@ function actUnit(unit) {
     if (!target.alive) {
       log(`☠ ${target.name} は倒れた！`, 'death');
       if (checkVictory()) return;
+    }
+  }
+
+  // 一撃離脱: 攻撃した後、敵からできるだけ離れる
+  if (attacked > 0 && !unit.rooted && skillReady(unit, '一撃離脱') && enemiesOf(unit).length) {
+    const before = unit.posText;
+    if (moveUnit(unit, unit.move, p => -nearestEnemyDist(unit, p))) {
+      useSkill(unit, '一撃離脱');
+      log(`${unit.name} は離脱した。${before} → ${unit.posText}`, unit.side);
     }
   }
 }
@@ -702,7 +810,7 @@ function renderArmy(army, side, acting) {
     const ratio = u.hp / u.maxHp;
     const color = ratio > 0.5 ? '#5c5' : ratio > 0.25 ? '#dc5' : '#d55';
     tr.innerHTML = `
-      <td>${u.name}</td><td>${u.rank}${u.build ? `<small class="sub">(${u.build})</small>` : ''}</td><td>${u.type}</td>
+      <td>${u.name}</td><td>${u.rank}${u.build ? `<small class="sub">(${u.build}${u.skills.length ? '・' + u.skills.join('/') : ''})</small>` : ''}</td><td>${u.type}</td>
       <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
       <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}<small class="sub">(${(u.actRate / ACT_PER_ATTACK).toFixed(1)}回)</small></td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
