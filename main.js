@@ -43,7 +43,18 @@ const MOVE_DIV = 40;          // 移動力 = 階級補正後SPD ÷ 40（切り�
 const ACT_PER_ATTACK = 50;    // 行動ゲージがこの値たまるごとに1回攻撃できる
 const ACT_GAUGE_MAX = 100;    // ゲージの上限（ため込みすぎ防止）
 const DAMAGE_DIE_SCALE = 10;  // ダメージのダイス = 1d6 × 10（ステータスの桁に合わせる）
-const MIN_DAMAGE = 10;        // 最低ダメージ
+const MIN_DAMAGE = 10;        // 最低ダメージ（固定値）
+const MIN_DAMAGE_RATE = 0.25; // 最低でも ATK のこの割合は通る（DEF が高すぎて削れない状態を防ぐ）
+const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
+
+// 総大将が本陣を出て前に出るタイミング（配下の残存率がこの値を下回ったら出撃）。
+// NPC 戦のモード（慎重・標準・好戦的など）の調整に使う想定
+const ADVANCE_MODES = {
+  hold: { name: '全滅まで待機',     ratio: 0 },
+  r30:  { name: '残り30%で出撃',    ratio: 0.3 },
+  r50:  { name: '残り50%で出撃',    ratio: 0.5 },
+  now:  { name: '最初から出撃',     ratio: 1.01 },
+};
 
 // 固有能力: ステータスの予算からコストを払って持つ（階級が上がるとコストも同じ比率で上がる）
 const TRAITS = {
@@ -350,6 +361,18 @@ function enemiesOf(unit) {
   return army.units.filter(u => u.alive);
 }
 
+/** 総大将以外の配下のうち、生き残っている割合 */
+function troopRatio(side) {
+  const troops = state[side].units.filter(u => !u.isCommander);
+  return troops.length ? troops.filter(u => u.alive).length / troops.length : 0;
+}
+
+/** その陣営の総大将が出撃する残存率（画面の設定。未設定なら全滅まで待機） */
+function advanceRatio(side) {
+  const el = typeof document !== 'undefined' && document.getElementById(`advance-${side}`);
+  return ADVANCE_MODES[el && el.value]?.ratio ?? 0;
+}
+
 function alliesOf(unit) {
   const army = unit.side === 'player' ? state.player : state.cpu;
   return army.units.filter(u => u.alive && u !== unit);
@@ -380,10 +403,17 @@ function nearestEnemy(unit) {
   return best;
 }
 
+/** 攻撃対象に上下左右で隣接している、攻撃側の味方の数（攻撃者自身は除く） */
+function surroundCount(attacker, defender) {
+  return alliesOf(attacker).filter(a => Math.abs(a.x - defender.x) + Math.abs(a.y - defender.y) === 1).length;
+}
+
 /**
  * 攻撃判定:
  *   命中率 = HIT × 距離の命中倍率。1d100 が命中率以下なら命中
- *   ダメージ = max(10, (ATK − DEF × 0.5 + 1d6×10) × 距離の威力倍率 × 相性 × 突撃)  ※四捨五入
+ *   基本値   = max(ATK × 0.25, ATK − DEF × 0.5 + 1d6×10)
+ *   ダメージ = max(10, 基本値 × 距離の威力倍率 × 相性 × 突撃 × 包囲)  ※四捨五入
+ *   包囲     = 1 + 0.1 × 攻撃対象に隣接する味方の数
  *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
 function calcAttack(attacker, defender, bonus = 1) {
@@ -396,9 +426,11 @@ function calcAttack(attacker, defender, bonus = 1) {
   const die = d(6);
   const crit = die === 6;
   const atk = crit ? Math.floor(attacker.atk * 1.5) : attacker.atk;
-  const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus;
-  const dmg = Math.max(MIN_DAMAGE, Math.round((atk - defender.def * 0.5 + die * DAMAGE_DIE_SCALE) * mult));
-  return { hit: true, hitRate, hitRoll, dmg, die, crit };
+  const surround = surroundCount(attacker, defender);
+  const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus * (1 + SURROUND_BONUS * surround);
+  const base = Math.max(atk * MIN_DAMAGE_RATE, atk - defender.def * 0.5 + die * DAMAGE_DIE_SCALE);
+  const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult));
+  return { hit: true, hitRate, hitRoll, dmg, die, crit, surround };
 }
 
 /** SPD 降順で行動キューを作る（同値はランダム） */
@@ -510,7 +542,7 @@ function actUnit(unit) {
 
   // 最適距離より遠い → 前進（射程外なら必ず、射程内でも最適距離まで詰める）
   // 総大将は配下が残っている間は本陣から動かない（射程内に敵がいれば攻撃はする）
-  const holding = unit.isCommander && alliesOf(unit).length > 0;
+  const holding = unit.isCommander && alliesOf(unit).length > 0 && troopRatio(unit.side) >= advanceRatio(unit.side);
   if (holding && distance(unit, target) > unit.rng) {
     log(`${unit.name} は本陣で戦況を見守っている。`, unit.side);
     return;
@@ -573,7 +605,7 @@ function actUnit(unit) {
       continue;
     }
     target.hp = Math.max(0, target.hp - r.dmg);
-    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
+    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
     if (!target.alive) {
       log(`☠ ${target.name} は倒れた！`, 'death');
       if (checkVictory()) return;
