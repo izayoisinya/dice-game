@@ -84,7 +84,7 @@ const TYPES = {
   '盾兵': { stats: { hp: 14, atk: 7, def: 14, spd: 5, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['zoc'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 移動速度重視。一直線に走り込んでの突撃が武器
-  '騎兵': { stats: { hp: 11, atk: 11, def: 8, spd: 12, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
+  '騎兵': { stats: { hp: 10, atk: 11, def: 8, spd: 13, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
 };
 
@@ -107,6 +107,40 @@ function scaleStats(type, cost) {
   const top = STAT_KEYS.reduce((a, k) => (out[k] > out[a] ? k : a), STAT_KEYS[0]);
   out[top] += diff;
   return out;
+}
+
+// ------------------------------------------------------------
+// 総大将のステータス振り分け
+//   SPD / ACT / RNG / 固有能力は兵種ごとの固定値（雑兵プリセットと同じ値）。
+//   固定枠の分は階級倍率分のコストを払い、残りを HP / ATK / DEF に自由に振り分ける。
+//   固定枠を上げたいときは、通常の UPGRADE_MULT 倍のポイントが必要（上限 UPGRADE_CAP）。
+//   オート時は下の「型」からランダムに選ぶ。手動プレイではプレイヤーが振り分ける想定。
+// ------------------------------------------------------------
+const UPGRADE_MULT = 2;
+const UPGRADE_CAP = { spd: 5, act: 5, rng: 1 };
+const COMMANDER_BUILDS = {
+  'バランス型': { hp: 4, atk: 3, def: 3 },
+  '攻撃型':     { hp: 3, atk: 5, def: 2 },
+  '防御型':     { hp: 4, atk: 2, def: 4 },
+  '機動型':     { hp: 4, atk: 3, def: 3, buy: { spd: 3, act: 1 } },   // 足と手数を買う分、他が薄い
+};
+
+/** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
+function commanderStats(type, cost, buildName) {
+  const t = TYPES[type];
+  const b = COMMANDER_BUILDS[buildName];
+  const f = cost / BASE_COST;
+  const buy = { spd: 0, act: 0, rng: 0, ...b.buy };
+  for (const k of Object.keys(UPGRADE_CAP)) buy[k] = Math.min(buy[k], UPGRADE_CAP[k]);
+  const rng = t.rng + buy.rng;
+  const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) + traitCost(t)) * f;
+  const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
+  const free = cost - fixedCost - upgradeCost;
+  const w = b.hp + b.atk + b.def;
+  const atk = Math.round(free * b.atk / w);
+  const def = Math.round(free * b.def / w);
+  const stats = { hp: free - atk - def, atk, def, spd: t.stats.spd + buy.spd, act: t.stats.act + buy.act };
+  return { stats, rng, fixedCost, upgradeCost, free };
 }
 
 // 起動時にプリセットの合計がコストと一致しているか確認する
@@ -143,28 +177,33 @@ function pick(arr) {
 let unitSeq = 0;
 
 class Unit {
-  constructor(side, rank, type, name, x, y) {
+  constructor(side, rank, type, name, x, y, build = 'バランス型') {
     const r = RANKS[rank];
     const t = TYPES[type];
-    const st = scaleStats(type, r.cost);
+    const isCommander = rank === '総大将';
+    // 総大将は固定枠 + 自由振り分け、それ以外は雑兵プリセットの拡大
+    const cs = isCommander ? commanderStats(type, r.cost, build) : null;
+    const st = cs ? cs.stats : scaleStats(type, r.cost);
     // テンポ系（移動・攻撃頻度）は階級で伸びすぎないよう、雑兵基準に割り戻して使う
-    const rankFactor = r.cost / BASE_COST;
+    // （総大将の SPD / ACT は最初から雑兵基準の固定値なので割り戻さない）
+    const tempoDiv = cs ? 1 : r.cost / BASE_COST;
     this.id = ++unitSeq;
     this.side = side;           // 'player' | 'cpu'
     this.name = name;
     this.rank = rank;
     this.type = type;
     this.cost = r.cost;
+    this.build = cs ? build : null;
     this.stats = st;                       // コスト制のステータス値（合計 = cost）
     this.maxHp = st.hp * HP_SCALE;
     this.hp = this.maxHp;
     this.atk = st.atk;
     this.def = st.def;
     this.spd = st.spd + d(3) - 1;          // 行動順。個体差 +0〜2
-    this.rng = t.rng;
+    this.rng = cs ? cs.rng : t.rng;
     this.act = st.act;
-    this.move = Math.max(1, Math.ceil(st.spd / rankFactor / MOVE_DIV));
-    this.actRate = st.act / rankFactor;    // 1行動ごとに行動ゲージにたまる量
+    this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV));
+    this.actRate = st.act / tempoDiv;      // 1行動ごとに行動ゲージにたまる量
     this.gauge = d(ACT_PER_ATTACK) - 1;    // 初期ゲージ（全員が同じタイミングで動かないようずらす）
     this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
     this.best = t.best;
@@ -219,7 +258,7 @@ function formArmy(side, map) {
   cells.sort((a, b) => Math.abs(b[1] - back) - Math.abs(a[1] - back));
 
   const units = [];
-  units.push(new Unit(side, '総大将', pick(TYPE_NAMES), `${label}総大将`, cx, back));
+  units.push(new Unit(side, '総大将', pick(TYPE_NAMES), `${label}総大将`, cx, back, pick(Object.keys(COMMANDER_BUILDS))));
   const troops = [];
   for (let i = 1; i <= leaders; i++) {
     const type = pick(TYPE_NAMES);
@@ -304,7 +343,9 @@ function nearestEnemy(unit) {
  *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
 function calcAttack(attacker, defender, bonus = 1) {
-  const f = attacker.falloff[distance(attacker, defender)];
+  // 射程を伸ばした総大将など、表にない距離はいちばん遠い距離の値を使う
+  const dist = distance(attacker, defender);
+  const f = attacker.falloff[dist] ?? attacker.falloff[Math.max(...Object.keys(attacker.falloff).map(Number))];
   const hitRate = Math.round(attacker.hit * f.hit);
   const hitRoll = d(100);
   if (hitRoll > hitRate) return { hit: false, hitRate, hitRoll };
@@ -585,7 +626,7 @@ function renderArmy(army, side, acting) {
     const ratio = u.hp / u.maxHp;
     const color = ratio > 0.5 ? '#5c5' : ratio > 0.25 ? '#dc5' : '#d55';
     tr.innerHTML = `
-      <td>${u.name}</td><td>${u.rank}</td><td>${u.type}</td>
+      <td>${u.name}</td><td>${u.rank}${u.build ? `<small class="sub">(${u.build})</small>` : ''}</td><td>${u.type}</td>
       <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
       <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}<small class="sub">(${(u.actRate / ACT_PER_ATTACK).toFixed(1)}回)</small></td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
