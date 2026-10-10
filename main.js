@@ -133,12 +133,39 @@ function maxRng(type) {
   return Math.ceil(TYPES[type].rng * RNG_CAP_RATE);
 }
 const AUTO_BUILD = 'バランス型';
+// 自由枠の各ステータス（HP / ATK / DEF）に振れる割合の下限・上限。HP 0 のような極端な振り方を防ぐ
+const ALLOC_MIN = 0.2;
+const ALLOC_MAX = 0.5;
 const COMMANDER_BUILDS = {
   'バランス型': { hp: 4, atk: 3, def: 3 },
   '攻撃型':     { hp: 3, atk: 5, def: 2 },
   '防御型':     { hp: 4, atk: 2, def: 4 },
   '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 40 } },  // 騎乗して足を買う（移動力 3→4）分、他が薄い
 };
+
+/**
+ * HP / ATK / DEF の振り分け比を、合計1・各 ALLOC_MIN〜ALLOC_MAX に収める。
+ * はみ出した分は、範囲内に残っているステータスへ比率どおりに配り直す。
+ */
+function clampShares(w) {
+  const keys = Object.keys(w);
+  const total = keys.reduce((s, k) => s + w[k], 0);
+  const out = {};
+  for (const k of keys) out[k] = w[k] / total;
+  for (let i = 0; i < 10; i++) {
+    let excess = 0;
+    const free = [];
+    for (const k of keys) {
+      if (out[k] > ALLOC_MAX) { excess += out[k] - ALLOC_MAX; out[k] = ALLOC_MAX; }
+      else if (out[k] < ALLOC_MIN) { excess -= ALLOC_MIN - out[k]; out[k] = ALLOC_MIN; }
+      else free.push(k);
+    }
+    if (Math.abs(excess) < 1e-9 || free.length === 0) break;
+    const freeSum = free.reduce((s, k) => s + out[k], 0);
+    for (const k of free) out[k] += excess * out[k] / freeSum;
+  }
+  return out;
+}
 
 /** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
 function commanderStats(type, cost, buildName) {
@@ -151,9 +178,9 @@ function commanderStats(type, cost, buildName) {
   const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) + traitCost(t)) * f;
   const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
   const free = cost - fixedCost - upgradeCost;
-  const w = b.hp + b.atk + b.def;
-  const atk = Math.round(free * b.atk / w);
-  const def = Math.round(free * b.def / w);
+  const share = clampShares({ hp: b.hp, atk: b.atk, def: b.def });
+  const atk = Math.round(free * share.atk);
+  const def = Math.round(free * share.def);
   const stats = { hp: free - atk - def, atk, def, spd: t.stats.spd + buy.spd, act: t.stats.act + buy.act };
   return { stats, rng, fixedCost, upgradeCost, free };
 }
