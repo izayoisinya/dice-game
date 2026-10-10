@@ -86,6 +86,10 @@ const TYPES = {
   // 移動速度重視。一直線に走り込んでの突撃が武器
   '騎兵': { stats: { hp: 10, atk: 11, def: 8, spd: 13, act: 5 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
+  // 総大将専用。三すくみの相性を持たず（与える側も受ける側も ×1.0）、総大将の強さは振り分けで決まる。
+  // stats は固定枠（SPD / ACT）の基準値として使う。HP / ATK / DEF は振り分けで上書きされる
+  '将':   { stats: { hp: 12, atk: 11, def: 10, spd: 9, act: 7 }, rng: 1, hit: 85, best: 1, commanderOnly: true,
+            falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
 };
 
 /** 兵種の固有能力のコスト合計 */
@@ -115,7 +119,8 @@ function scaleStats(type, cost) {
 //   固定枠の分は階級倍率分のコストを払い、残りを HP / ATK / DEF に自由に振り分ける。
 //   固定枠を上げたいときは、通常の UPGRADE_MULT 倍のポイントが必要（上限 UPGRADE_CAP）。
 //   射程の上限は兵種の基本値の RNG_CAP_RATE 倍（切り上げ）。弓より射程の長い剣などが生まれないようにする。
-//   オート時は下の「型」からランダムに選ぶ。手動プレイではプレイヤーが振り分ける想定。
+//   手動プレイではプレイヤーが振り分ける想定。下の「型」はその例。
+//   ※型どうしのバランスは未解決（docs/design.md 参照）のため、オート時は全員 AUTO_BUILD を使う。
 // ------------------------------------------------------------
 const UPGRADE_MULT = 2;
 const UPGRADE_CAP = { spd: 5, act: 5 };
@@ -125,11 +130,12 @@ const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
 function maxRng(type) {
   return Math.ceil(TYPES[type].rng * RNG_CAP_RATE);
 }
+const AUTO_BUILD = 'バランス型';
 const COMMANDER_BUILDS = {
   'バランス型': { hp: 4, atk: 3, def: 3 },
   '攻撃型':     { hp: 3, atk: 5, def: 2 },
   '防御型':     { hp: 4, atk: 2, def: 4 },
-  '機動型':     { hp: 4, atk: 3, def: 3, buy: { spd: 3, act: 1 } },   // 足と手数を買う分、他が薄い
+  '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 4 } },   // 騎乗して足を買う（移動力 3→4）分、他が薄い
 };
 
 /** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
@@ -157,7 +163,9 @@ for (const [name, t] of Object.entries(TYPES)) {
 }
 
 const HIT_SPREAD = 5;   // 命中率の個体差 ±5%
-const TYPE_NAMES = Object.keys(TYPES);
+// 兵として編成される兵種（総大将専用の「将」は除く）
+const TYPE_NAMES = Object.keys(TYPES).filter(k => !TYPES[k].commanderOnly);
+const COMMANDER_TYPE = '将';
 
 // ============================================================
 // ダイス
@@ -265,7 +273,7 @@ function formArmy(side, map) {
   cells.sort((a, b) => Math.abs(b[1] - back) - Math.abs(a[1] - back));
 
   const units = [];
-  units.push(new Unit(side, '総大将', pick(TYPE_NAMES), `${label}総大将`, cx, back, pick(Object.keys(COMMANDER_BUILDS))));
+  units.push(new Unit(side, '総大将', COMMANDER_TYPE, `${label}総大将`, cx, back, AUTO_BUILD));
   const troops = [];
   for (let i = 1; i <= leaders; i++) {
     const type = pick(TYPE_NAMES);
@@ -664,7 +672,7 @@ function renderField(acting) {
       field.appendChild(cell);
     }
   }
-  const legend = '★総大将 ◆部隊長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
+  const legend = '★将=総大将 ◆部隊長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲${wd} / 高さ ${MAP_MIN_H}+🎲${hd}）` +
     (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
