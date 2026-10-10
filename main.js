@@ -201,16 +201,17 @@ function clampShares(w) {
 }
 
 /** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
-function commanderStats(type, cost, buildName) {
+function commanderStats(type, cost, build) {
   const t = TYPES[type];
-  const b = COMMANDER_BUILDS[buildName];
+  // 型の名前、または { hp, atk, def, buy, skills } の振り分け（手動プレイで使う）
+  const b = typeof build === 'string' ? COMMANDER_BUILDS[build] : build;
   const f = cost / BASE_COST;
   const buy = { spd: 0, act: 0, rng: 0, ...b.buy };
   for (const k of Object.keys(UPGRADE_CAP)) buy[k] = Math.min(buy[k], UPGRADE_CAP[k]);
   const rng = Math.min(t.rng + buy.rng, maxRng(type));
   const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) + traitCost(t)) * f;
   const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
-  const skills = (b.skills || []).slice(0, SKILL_SLOTS['総大将']);
+  const skills = [...new Set(b.skills || [])].slice(0, SKILL_SLOTS['総大将']);
   const skillCost = skills.slice(1).reduce((s, k) => s + SKILLS[k].cost, 0);   // 1つ目は無料
   const free = cost - fixedCost - upgradeCost - skillCost;
   const share = clampShares({ hp: b.hp, atk: b.atk, def: b.def });
@@ -272,7 +273,7 @@ class Unit {
     this.rank = rank;
     this.type = type;
     this.cost = r.cost;
-    this.build = cs ? build : null;
+    this.build = cs ? (typeof build === 'string' ? build : 'カスタム') : null;
     this.stats = st;                       // コスト制のステータス値（合計 = cost）
     this.maxHp = st.hp * HP_SCALE;
     this.hp = this.maxHp;
@@ -372,13 +373,21 @@ function formMap() {
 // ============================================================
 
 const state = {
+  mode: 'auto',      // 'auto' = 両軍オート / 'manual' = プレイヤー軍を手動で操作
   map: null,
   player: null,
   cpu: null,
   turn: 0,
+  queue: [],         // このターンにまだ行動していないユニットの id（行動順）
   running: false,
   over: false,
+  result: null,
   timer: null,
+  logs: [],          // 保存用のログ（直近 LOG_KEEP 件）
+  cmdReady: false,   // 手動プレイ: 総大将の振り分けを決定したか
+  current: null,     // 手動プレイ: 入力待ちのユニット id
+  phase: null,       // 手動プレイ: 'move' | 'attack' | 'retreat'
+  manual: null,      // 手動プレイ: この行動の途中経過
 };
 
 function allUnits() {
@@ -529,17 +538,15 @@ function inEnemyZoc(unit, x, y) {
 }
 
 /**
- * 最大 steps マス以内で到達できるマスのうち、score が最小のマスへ移動する。
- * 4方向に1マスずつ進む（幅優先探索）。味方のいるマスは通過できるが止まれない。
+ * 最大 steps マス以内で止まれるマスの一覧（幅優先探索の順）。
+ * 4方向に1マスずつ進む。味方のいるマスは通過できるが止まれない。
  * 敵のいるマスは通過も不可。敵の足止め（ZOC）範囲に入ったらそこで止まる。マップの外には出られない。
- * 今の位置より良いマスがなければ動かない。動いたら true を返す。
  */
-function moveUnit(unit, steps, score) {
+function reachableCells(unit, steps) {
   const { w, h } = state.map;
   const seen = new Set([`${unit.x},${unit.y}`]);
+  const cells = [];
   let frontier = [[unit.x, unit.y]];
-  let best = [unit.x, unit.y];
-  let bestScore = score({ x: unit.x, y: unit.y });
   for (let s = 0; s < steps; s++) {
     const next = [];
     for (const [x, y] of frontier) {
@@ -551,11 +558,26 @@ function moveUnit(unit, steps, score) {
         seen.add(key);
         if (!inEnemyZoc(unit, nx, ny)) next.push([nx, ny]);   // ZOC 内からは先へ進めない
         if (other) continue;                               // 味方のマスには止まれない
-        const sc = score({ x: nx, y: ny });
-        if (sc < bestScore) { bestScore = sc; best = [nx, ny]; }
+        cells.push([nx, ny]);
       }
     }
     frontier = next;
+  }
+  return cells;
+}
+
+/**
+ * 最大 steps マス以内で到達できるマスのうち、score が最小のマスへ移動する。
+ * 4方向に1マスずつ進む（幅優先探索）。味方のいるマスは通過できるが止まれない。
+ * 敵のいるマスは通過も不可。敵の足止め（ZOC）範囲に入ったらそこで止まる。マップの外には出られない。
+ * 今の位置より良いマスがなければ動かない。動いたら true を返す。
+ */
+function moveUnit(unit, steps, score) {
+  let best = [unit.x, unit.y];
+  let bestScore = score({ x: unit.x, y: unit.y });
+  for (const [x, y] of reachableCells(unit, steps)) {
+    const sc = score({ x, y });
+    if (sc < bestScore) { bestScore = sc; best = [x, y]; }
   }
   if (best[0] === unit.x && best[1] === unit.y) return false;
   [unit.x, unit.y] = best;
@@ -597,6 +619,26 @@ function findCharge(unit) {
     }
   }
   return best;
+}
+
+/**
+ * 1回の攻撃を行い、ログを出す。決着したら true を返す。
+ * bonus = 突撃などの威力倍率、atkMult = 強撃などの ATK 倍率
+ */
+function performAttack(unit, target, bonus = 1, atkMult = 1) {
+  const dist = distance(unit, target);
+  const r = calcAttack(unit, target, bonus, atkMult);
+  if (!r.hit) {
+    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
+    return false;
+  }
+  target.hp = Math.max(0, target.hp - r.dmg);
+  log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${atkMult > 1 ? ` 強撃×${atkMult}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
+  if (!target.alive) {
+    log(`☠ ${target.name} は倒れた！`, 'death');
+    if (checkVictory()) return true;
+  }
+  return false;
 }
 
 /** 1ユニット分の行動（AI） */
@@ -689,7 +731,6 @@ function actUnit(unit) {
     if (!target || distance(unit, target) > effRng(unit)) break;
     unit.gauge -= ACT_PER_ATTACK;
     attacked++;
-    const dist = distance(unit, target);
     // 突撃ボーナスは初撃のみ
     const bonus = charge && first ? 1 + CHARGE_BONUS * charge.run : 1;
     // 強撃: 攻撃できるときに初撃へ乗せる
@@ -699,17 +740,7 @@ function actUnit(unit) {
       atkMult = SMASH_MULT;
     }
     first = false;
-    const r = calcAttack(unit, target, bonus, atkMult);
-    if (!r.hit) {
-      log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
-      continue;
-    }
-    target.hp = Math.max(0, target.hp - r.dmg);
-    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
-    if (!target.alive) {
-      log(`☠ ${target.name} は倒れた！`, 'death');
-      if (checkVictory()) return;
-    }
+    if (performAttack(unit, target, bonus, atkMult)) return;
   }
 
   // 一撃離脱: 攻撃した後、敵からできるだけ離れる
@@ -743,48 +774,260 @@ function checkVictory() {
 function endGame(msg) {
   state.over = true;
   state.running = false;
+  state.result = msg;
+  state.current = null;
+  state.phase = null;
   clearTimeout(state.timer);
   log(`=== ${msg} (${state.turn}ターン) ===`, 'turn');
-  const el = document.getElementById('result');
-  el.textContent = msg;
-  el.classList.remove('hidden');
+  showResult();
   updateButtons();
   render();
+  saveGame();
+}
+
+// ============================================================
+// バトル進行
+//   ターン開始時に SPD 順の行動キューを作り、先頭から1体ずつ行動させる。
+//   手動プレイでは、プレイヤー軍のユニットの番が来たら入力を待つ。
+// ============================================================
+
+function unitById(id) {
+  return allUnits().find(u => u.id === id);
+}
+
+function delay() {
+  return Number($('speed').value);
+}
+
+function schedule(ms) {
+  clearTimeout(state.timer);
+  state.timer = setTimeout(step, ms);
+}
+
+function step() {
+  state.timer = null;
+  if (state.over || !state.running) return;
+
+  if (state.queue.length === 0) {
+    if (state.turn >= MAX_TURNS) {
+      endGame('時間切れ… 引き分け');
+      return;
+    }
+    state.turn++;
+    const q = buildQueue();
+    state.queue = q.map(u => u.id);
+    log(`--- ターン ${state.turn} --- 行動順: ${q.map(u => `${u.name}(${u.spd})`).join(' > ')}`, 'turn');
+  }
+
+  const unit = unitById(state.queue.shift());
+  if (!unit || !unit.alive) {
+    schedule(0);
+    return;
+  }
+  if (state.mode === 'manual' && unit.side === 'player') {
+    beginManual(unit);
+    return;
+  }
+  actUnit(unit);
+  render(unit);
+  saveGame();
+  if (!state.over) schedule(delay());
+}
+
+// ------------------------------------------------------------
+// 手動プレイ: 1体分の行動
+//   移動（任意）→ 攻撃（行動ゲージの分だけ）→ 行動終了。スキルはボタンで使う。
+// ------------------------------------------------------------
+
+function currentUnit() {
+  return state.current == null ? null : unitById(state.current);
+}
+
+function beginManual(unit) {
+  tickUnit(unit);
+  state.current = unit.id;
+  state.phase = 'move';
+  state.manual = { attacked: 0, smash: false, gaugeAdded: false, charge: null };
+  log(`▶ ${unit.name} の番です（マスをクリックして移動、敵をクリックして攻撃）`, 'player');
+  render(unit);
+  saveGame();
+}
+
+/** 攻撃フェーズへ。行動ゲージはこの行動で1回だけたまる */
+function enterAttack(unit) {
+  if (!state.manual.gaugeAdded) {
+    unit.gauge = Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+    state.manual.gaugeAdded = true;
+  }
+  state.phase = 'attack';
+}
+
+/** 今のフェーズで止まれるマス */
+function manualReach(unit) {
+  if (state.phase === 'move' && !unit.rooted) return reachableCells(unit, unit.move);
+  if (state.phase === 'retreat') return reachableCells(unit, unit.move);
+  return [];
+}
+
+/** 今攻撃できる敵 */
+function manualTargets(unit) {
+  if (state.phase !== 'move' && state.phase !== 'attack') return [];
+  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  if (gauge < ACT_PER_ATTACK) return [];
+  return enemiesOf(unit).filter(e => distance(unit, e) <= effRng(unit));
 }
 
 /**
- * バトル進行。1ユニットの行動ごとに delay ミリ秒待つ。
- * ターン開始時にキューを作り、先頭から順に行動させる。
+ * 手動で移動したときの突撃判定。出発点から一直線に CHARGE_MIN マス以上走り、
+ * その先の隣に敵がいれば突撃になる（途中に敵や敵の ZOC がないこと）。
  */
-function runBattle() {
-  let queue = [];
-  const delay = () => Number(document.getElementById('speed').value);
+function manualCharge(unit, fromX, fromY) {
+  if (!unit.traits.includes('charge')) return null;
+  const dx = Math.sign(unit.x - fromX), dy = Math.sign(unit.y - fromY);
+  if (dx !== 0 && dy !== 0) return null;
+  const run = Math.abs(unit.x - fromX) + Math.abs(unit.y - fromY);
+  if (run < CHARGE_MIN) return null;
+  for (let k = 1; k < run; k++) {
+    const x = fromX + dx * k, y = fromY + dy * k;
+    const o = unitAt(x, y);
+    if ((o && o.side !== unit.side) || inEnemyZoc(unit, x, y)) return null;
+  }
+  const ahead = unitAt(unit.x + dx, unit.y + dy);
+  return ahead && ahead.side !== unit.side ? { run, target: ahead.id } : null;
+}
 
-  const step = () => {
-    if (state.over) return;
+function onCellClick(x, y) {
+  const unit = currentUnit();
+  if (!unit || state.over) return;
+  const other = unitAt(x, y);
 
-    if (queue.length === 0) {
-      if (state.turn >= MAX_TURNS) {
-        endGame('時間切れ… 引き分け');
-        return;
-      }
-      state.turn++;
-      queue = buildQueue();
-      log(`--- ターン ${state.turn} --- 行動順: ${queue.map(u => `${u.name}(${u.spd})`).join(' > ')}`, 'turn');
-    }
+  // 敵をクリック → 攻撃
+  if (other && other.side !== unit.side) {
+    if (!manualTargets(unit).includes(other)) return;
+    if (state.phase === 'move') enterAttack(unit);
+    manualAttack(unit, other);
+    return;
+  }
+  // 空きマスをクリック → 移動 / 離脱
+  if (!manualReach(unit).some(([cx, cy]) => cx === x && cy === y)) return;
+  const before = unit.posText, fromX = unit.x, fromY = unit.y;
+  [unit.x, unit.y] = [x, y];
+  if (state.phase === 'retreat') {
+    log(`${unit.name} は離脱した。${before} → ${unit.posText}`, unit.side);
+    endManual();
+    return;
+  }
+  const charge = manualCharge(unit, fromX, fromY);
+  if (charge) {
+    state.manual.charge = charge;
+    log(`🐎 ${unit.name} の突撃！ ${before} → ${unit.posText}（${charge.run}マス直進）`, unit.side);
+  } else {
+    log(`${unit.name} は移動した。${before} → ${unit.posText}`, unit.side);
+  }
+  enterAttack(unit);
+  render(unit);
+  saveGame();
+}
 
-    const unit = queue.shift();
-    if (unit.alive) {
-      actUnit(unit);
-      render(unit);
-    }
+function manualAttack(unit, target) {
+  unit.gauge -= ACT_PER_ATTACK;
+  const m = state.manual;
+  const bonus = m.charge && m.attacked === 0 && m.charge.target === target.id ? 1 + CHARGE_BONUS * m.charge.run : 1;
+  const atkMult = m.smash ? SMASH_MULT : 1;
+  m.smash = false;
+  m.attacked++;
+  if (performAttack(unit, target, bonus, atkMult)) return;
+  render(unit);
+  saveGame();
+}
 
-    if (!state.over) {
-      // 「一瞬」設定のときは生存ユニットの行動でなくても間を空けずに進める
-      state.timer = setTimeout(step, unit.alive ? delay() : 0);
-    }
+/** スキルボタン */
+function onSkill(name) {
+  const unit = currentUnit();
+  if (!unit || !skillReady(unit, name) || !canUseSkill(unit, name)) return;
+  useSkill(unit, name);
+  if (name === '鉄壁の構え') {
+    unit.buffs.push({ stat: 'def', value: 1.0, turns: 1 });
+    unit.rooted = true;
+    enterAttack(unit);
+  } else if (name === '一斉指揮') {
+    const near = alliesOf(unit).filter(a => distance(a, unit) <= COMMAND_RANGE);
+    for (const a of [unit, ...near]) a.buffs.push({ stat: 'atk', value: 0.3, turns: 3 }, { stat: 'def', value: 0.15, turns: 3 });
+  } else if (name === '遠隔狙撃') {
+    unit.rngBonus = 1;
+  } else if (name === '強撃') {
+    state.manual.smash = true;
+  } else if (name === '一撃離脱') {
+    state.phase = 'retreat';
+  }
+  render(unit);
+  saveGame();
+}
+
+/** そのスキルを今のフェーズで使えるか */
+function canUseSkill(unit, name) {
+  const p = state.phase;
+  switch (name) {
+    case '鉄壁の構え': return p === 'move';
+    case '一斉指揮': return p === 'move' || p === 'attack';
+    case '遠隔狙撃': return (p === 'move' || p === 'attack') && unit.rngBonus === 0;
+    case '強撃': return (p === 'move' || p === 'attack') && !state.manual.smash;
+    case '一撃離脱': return p === 'attack' && state.manual.attacked > 0;
+  }
+  return false;
+}
+
+function endManual() {
+  const unit = currentUnit();
+  state.current = null;
+  state.phase = null;
+  state.manual = null;
+  render(unit);
+  saveGame();
+  if (!state.over) schedule(delay());
+}
+
+// ============================================================
+// セーブ / ロード（ブラウザの localStorage に自動保存。タスクキルしても続きから）
+// ============================================================
+
+const SAVE_KEY = 'dice-senki-save-v1';
+const LOG_KEEP = 400;
+
+function saveGame() {
+  if (!state.player) return;
+  const data = {
+    v: 1, unitSeq,
+    mode: state.mode, map: state.map, player: state.player, cpu: state.cpu,
+    turn: state.turn, queue: state.queue, running: state.running, over: state.over, result: state.result,
+    logs: state.logs, cmdReady: state.cmdReady, current: state.current, phase: state.phase, manual: state.manual,
+    advance: { player: $('advance-player').value, cpu: $('advance-cpu').value },
   };
-  step();
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* 保存できない環境では何もしない */ }
+}
+
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* 同上 */ }
+}
+
+/** 保存があれば復元して true を返す */
+function loadGame() {
+  let data;
+  try { data = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return false; }
+  if (!data || data.v !== 1 || !data.player) return false;
+  const revive = army => ({ ...army, units: army.units.map(u => Object.assign(Object.create(Unit.prototype), u)) });
+  Object.assign(state, {
+    mode: data.mode, map: data.map, player: revive(data.player), cpu: revive(data.cpu),
+    turn: data.turn, queue: data.queue, running: data.running, over: data.over, result: data.result,
+    logs: [], cmdReady: data.cmdReady, current: data.current, phase: data.phase, manual: data.manual, timer: null,
+  });
+  unitSeq = data.unitSeq;
+  $('mode').value = state.mode;
+  if (data.advance) { $('advance-player').value = data.advance.player; $('advance-cpu').value = data.advance.cpu; }
+  $('log').innerHTML = '';
+  for (const l of data.logs || []) log(l.text, l.cls);
+  log('💾 保存されていた状態から再開しました。', 'sys');
+  return true;
 }
 
 // ============================================================
@@ -794,12 +1037,25 @@ function runBattle() {
 const $ = id => document.getElementById(id);
 
 function log(text, cls = 'sys') {
+  state.logs.push({ text, cls });
+  if (state.logs.length > LOG_KEEP) state.logs.splice(0, state.logs.length - LOG_KEEP);
   const div = document.createElement('div');
   div.className = cls;
   div.textContent = text;
   const box = $('log');
   box.appendChild(div);
+  while (box.childElementCount > LOG_KEEP) box.removeChild(box.firstChild);
   box.scrollTop = box.scrollHeight;
+}
+
+function showResult() {
+  const el = $('result');
+  if (state.over && state.result) {
+    el.textContent = state.result;
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
 }
 
 function renderArmy(army, side, acting) {
@@ -830,11 +1086,19 @@ function renderField(acting) {
   field.innerHTML = '';
   field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
   const short = u => (u.isCommander ? '★' : u.rank === '部隊長' ? '◆' : '') + u.type[0];
+  const cur = currentUnit();
+  const reach = new Set(cur ? manualReach(cur).map(([x, y]) => `${x},${y}`) : []);
+  const targets = new Set(cur ? manualTargets(cur).map(u => u.id) : []);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const u = unitAt(x, y);
       const cell = document.createElement('div');
-      cell.className = 'cell' + (u ? ` ${u.side === 'player' ? 'p' : 'c'}` : '') + (u && u === acting ? ' acting' : '');
+      cell.className = 'cell' + (u ? ` ${u.side === 'player' ? 'p' : 'c'}` : '') +
+        (u && u === acting ? ' acting' : '') +
+        (reach.has(`${x},${y}`) ? ' reach' : '') +
+        (u && targets.has(u.id) ? ' target' : '');
+      cell.dataset.x = x;
+      cell.dataset.y = y;
       if (u) {
         cell.title = `${u.name} HP ${u.hp}/${u.maxHp}`;
         cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>`;
@@ -848,16 +1112,145 @@ function renderField(acting) {
     (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
 }
 
+/** 手動プレイの操作パネル */
+function renderActionPanel() {
+  const panel = $('action-panel');
+  const unit = currentUnit();
+  if (!unit || state.over) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  const hint = {
+    move: '青いマスをクリックで移動（移動しないで攻撃も可）。赤枠の敵をクリックで攻撃。',
+    attack: '赤枠の敵をクリックで攻撃。終わったら「行動終了」。',
+    retreat: '一撃離脱: 青いマスをクリックで離脱先を選ぶ。',
+  }[state.phase] || '';
+  const skills = unit.skills.map(name => {
+    const ready = skillReady(unit, name);
+    const ok = ready && canUseSkill(unit, name);
+    const wait = ready ? '' : `（あと${unit.cooldowns[name]}）`;
+    return `<button class="skill" data-skill="${name}" ${ok ? '' : 'disabled'} title="${SKILLS[name].desc}">✨${name}${wait}</button>`;
+  }).join('');
+  panel.innerHTML = `
+    <div class="ap-head"><b>${unit.name}</b>（${unit.rank}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
+      ／ 移動 ${unit.rooted ? '不可' : unit.move} ／ 射程 ${effRng(unit)} ／ 攻撃できる回数 ${Math.floor(gauge / ACT_PER_ATTACK)}
+      ${state.manual.smash ? ' ／ 強撃 準備中' : ''}${state.manual.charge ? ` ／ 突撃 ${state.manual.charge.run}マス` : ''}</div>
+    <div class="ap-hint">${hint}</div>
+    <div class="ap-buttons">
+      ${state.phase === 'move' ? '<button id="ap-stay">移動しない</button>' : ''}
+      ${skills}
+      ${state.phase !== 'retreat' ? '<button id="ap-end">行動終了</button>' : '<button id="ap-noretreat">離脱しない</button>'}
+    </div>`;
+  const stay = $('ap-stay');
+  if (stay) stay.onclick = () => { enterAttack(unit); render(unit); saveGame(); };
+  const end = $('ap-end');
+  if (end) end.onclick = endManual;
+  const nr = $('ap-noretreat');
+  if (nr) nr.onclick = endManual;
+  for (const b of panel.querySelectorAll('button.skill')) b.onclick = () => onSkill(b.dataset.skill);
+}
+
 function render(acting = null) {
   if (!state.player) return;
+  const cur = currentUnit();
+  if (cur) acting = cur;
   renderArmy(state.player, 'player', acting);
   renderArmy(state.cpu, 'cpu', acting);
   renderField(acting);
+  renderActionPanel();
 }
 
 function updateButtons() {
   $('btn-form').disabled = state.running;
-  $('btn-start').disabled = !state.player || state.running || state.over;
+  $('btn-start').disabled = !state.player || state.running || state.over || (state.mode === 'manual' && !state.cmdReady);
+  $('mode').disabled = state.running;
+}
+
+// ------------------------------------------------------------
+// 総大将の振り分け（手動プレイの編成）
+// ------------------------------------------------------------
+
+function editorBuild() {
+  const v = id => Number($(id).value);
+  const skills = [$('ed-skill1').value, $('ed-skill2').value].filter(Boolean);
+  return {
+    hp: v('ed-hp'), atk: v('ed-atk'), def: v('ed-def'),
+    buy: { spd: v('ed-spd'), act: v('ed-act'), rng: $('ed-rng').checked ? 1 : 0 },
+    skills,
+  };
+}
+
+function renderEditor() {
+  const ed = $('cmd-editor');
+  const show = state.mode === 'manual' && state.player && !state.cmdReady && !state.running;
+  ed.classList.toggle('hidden', !show);
+  if (!show) return;
+  if (!ed.dataset.built) {
+    const skillOpts = Object.entries(SKILLS).map(([k, s]) => `<option value="${k}">${k}（${s.cost}）</option>`).join('');
+    const upOpts = [0, 10, 20, 30, 40, 50].map(n => `<option value="${n}">+${n}</option>`).join('');
+    ed.innerHTML = `
+      <h2>総大将の振り分け</h2>
+      <div class="ed-grid">
+        <label>HP <input type="range" id="ed-hp" min="1" max="10" step="0.5" value="4"><span id="ed-hp-v"></span></label>
+        <label>ATK <input type="range" id="ed-atk" min="1" max="10" step="0.5" value="3"><span id="ed-atk-v"></span></label>
+        <label>DEF <input type="range" id="ed-def" min="1" max="10" step="0.5" value="3"><span id="ed-def-v"></span></label>
+        <label>SPD 強化 <select id="ed-spd">${upOpts}</select></label>
+        <label>ACT 強化 <select id="ed-act">${upOpts}</select></label>
+        <label>射程 +1 <input type="checkbox" id="ed-rng"></label>
+        <label>スキル1（無料） <select id="ed-skill1">${skillOpts}</select></label>
+        <label>スキル2（有料） <select id="ed-skill2"><option value="">なし</option>${skillOpts}</select></label>
+      </div>
+      <div id="ed-preview" class="ed-preview"></div>
+      <div class="ed-buttons">
+        <select id="ed-preset"><option value="">型から読み込む…</option>${Object.keys(COMMANDER_BUILDS).map(k => `<option>${k}</option>`).join('')}</select>
+        <button id="ed-ok">この振り分けで決定</button>
+      </div>`;
+    ed.dataset.built = '1';
+    for (const el of ed.querySelectorAll('input, select')) el.addEventListener('input', renderEditorPreview);
+    $('ed-preset').addEventListener('change', () => {
+      const b = COMMANDER_BUILDS[$('ed-preset').value];
+      if (!b) return;
+      $('ed-hp').value = b.hp; $('ed-atk').value = b.atk; $('ed-def').value = b.def;
+      $('ed-spd').value = b.buy?.spd || 0; $('ed-act').value = b.buy?.act || 0; $('ed-rng').checked = !!b.buy?.rng;
+      $('ed-skill1').value = b.skills?.[0] || Object.keys(SKILLS)[0];
+      $('ed-skill2').value = b.skills?.[1] || '';
+      renderEditorPreview();
+    });
+    $('ed-ok').addEventListener('click', confirmEditor);
+  }
+  renderEditorPreview();
+}
+
+function renderEditorPreview() {
+  const b = editorBuild();
+  const cs = commanderStats(COMMANDER_TYPE, RANKS['総大将'].cost, b);
+  const share = clampShares({ hp: b.hp, atk: b.atk, def: b.def });
+  for (const k of ['hp', 'atk', 'def']) $(`ed-${k}-v`).textContent = ` ${Math.round(share[k] * 100)}%`;
+  const tmp = new Unit('player', '総大将', COMMANDER_TYPE, '', 0, 0, b);
+  unitSeq--;   // プレビュー用に採番した分を戻す
+  const ok = cs.free > 0 && $('ed-skill1').value !== $('ed-skill2').value;
+  $('ed-preview').innerHTML = `
+    コスト ${RANKS['総大将'].cost} − 固定枠 ${cs.fixedCost} − 強化 ${cs.upgradeCost} − スキル ${cs.skillCost} = <b>自由枠 ${cs.free}</b>
+    （HP / ATK / DEF はそれぞれ自由枠の ${ALLOC_MIN * 100}〜${ALLOC_MAX * 100}%）<br>
+    → 実HP <b>${tmp.maxHp}</b> / ATK <b>${tmp.atk}</b> / DEF <b>${tmp.def}</b> / SPD ${tmp.spd} / 移動 ${tmp.move} / 射程 ${tmp.rng}
+    / 攻撃 ${(tmp.actRate / ACT_PER_ATTACK).toFixed(1)}回 / スキル ${cs.skills.join('・') || 'なし'}
+    ${ok ? '' : '<br><span class="warn">自由枠が足りないか、スキルが重複しています。</span>'}`;
+  $('ed-ok').disabled = !ok;
+}
+
+function confirmEditor() {
+  const b = editorBuild();
+  const old = state.player.units.find(u => u.isCommander);
+  const cmd = new Unit('player', '総大将', COMMANDER_TYPE, old.name, old.x, old.y, b);
+  state.player.units[state.player.units.indexOf(old)] = cmd;
+  state.cmdReady = true;
+  log(`👑 ${cmd.name} の振り分けを決定: 実HP ${cmd.maxHp} / ATK ${cmd.atk} / DEF ${cmd.def} / 移動 ${cmd.move} / スキル ${cmd.skills.join('・')}`, 'player');
+  renderEditor();
+  render();
+  updateButtons();
+  saveGame();
 }
 
 // ============================================================
@@ -866,15 +1259,20 @@ function updateButtons() {
 
 $('btn-form').addEventListener('click', () => {
   reset();
+  state.mode = $('mode').value;
   state.map = formMap();
   state.player = formArmy('player', state.map);
   state.cpu = formArmy('cpu', state.map);
   log(`🎲 マップ: ${state.map.type} 幅 ${MAP_MIN_W}+[${state.map.wd.dice.join(', ')}] = ${state.map.w} / 高さ ${MAP_MIN_H}+[${state.map.hd.dice.join(', ')}] = ${state.map.h}`);
   log(`🎲 プレイヤー軍 3d6 = [${state.player.dice.dice.join(', ')}] → 部隊数 ${state.player.dice.total}（部隊長${state.player.leaders} / 雑兵${state.player.soldiers}）`, 'player');
   log(`🎲 CPU軍 3d6 = [${state.cpu.dice.dice.join(', ')}] → 部隊数 ${state.cpu.dice.total}（部隊長${state.cpu.leaders} / 雑兵${state.cpu.soldiers}）`, 'cpu');
-  log('編成完了。「戦闘開始」で開戦します。');
+  log(state.mode === 'manual'
+    ? '編成完了。総大将の振り分けを決めてから「戦闘開始」で開戦します。'
+    : '編成完了。「戦闘開始」で開戦します。');
   render();
+  renderEditor();
   updateButtons();
+  saveGame();
 });
 
 $('btn-start').addEventListener('click', () => {
@@ -882,17 +1280,31 @@ $('btn-start').addEventListener('click', () => {
   state.running = true;
   updateButtons();
   log('⚔ 開戦！', 'turn');
-  runBattle();
+  saveGame();
+  step();
 });
 
-$('btn-reset').addEventListener('click', reset);
+$('btn-reset').addEventListener('click', () => {
+  clearSave();
+  reset();
+});
+
+$('field').addEventListener('click', e => {
+  const cell = e.target.closest('.cell');
+  if (cell) onCellClick(Number(cell.dataset.x), Number(cell.dataset.y));
+});
+
+for (const id of ['advance-player', 'advance-cpu']) $(id).addEventListener('change', saveGame);
 
 function reset() {
   clearTimeout(state.timer);
-  Object.assign(state, { map: null, player: null, cpu: null, turn: 0, running: false, over: false, timer: null });
+  Object.assign(state, {
+    map: null, player: null, cpu: null, turn: 0, queue: [], running: false, over: false, result: null, timer: null,
+    logs: [], cmdReady: false, current: null, phase: null, manual: null,
+  });
   unitSeq = 0;
   $('log').innerHTML = '';
-  $('result').classList.add('hidden');
+  showResult();
   for (const side of ['player', 'cpu']) {
     $(`${side}-units`).innerHTML = '';
     $(`${side}-summary`).textContent = '';
@@ -900,8 +1312,20 @@ function reset() {
   }
   $('field').innerHTML = '';
   $('turn-label').textContent = '';
+  $('action-panel').classList.add('hidden');
+  $('cmd-editor').classList.add('hidden');
   log('「編成」ボタンでダイスを振り、両軍を編成してください。');
   updateButtons();
 }
 
-reset();
+// 起動時: 保存があれば続きから、なければ初期状態
+if (loadGame()) {
+  showResult();
+  render();
+  renderEditor();
+  updateButtons();
+  // 戦闘中なら自動で再開する（プレイヤーの入力待ちならそのまま待つ）
+  if (state.running && !state.over && state.current == null) schedule(500);
+} else {
+  reset();
+}

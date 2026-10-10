@@ -95,3 +95,22 @@ tr.rank-部隊長 td:first-child { color: #9fe39f; }
 }
 .hidden { display: none; }
 .sub { color: #999; margin-left: 2px; font-size: 0.75rem; }
+
+/* 手動プレイ */
+.cell { cursor: default; }
+.cell.reach { background: #3f6a8f; cursor: pointer; }
+.cell.target { outline: 3px solid #ff5a4f; outline-offset: -3px; cursor: crosshair; }
+.panel { background: #262930; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.panel h2 { margin-top: 0; }
+.action-panel { position: sticky; top: 0; z-index: 2; border: 1px solid #4a6fa5; }
+.ap-head { margin-bottom: 4px; }
+.ap-hint { color: #aaa; font-size: 0.85rem; margin-bottom: 6px; }
+.ap-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-buttons button { padding: 6px 12px; font-size: 0.9rem; }
+button.skill { background: #7a5ea8; }
+.ed-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px 16px; }
+.ed-grid label { display: flex; align-items: center; gap: 6px; }
+.ed-grid input[type=range] { flex: 1; }
+.ed-preview { margin: 10px 0; line-height: 1.6; font-size: 0.9rem; }
+.ed-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.warn { color: #ff7a6f; }
