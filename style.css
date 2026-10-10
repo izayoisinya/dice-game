@@ -120,7 +120,7 @@ button.danger { background: #a14040; margin-left: auto; }
 #campaign-box summary { cursor: pointer; }
 #campaign-box summary h2 { display: inline; }
 .cp-head, .cp-pool, .sq-new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
-.cp-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.cp-cols { display: grid; grid-template-columns: 1fr 1fr 0.8fr; gap: 16px; }
 @media (max-width: 900px) { .cp-cols { grid-template-columns: 1fr; } }
 .cp-cols > div { max-height: 220px; overflow-y: auto; }
 #campaign h3 { font-size: 1rem; margin: 10px 0 4px; }
@@ -132,3 +132,7 @@ button.small { padding: 3px 8px; font-size: 0.8rem; }
 .sq-add, .sq-go { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sq-add input { width: 70px; }
 .cp-cpu { font-size: 0.85rem; color: #ccc; margin-top: 8px; }
+
+/* 視界（戦場の霧） */
+.cell.fog { filter: brightness(0.55); }
+.cell.ghost { opacity: 0.45; }

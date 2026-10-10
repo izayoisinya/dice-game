@@ -75,7 +75,16 @@ const ADVANCE_MODES = {
 const TRAITS = {
   zoc:    { name: '足止め', cost: 40 },  // 隣接したマスに入った敵はそこで移動が止まる
   charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
+  scout:  { name: '索敵',   cost: 100 }, // 視界が広い。隠密の敵も2マスまで見つけられる
+  stealth: { name: '隠密',  cost: 50 },  // 敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで姿が見える）
+  assassin: { name: '暗殺', cost: 0 },   // 将（兵長以上）への攻撃が強く、兵士の駒への攻撃は弱い
 };
+const ASSASSIN_VS_GENERAL = 1.6;   // 暗殺者 → 将（兵長・副将・総大将）の威力倍率
+const ASSASSIN_VS_TROOPS = 0.5;    // 暗殺者 → 兵士の駒・斥候の威力倍率
+
+// 視界（戦場の霧）: 味方の誰かの視界に入っている敵だけが見え、狙える（視界は軍全体で共有）
+const VISION_DEFAULT = 4;
+const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と保つ距離
 const CHARGE_MIN = 2;         // 突撃になる最低直進マス数
 const CHARGE_BONUS = 0.3;     // 直進1マスあたりの威力上昇（初撃のみ）
 
@@ -113,6 +122,14 @@ const TYPES = {
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 移動速度重視。一直線に走り込んでの突撃が武器
   '騎兵': { stats: { hp: 100, atk: 110, def: 80, spd: 130, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
+            falloff: { 1: { hit: 1.0, pow: 1.0 } } },
+  // 斥候（兵士クラスの単独の駒・人数なし）: 視界が広く足が速いが、戦う力は弱い
+  '斥候': { stats: { hp: 60, atk: 50, def: 50, spd: 170, act: 60 }, rng: 1, hit: 80, best: 1, vision: 7,
+            traits: ['scout'], solo: true, special: true,
+            falloff: { 1: { hit: 1.0, pow: 1.0 } } },
+  // 暗殺者（兵長クラスの単独の駒）: 隠密で近づき、将を狙う。兵士の駒には弱い
+  '暗殺者': { stats: { hp: 70, atk: 120, def: 50, spd: 140, act: 60 }, rng: 1, hit: 90, best: 1, vision: 4,
+            traits: ['stealth', 'assassin'], solo: true, special: true,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 総大将専用。三すくみの相性を持たず（与える側も受ける側も ×1.0）、総大将の強さは振り分けで決まる。
   // stats は固定枠（SPD / ACT）の基準値として使う。HP / ATK / DEF は振り分けで上書きされる
@@ -249,7 +266,7 @@ for (const [name, t] of Object.entries(TYPES)) {
 
 const HIT_SPREAD = 5;   // 命中率の個体差 ±5%
 // 兵として編成される兵種（総大将専用の「将」は除く）
-const TYPE_NAMES = Object.keys(TYPES).filter(k => !TYPES[k].commanderOnly);
+const TYPE_NAMES = Object.keys(TYPES).filter(k => !TYPES[k].commanderOnly && !TYPES[k].special);
 const COMMANDER_TYPE = '将';
 
 // ============================================================
@@ -297,7 +314,7 @@ class Unit {
     this.ldr = cs ? cs.ldr : null;          // 統率力（総大将・副将。兵長は編成側で持つ）
     this.stats = st;                       // コスト制のステータス値（合計 = cost）
     // 雑兵の駒は人数を持つ（HP は人数に比例）。将は人数なし
-    this.troops = rank === '雑兵' ? Math.max(MIN_TROOPS, troops) : null;
+    this.troops = rank === '雑兵' && !t.solo ? Math.max(MIN_TROOPS, troops) : null;
     this.maxHp = this.troops ? Math.round(st.hp * HP_SCALE * this.troops / BASE_TROOPS) : st.hp * HP_SCALE;
     this.hp = this.maxHp;
     this.atk = st.atk;
@@ -312,6 +329,9 @@ class Unit {
     this.best = t.best;
     this.falloff = t.falloff;
     this.rear = !!t.rear;
+    this.special = !!t.special;            // 斥候・暗殺者（単独の駒）
+    this.vision = t.vision ?? VISION_DEFAULT;
+    this.revealed = false;                 // 隠密の駒が攻撃して姿を見せている
     this.traits = t.traits || [];
     this.skills = cs ? cs.skills : [];
     this.cooldowns = {};                   // スキル名 → 残り行動回数
@@ -380,6 +400,9 @@ function formArmy(side, map) {
     const type = pick(TYPE_NAMES);
     troops.push(new Unit(side, '雑兵', type, `${label}${type}${i}`, 0, 0));
   }
+  // 斥候 0〜2人、暗殺者は 1d6 で6が出たときだけ1人
+  for (let i = 1; i <= d(3) - 1; i++) troops.push(new Unit(side, '雑兵', '斥候', `${label}斥候${i}`, 0, 0));
+  if (d(6) === 6) troops.push(new Unit(side, '兵長', '暗殺者', `${label}暗殺者1`, 0, 0));
   // 前衛は前の列から、後衛（弓兵など）は後ろの列から埋める
   let front = 0, rear = cells.length - 1;
   for (const u of troops) {
@@ -416,6 +439,8 @@ const state = {
   phase: null,       // 手動プレイ: 'move' | 'attack' | 'retreat'
   manual: null,      // 手動プレイ: この行動の途中経過
   campaignBattle: null, // 軍の編成から出陣した戦闘なら { player: 隊id, cpu: 隊id, before: {...} }
+  fog: true,         // 視界（戦場の霧）を使うか
+  logBuffer: null,   // 見えない敵の行動ログを一時的にためる
 };
 
 function allUnits() {
@@ -429,7 +454,7 @@ function enemiesOf(unit) {
 
 /** 総大将以外の配下のうち、生き残っている割合 */
 function troopRatio(side) {
-  const troops = state[side].units.filter(u => !isLeader(u));
+  const troops = state[side].units.filter(u => !isLeader(u) && !u.special);
   return troops.length ? troops.filter(u => u.alive).length / troops.length : 0;
 }
 
@@ -444,6 +469,24 @@ function alliesOf(unit) {
   return army.units.filter(u => u.alive && u !== unit);
 }
 
+/** その陣営から敵ユニット e が見えているか（味方の誰かの視界に入っているか） */
+function visibleTo(side, e) {
+  if (!state.fog || e.revealed) return true;
+  const stealth = e.traits.includes('stealth');
+  return state[side].units.some(o => o.alive &&
+    distance(o, e) <= (stealth ? (o.traits.includes('scout') ? 2 : 1) : (o.vision ?? VISION_DEFAULT)));
+}
+
+/** 見えている敵（狙える敵） */
+function seenEnemies(unit) {
+  return enemiesOf(unit).filter(e => visibleTo(unit.side, e));
+}
+
+/** 敵が見えないときに向かう地点（敵の本陣のあたり） */
+function searchPoint(unit) {
+  return { x: Math.floor(state.map.w / 2), y: unit.side === 'player' ? 0 : state.map.h - 1 };
+}
+
 /** マンハッタン距離（4方向移動なので斜めは距離2） */
 function distance(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
@@ -455,18 +498,25 @@ function unitAt(x, y) {
 
 /** 地点 p から最も近い敵までの距離 */
 function nearestEnemyDist(unit, p) {
-  return Math.min(...enemiesOf(unit).map(e => distance(p, e)));
+  return Math.min(...seenEnemies(unit).map(e => distance(p, e)));
 }
 
+/**
+ * 最も近い見えている敵。ただし斥候・暗殺者は、射程内にいるとき以外は後回しにする
+ * （足の速い斥候を延々と追いかけ回さないように）
+ */
 function nearestEnemy(unit) {
+  const score = e => distance(unit, e) + (e.special && distance(unit, e) > effRng(unit) ? 8 : 0);
   let best = null;
-  for (const e of enemiesOf(unit)) {
-    if (!best || distance(unit, e) < distance(unit, best) ||
-        (distance(unit, e) === distance(unit, best) && e.hp < best.hp)) {
-      best = e;
-    }
+  for (const e of seenEnemies(unit)) {
+    if (!best || score(e) < score(best) || (score(e) === score(best) && e.hp < best.hp)) best = e;
   }
   return best;
+}
+
+/** 大将が本陣で待つか（斥候・暗殺者は数えない。配下の兵が残っている間は待つ） */
+function isHolding(unit) {
+  return isLeader(unit) && alliesOf(unit).some(a => !a.special) && troopRatio(unit.side) >= advanceRatio(unit.side);
 }
 
 /** その戦局の大将の士気範囲内にいるか（大将自身は対象外） */
@@ -531,6 +581,7 @@ function tickUnit(u) {
   u.rngBonus = 0;
   u.counteredBy = [];
   u.hitAndRun = false;
+  u.revealed = false;
 }
 
 /** 攻撃対象に上下左右で隣接している、攻撃側の味方の数（攻撃者自身は除く） */
@@ -559,7 +610,8 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   const atk = crit ? Math.floor(baseAtk * 1.5) : baseAtk;
   const surround = surroundCount(attacker, defender);
   const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus * (1 + SURROUND_BONUS * surround)
-    * Math.sqrt(sizeRatio(attacker));   // 人数が多い駒ほど1回の威力も大きい
+    * Math.sqrt(sizeRatio(attacker))    // 人数が多い駒ほど1回の威力も大きい
+    * (attacker.traits.includes('assassin') ? (defender.rank === '雑兵' ? ASSASSIN_VS_TROOPS : ASSASSIN_VS_GENERAL) : 1);
   const base = Math.max(atk * MIN_DAMAGE_RATE, atk - effDef(defender) * 0.5 + die * DAMAGE_DIE_SCALE);
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult));
   return { hit: true, hitRate, hitRoll, dmg, die, crit, surround };
@@ -581,7 +633,7 @@ function buildQueue() {
  */
 function withinFrontLine(unit, p) {
   if (!unit.rear) return true;
-  const front = alliesOf(unit).filter(a => !a.rear && !isLeader(a));
+  const front = alliesOf(unit).filter(a => !a.rear && !isLeader(a) && !a.special);
   if (front.length === 0) return true;
   // プレイヤーは y が小さいほど前、CPU は y が大きいほど前
   return unit.side === 'player'
@@ -657,6 +709,7 @@ function findCharge(unit) {
       if (x < 0 || y < 0 || x >= w || y >= h) break;
       const other = unitAt(x, y);
       if (other && other.side !== unit.side) {
+        if (!visibleTo(unit.side, other)) break;   // 見えない敵には突撃できない
         const run = k - 1;   // 敵の手前まで走ったマス数
         const sx = x - dx, sy = y - dy;
         const stopFree = run === 0 || !unitAt(sx, sy);
@@ -670,7 +723,7 @@ function findCharge(unit) {
         if (other) break;   // ZOC 内の味方マスには止まれず、先にも進めない
         // ZOC で止まる。止まったマスの隣（直線上）に敵がいれば突撃は成立する
         const nx = x + dx, ny = y + dy, ahead = unitAt(nx, ny);
-        if (k >= CHARGE_MIN && ahead && ahead.side !== unit.side && (!best || k > best.run)) {
+        if (k >= CHARGE_MIN && ahead && ahead.side !== unit.side && visibleTo(unit.side, ahead) && (!best || k > best.run)) {
           best = { run: k, x, y, target: ahead };
         }
         break;
@@ -686,6 +739,7 @@ function findCharge(unit) {
  */
 function performAttack(unit, target, bonus = 1, atkMult = 1) {
   const dist = distance(unit, target);
+  if (unit.traits.includes('stealth')) unit.revealed = true;
   const r = calcAttack(unit, target, bonus, atkMult);
   if (!r.hit) {
     log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
@@ -736,7 +790,7 @@ function counterAttack(defender, attacker) {
  * 同じ評価のマスは少しランダムに選ぶ（毎回同じ向きに寄って列がそろうのを防ぐ）。
  */
 function advanceScorer(unit, target) {
-  const enemies = enemiesOf(unit);
+  const enemies = seenEnemies(unit);
   const free = (x, y) => {
     if (x < 0 || y < 0 || x >= state.map.w || y >= state.map.h) return false;
     const o = unitAt(x, y);
@@ -782,8 +836,10 @@ function advanceScorer(unit, target) {
 /** 1ユニット分の行動（AI） */
 function actUnit(unit) {
   tickUnit(unit);
+  if (unit.traits.includes('scout')) return scoutAct(unit);
+  if (unit.traits.includes('assassin')) return assassinAct(unit);
   let target = nearestEnemy(unit);
-  if (!target) return;
+  if (!target) return searchMove(unit);
 
   // 一斉指揮: 周囲に味方がいて、敵が近づいてきたら使う
   if (skillReady(unit, '一斉指揮')) {
@@ -796,7 +852,7 @@ function actUnit(unit) {
 
   // 最適距離より遠い → 前進（射程外なら必ず、射程内でも最適距離まで詰める）
   // 総大将は配下が残っている間は本陣から動かない（射程内に敵がいれば攻撃はする）
-  const holding = isLeader(unit) && alliesOf(unit).length > 0 && troopRatio(unit.side) >= advanceRatio(unit.side);
+  const holding = isHolding(unit);
   // 遠隔狙撃: あと1マス届かない敵がいれば、その場から撃つ
   if (skillReady(unit, '遠隔狙撃') && distance(unit, target) === unit.rng + 1 && (holding || unit.rng > 1)) {
     useSkill(unit, '遠隔狙撃');
@@ -808,7 +864,7 @@ function actUnit(unit) {
   }
   // 鉄壁の構え: 敵2体以上に迫られているか、弱っていて敵が近いときに守りを固める
   if (skillReady(unit, '鉄壁の構え')) {
-    const close = enemiesOf(unit).filter(e => distance(e, unit) <= 2).length;
+    const close = seenEnemies(unit).filter(e => distance(e, unit) <= 2).length;
     if (close >= 2 || (unit.hp < unit.maxHp * 0.5 && distance(unit, target) <= 3)) {
       useSkill(unit, '鉄壁の構え');
       unit.buffs.push({ stat: 'def', value: 1.0, turns: 1 });
@@ -899,11 +955,63 @@ function actUnit(unit) {
   }
 
   // 一撃離脱（移動 → 攻撃 → 移動）: 攻撃の後に移動力いっぱい離れる
-  if (unit.hitAndRun && attacked > 0 && enemiesOf(unit).length) {
+  if (unit.hitAndRun && attacked > 0 && seenEnemies(unit).length) {
     const before = unit.posText;
     if (moveUnit(unit, unit.move, p => -nearestEnemyDist(unit, p))) {
       log(`${unit.name} は離脱した。${before} → ${unit.posText}`, unit.side);
     }
+  }
+}
+
+/** 敵が1体も見えないとき: 大将は本陣で待ち、ほかは敵の本陣の方へ進む（後衛は前衛より前に出ない） */
+function searchMove(unit) {
+  const holding = isHolding(unit);
+  if (holding || unit.rooted) {
+    if (holding) log(`${unit.name} は本陣で戦況を見守っている。`, unit.side);
+    return;
+  }
+  const goal = searchPoint(unit);
+  const before = unit.posText;
+  if (moveUnit(unit, unit.move, p => (withinFrontLine(unit, p) ? distance(p, goal) + Math.random() * 0.5 : Infinity))) {
+    log(`${unit.name} は敵を探して進んだ。${before} → ${unit.posText}`, unit.side);
+  }
+}
+
+/** 斥候（オート）: 戦わずに、最も近い見えている敵から SCOUT_KEEP マスの距離を保つ。敵が見えなければ前へ */
+function scoutAct(unit) {
+  const before = unit.posText;
+  const seen = seenEnemies(unit).length > 0;
+  const goal = searchPoint(unit);
+  const score = seen
+    ? p => Math.abs(nearestEnemyDist(unit, p) - SCOUT_KEEP) * 10 + (nearestEnemyDist(unit, p) < SCOUT_KEEP ? 5 : 0) + Math.random()
+    : p => distance(p, goal) + Math.random() * 0.5;
+  if (moveUnit(unit, unit.move, score)) log(`${unit.name} は${seen ? '敵の様子をうかがっている' : '偵察に出た'}。${before} → ${unit.posText}`, unit.side);
+}
+
+/** 暗殺者（オート）: 見えている将（大将を優先）に忍び寄って攻撃する。将が見えなければ敵の本陣の方へ */
+function assassinAct(unit) {
+  const prey = () => {
+    const gs = seenEnemies(unit).filter(e => e.rank !== '雑兵');
+    return gs.find(isLeader) || gs.sort((a, b) => distance(unit, a) - distance(unit, b))[0] || null;
+  };
+  let target = prey();
+  if (!target || distance(unit, target) > effRng(unit)) {
+    const goal = target || searchPoint(unit);
+    const before = unit.posText;
+    if (moveUnit(unit, unit.move, p => distance(p, goal) + Math.random() * 0.1)) {
+      log(`${unit.name} は忍び寄った。${before} → ${unit.posText}`, unit.side);
+    }
+    target = prey();
+  }
+  unit.gauge = Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
+  while (unit.gauge >= ACT_PER_ATTACK) {
+    // 将に届かなければ、隣の兵を斬る（威力は弱い）
+    const t = target && target.alive && distance(unit, target) <= effRng(unit) ? target
+      : seenEnemies(unit).find(e => distance(unit, e) <= effRng(unit));
+    if (!t) break;
+    unit.gauge -= ACT_PER_ATTACK;
+    if (performAttack(unit, t)) return;
+    if (!unit.alive) return;
   }
 }
 
@@ -991,7 +1099,16 @@ function step() {
     beginManual(unit);
     return;
   }
+  // 手動プレイで視界があるとき、見えない敵の動き（位置）はログに出さない
+  const fogLog = state.fog && state.mode === 'manual' && unit.side === 'cpu';
+  if (fogLog) state.logBuffer = [];
   actUnit(unit);
+  if (fogLog) {
+    const buf = state.logBuffer;
+    state.logBuffer = null;
+    const seen = !unit.alive || visibleTo('player', unit);
+    for (const l of buf) if (seen || !/→|待機|阻まれ|見守/.test(l.text)) log(l.text, l.cls);
+  }
   render(unit);
   saveGame();
   if (!state.over) schedule(delay());
@@ -1043,7 +1160,7 @@ function manualTargets(unit) {
   if (state.phase !== 'move' && state.phase !== 'attack') return [];
   const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
   if (gauge < ACT_PER_ATTACK) return [];
-  return enemiesOf(unit).filter(e => distance(unit, e) <= effRng(unit));
+  return seenEnemies(unit).filter(e => distance(unit, e) <= effRng(unit));
 }
 
 /**
@@ -1191,7 +1308,7 @@ function saveGame() {
     mode: state.mode, map: state.map, player: state.player, cpu: state.cpu,
     turn: state.turn, queue: state.queue, running: state.running, over: state.over, result: state.result,
     logs: state.logs, cmdReady: state.cmdReady, current: state.current, phase: state.phase, manual: state.manual,
-    campaignBattle: state.campaignBattle,
+    campaignBattle: state.campaignBattle, fog: state.fog,
     advance: { player: $('advance-player').value, cpu: $('advance-cpu').value },
   };
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* 保存できない環境では何もしない */ }
@@ -1213,8 +1330,9 @@ function loadGame() {
     mode: data.mode, map: data.map, player: revive(data.player), cpu: revive(data.cpu),
     turn: data.turn, queue: data.queue, running: data.running, over: data.over, result: data.result,
     logs: [], cmdReady: data.cmdReady, current: data.current, phase: data.phase, manual: data.manual, timer: null,
-    campaignBattle: data.campaignBattle || null,
+    campaignBattle: data.campaignBattle || null, fog: data.fog ?? false,
   });
+  $('fog').checked = state.fog;
   unitSeq = data.unitSeq;
   $('mode').value = state.mode;
   if (data.advance) { $('advance-player').value = data.advance.player; $('advance-cpu').value = data.advance.cpu; }
@@ -1231,6 +1349,7 @@ function loadGame() {
 const $ = id => document.getElementById(id);
 
 function log(text, cls = 'sys') {
+  if (state.logBuffer) { state.logBuffer.push({ text, cls }); return; }
   state.logs.push({ text, cls });
   if (state.logs.length > LOG_KEEP) state.logs.splice(0, state.logs.length - LOG_KEEP);
   const div = document.createElement('div');
@@ -1255,7 +1374,9 @@ function showResult() {
 function renderArmy(army, side, acting) {
   const tbody = $(`${side}-units`);
   tbody.innerHTML = '';
+  const hidden = u => side === 'cpu' && state.mode === 'manual' && u.alive && !visibleTo('player', u);
   for (const u of army.units) {
+    if (hidden(u)) continue;
     const tr = document.createElement('tr');
     tr.className = `rank-${u.rank}` + (u.alive ? '' : ' dead') + (u === acting ? ' acting' : '');
     const ratio = u.hp / u.maxHp;
@@ -1266,13 +1387,22 @@ function renderArmy(army, side, acting) {
       <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}<small class="sub">(${(u.actRate / ACT_PER_ATTACK).toFixed(1)}回)</small></td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
   }
-  const alive = army.units.filter(u => u.alive);
-  const cost = army.units.reduce((s, u) => s + u.cost, 0);
-  const count = r => army.units.filter(u => u.rank === r).length;
-  const troops = army.units.filter(u => u.troops).reduce((s, u) => s + (u.alive ? u.troopsNow : 0), 0);
-  $(`${side}-summary`).textContent =
-    ['総大将', '副将', '兵長', '雑兵'].filter(r => count(r)).map(r => `${r === '雑兵' ? '兵士の駒' : r}${count(r)}`).join(' / ') +
-    `　兵 ${troops}人　生存 ${alive.length}/${army.units.length}　総コスト ${cost}`;
+  const fogged = army.units.filter(hidden).length;
+  if (fogged) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="11" class="sub">🌫 霧の中に見えない敵がいる</td>`;
+    tbody.appendChild(tr);
+  }
+  const known = army.units.filter(u => !hidden(u));
+  const alive = known.filter(u => u.alive);
+  const cost = known.reduce((s, u) => s + u.cost, 0);
+  const count = r => known.filter(u => u.rank === r && !u.special).length;
+  const specials = k => known.filter(u => u.type === k).length;
+  const troops = known.filter(u => u.troops).reduce((s, u) => s + (u.alive ? u.troopsNow : 0), 0);
+  $(`${side}-summary`).textContent = !known.length ? '🌫 敵の姿は見えない' :
+    [...['総大将', '副将', '兵長', '雑兵'].filter(r => count(r)).map(r => `${r === '雑兵' ? '兵士の駒' : r}${count(r)}`),
+     ...['斥候', '暗殺者'].filter(specials).map(k => `${k}${specials(k)}`)].join(' / ') +
+    `　兵 ${troops}人　生存 ${alive.length}/${known.length}${fogged ? '（ほかに見えない敵）' : ''}　総コスト ${cost}`;
   $(`${side}-dice`).textContent = army.squadName
     ? `【${army.squadName}】`
     : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
@@ -1287,14 +1417,20 @@ function renderField(acting) {
   const cur = currentUnit();
   const reach = new Set(cur ? manualReach(cur).map(([x, y]) => `${x},${y}`) : []);
   const targets = new Set(cur ? manualTargets(cur).map(u => u.id) : []);
+  // プレイヤー軍の視界。手動プレイでは見えない敵を描かない（オート観戦では半透明で描く）
+  const eyes = state.player.units.filter(u => u.alive);
+  const inSight = (x, y) => !state.fog || eyes.some(o => Math.abs(o.x - x) + Math.abs(o.y - y) <= (o.vision ?? VISION_DEFAULT));
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const u = unitAt(x, y);
+      let u = unitAt(x, y);
+      const ghost = u && u.side === 'cpu' && !visibleTo('player', u);
+      if (ghost && state.mode === 'manual') u = null;
       const cell = document.createElement('div');
       cell.className = 'cell' + (u ? ` ${u.side === 'player' ? 'p' : 'c'}` : '') +
         (u && u === acting ? ' acting' : '') +
         (reach.has(`${x},${y}`) ? ' reach' : '') +
-        (u && targets.has(u.id) ? ' target' : '');
+        (u && targets.has(u.id) ? ' target' : '') +
+        (inSight(x, y) ? '' : ' fog') + (u && ghost ? ' ghost' : '');
       cell.dataset.x = x;
       cell.dataset.y = y;
       if (u) {
@@ -1304,7 +1440,8 @@ function renderField(acting) {
       field.appendChild(cell);
     }
   }
-  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
+  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者 / 青=プレイヤー 赤=CPU' +
+    (state.fog ? ' / 暗いマス=視界の外' : '');
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
     (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
@@ -1469,6 +1606,8 @@ const TROOP_DICE = { sides: 10, unit: 100 };            // 各兵種の総数 = 
 const GENERAL_DICE = { n: 2, sides: 4, plus: 2 };       // 副将の人数 2d4+2（4〜10人）
 const SERGEANT_DICE = { n: 1, sides: 3, plus: 1 };      // 兵長の人数（兵種ごと）1d3+1（2〜4人）
 const SERGEANT_LDR_DICE = { n: 1, sides: 5, plus: 1 };  // 兵長の統率力 1d5+1（2〜6）
+const SCOUT_DICE = { n: 1, sides: 4, plus: 0 };         // 斥候の人数 1d4（1〜4人）
+const ASSASSIN_DICE = { n: 1, sides: 4, plus: -1 };     // 暗殺者の人数 1d4−1（0〜3人。勝負をひっくり返しすぎないよう少なめ）
 const PIECE_DEFAULT = 100;                               // 兵士の駒を追加するときの初期人数
 const AUTO_PIECE = 100;                                  // おまかせ編成の1駒の目安の人数
 const CAMPAIGN_KEY = 'dice-senki-campaign-v1';
@@ -1505,19 +1644,23 @@ function newArmy(side) {
       sergeants.push({ id: `${side}-S${t}${i}`, type: t, name: `${label}${t}長${i}`, ldr: rollExpr(SERGEANT_LDR_DICE).total });
     }
   }
+  const specials = [];
+  const scoutRoll = rollExpr(SCOUT_DICE), assassinRoll = rollExpr(ASSASSIN_DICE);
+  for (let i = 1; i <= scoutRoll.total; i++) specials.push({ id: `${side}-X斥候${i}`, kind: '斥候', name: `${label}斥候${i}` });
+  for (let i = 1; i <= assassinRoll.total; i++) specials.push({ id: `${side}-X暗殺者${i}`, kind: '暗殺者', name: `${label}暗殺者${i}` });
   return {
-    side, totals, troopDice, generalRoll, sergeantDice, generals, sergeants, seq: 1, defeated: false,
+    side, totals, troopDice, generalRoll, sergeantDice, generals, sergeants, specials, scoutRoll, assassinRoll, seq: 1, defeated: false,
     squads: [{ id: `${side}-Q0`, name: '本隊', leader: `${side}-G0`, members: [], pieces: [] }],
   };
 }
 
 function memberById(army, id) {
-  return army.generals.find(g => g.id === id) || army.sergeants.find(s => s.id === id);
+  return army.generals.find(g => g.id === id) || army.sergeants.find(s => s.id === id) || army.specials.find(s => s.id === id);
 }
 
 /** 将の統率力（総大将・副将は振り分け、兵長はダイス） */
 function memberLdr(m) {
-  if (!m) return 0;
+  if (!m || m.kind) return 0;
   return m.rank ? commanderStats(COMMANDER_TYPE, RANKS[m.rank].cost, m.build, SKILL_SLOTS[m.rank]).ldr : m.ldr;
 }
 
@@ -1602,6 +1745,10 @@ function autoForm(army) {
       if (i >= 0) q.members.push(freeSergeants.splice(i, 1)[0].id);
     }
   }
+  // 斥候は本隊から1人ずつ、暗殺者は分隊（なければ本隊）に1人ずつ。余りは予備
+  army.specials.filter(x => x.kind === '斥候').forEach((x, i) => { if (i < army.squads.length) army.squads[i].members.push(x.id); });
+  const hideouts = army.squads.length > 1 ? army.squads.slice(1) : army.squads;
+  army.specials.filter(x => x.kind === '暗殺者').forEach((x, i) => hideouts[i % hideouts.length].members.push(x.id));
   const share = new Map(army.squads.map(q => [q, {}]));
   for (const t of TYPE_NAMES) {
     const takers = army.squads.filter(q => focus.get(q).includes(t));
@@ -1629,18 +1776,21 @@ function removeMember(army, id) {
   const q = squadOf(army, id);
   army.generals = army.generals.filter(g => g.id !== id);
   army.sergeants = army.sergeants.filter(s => s.id !== id);
+  army.specials = army.specials.filter(s => s.id !== id);
   if (!q) return;
   if (q.leader === id) {
     if (q.name === '本隊') { army.defeated = true; return; }
     if (q.members.length) {
       // 配下の副将がいればその副将が、いなければ兵長が隊長を継ぐ
-      const next = q.members.find(m => memberById(army, m)?.rank) || q.members[0];
-      q.members = q.members.filter(m => m !== next);
-      q.leader = next;
-      q.name = `${memberById(army, q.leader).name}隊`;
-    } else {
-      army.squads = army.squads.filter(x => x !== q);
+      const next = q.members.find(m => memberById(army, m)?.rank) || q.members.find(m => !memberById(army, m)?.kind);
+      if (next) {
+        q.members = q.members.filter(m => m !== next);
+        q.leader = next;
+        q.name = `${memberById(army, q.leader).name}隊`;
+        return;
+      }
     }
+    army.squads = army.squads.filter(x => x !== q);   // 継げる将がいなければ解散（配下は予備に戻る）
   } else {
     q.members = q.members.filter(x => x !== id);
   }
@@ -1677,8 +1827,8 @@ function buildBattleArmy(side, army, q, map) {
   const troops = [];
   for (const id of q.members) {
     const m = memberById(army, id);
-    const u = m.rank
-      ? new Unit(side, m.rank, COMMANDER_TYPE, m.name, 0, 0, m.build)
+    const u = m.rank ? new Unit(side, m.rank, COMMANDER_TYPE, m.name, 0, 0, m.build)
+      : m.kind ? new Unit(side, m.kind === '暗殺者' ? '兵長' : '雑兵', m.kind, m.name, 0, 0)
       : new Unit(side, '兵長', m.type, m.name, 0, 0);
     u.ref = { kind: 'member', id };
     troops.push(u);
@@ -1775,7 +1925,10 @@ function loadCampaign() {
     const a = JSON.parse(localStorage.getItem(CAMPAIGN_KEY));
     if (!a || !a.player || !a.cpu) return;
     // 旧版では隊の配下を sergeants と呼んでいた
-    for (const army of [a.player, a.cpu]) for (const q of army.squads) q.members = q.members || q.sergeants || [];
+    for (const army of [a.player, a.cpu]) {
+      army.specials = army.specials || [];   // 斥候・暗殺者の追加前の保存データ
+      for (const q of army.squads) q.members = q.members || q.sergeants || [];
+    }
     campaign.armies = a;
   } catch (e) { /* 同上 */ }
 }
@@ -1799,15 +1952,18 @@ function renderCampaign() {
   const generals = P.generals.map(g => `<tr><td>${g.name}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
       <td><button class="small" data-act="edit" data-id="${g.id}">振り分け</button></td></tr>`).join('');
   const sergeants = P.sergeants.map(sg => `<tr><td>${sg.name}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
-  const freeMembers = (filter) => [...P.generals.filter(g => g.rank === '副将'), ...P.sergeants]
+  const specials = P.specials.map(x => `<tr><td>${x.name}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
+    || '<tr><td colspan="3" class="sub">なし</td></tr>';
+  // 隊に入れられる将（副将・兵長）と斥候・暗殺者。隊長にできるのは副将・兵長だけ
+  const freeMembers = (filter, withSpecials = false) => [...P.generals.filter(g => g.rank === '副将'), ...P.sergeants, ...(withSpecials ? P.specials : [])]
     .filter(m => !squadOf(P, m.id) && filter(m));
   const cpuSquads = A.cpu.squads.map(q => `<option value="${q.id}">${q.name}（${q.pieces.length}駒・${squadTroops(q)}人）</option>`).join('');
   const squads = P.squads.map(q => {
     const lead = memberById(P, q.leader);
     const cap = squadCap(P, q);
     // 副将は、総大将か副将が率いる隊にだけ入れる（兵長が率いる小隊には兵長だけ）
-    const desc = m => `${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）`;
-    const sgOpts = freeMembers(m => !m.rank || lead?.rank).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
+    const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）`;
+    const sgOpts = freeMembers(m => !m.rank || lead?.rank, true).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
     const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type} ${p.size}人${P.sergeants.some(s => s.type === p.type && q.members.includes(s.id)) || (lead && !lead.rank && lead.type === p.type) ? '★' : ''}
         <button class="x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     const sgs = q.members.map(id => `<span class="chip">${desc(memberById(P, id))}
@@ -1815,7 +1971,7 @@ function renderCampaign() {
     return `<div class="squad">
       <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 駒 ${q.pieces.length}/${cap}${q.pieces.length > cap ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
         ${q.name !== '本隊' ? `<button class="small" data-act="disband" data-q="${q.id}">解散</button>` : ''}</div>
-      <div>配下の将: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">${lead?.rank ? '副将・兵長' : '兵長'}を追加…</option>${sgOpts}</select>` : ''}</div>
+      <div>配下の将: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">${lead?.rank ? '副将・兵長' : '兵長'}・斥候・暗殺者を追加…</option>${sgOpts}</select>` : ''}</div>
       <div>兵士の駒: ${pieces}</div>
       <div class="sq-add">
         <select data-role="ptype" data-q="${q.id}">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
@@ -1835,10 +1991,13 @@ function renderCampaign() {
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}
     </div>
     <div class="cp-pool">兵力（予備 / 総数）: ${pool}
-      <span class="sub">副将 🎲[${P.generalRoll.dice.join('][')}]+${GENERAL_DICE.plus} = ${P.generalRoll.total}人 ／ 兵長 ${P.sergeants.length}人</span></div>
+      <span class="sub">副将 🎲[${P.generalRoll.dice.join('][')}]+${GENERAL_DICE.plus} = ${P.generalRoll.total}人 ／ 兵長 ${P.sergeants.length}人
+        ／ 斥候 🎲[${P.scoutRoll?.dice.join('][') ?? ''}] = ${P.specials.filter(x => x.kind === '斥候').length}人
+        ／ 暗殺者 🎲[${P.assassinRoll?.dice.join('][') ?? ''}]−1 = ${P.specials.filter(x => x.kind === '暗殺者').length}人</span></div>
     <div class="cp-cols">
       <div><h3>将</h3><table><thead><tr><th>名前</th><th>階級</th><th>統率</th><th>所属</th><th></th></tr></thead><tbody>${generals}</tbody></table></div>
       <div><h3>兵長</h3><table><thead><tr><th>名前</th><th>兵種</th><th>統率</th><th>所属</th></tr></thead><tbody>${sergeants}</tbody></table></div>
+      <div><h3>斥候・暗殺者</h3><table><thead><tr><th>名前</th><th>役職</th><th>所属</th></tr></thead><tbody>${specials}</tbody></table></div>
     </div>
     <div id="gen-editor"></div>
     <h3>隊</h3>
@@ -2004,12 +2163,18 @@ $('field').addEventListener('click', e => {
 });
 
 for (const id of ['advance-player', 'advance-cpu']) $(id).addEventListener('change', saveGame);
+$('fog').addEventListener('change', () => {
+  state.fog = $('fog').checked;
+  render();
+  saveGame();
+});
 
 function reset() {
   clearTimeout(state.timer);
   Object.assign(state, {
     map: null, player: null, cpu: null, turn: 0, queue: [], running: false, over: false, result: null, timer: null,
     logs: [], cmdReady: false, current: null, phase: null, manual: null, campaignBattle: null,
+    fog: $('fog').checked, logBuffer: null,
   });
   unitSeq = 0;
   $('log').innerHTML = '';
