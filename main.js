@@ -641,6 +641,59 @@ function performAttack(unit, target, bonus = 1, atkMult = 1) {
   return false;
 }
 
+/**
+ * 前進先の評価関数を作る（小さいほど良い）。
+ * 「空いていて、最も近い敵との距離がちょうど最適距離になるマス」を攻撃位置とみなし、
+ * いちばん近い攻撃位置への距離で評価する。正面が味方で埋まっていても、側面や背後の
+ * 空いた攻撃位置へ回り込むようになる（以前は最も近い敵との距離だけを見ていたため、
+ * 味方の後ろに縦一列に並びやすかった）。
+ * さらに、すでに味方が張り付いている敵を囲みに行く位置を少し優先し、
+ * 同じ評価のマスは少しランダムに選ぶ（毎回同じ向きに寄って列がそろうのを防ぐ）。
+ */
+function advanceScorer(unit, target) {
+  const enemies = enemiesOf(unit);
+  const free = (x, y) => {
+    if (x < 0 || y < 0 || x >= state.map.w || y >= state.map.h) return false;
+    const o = unitAt(x, y);
+    return !o || o === unit;
+  };
+  // 攻撃位置の候補: 各敵からちょうど best マスのリング上で、空いていて、他の敵にそれより近くないマス
+  const ideal = [];
+  const seen = new Set();
+  const b = unit.best;
+  for (const e of enemies) {
+    for (let dx = -b; dx <= b; dx++) {
+      const r = b - Math.abs(dx);
+      for (const dy of r === 0 ? [0] : [-r, r]) {
+        const x = e.x + dx, y = e.y + dy, key = `${x},${y}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!free(x, y)) continue;
+        const p = { x, y };
+        if (enemies.some(o => distance(p, o) < b)) continue;
+        // 囲み度: この位置から狙える敵に、すでに張り付いている味方の数
+        const gang = Math.max(...enemies.filter(o => distance(p, o) === b)
+          .map(o => alliesOf(unit).filter(a => distance(a, o) <= a.best).length));
+        ideal.push({ x, y, gang });
+      }
+    }
+  }
+  return p => {
+    if (!withinFrontLine(unit, p)) return Infinity;
+    const jitter = Math.random() * 0.02;
+    if (ideal.length === 0) {
+      const m = nearestEnemyDist(unit, p);
+      return Math.abs(m - b) * 10 + (m < b ? 5 : 0) + distance(p, target) * 0.01 + jitter;
+    }
+    let bestD = Infinity, gang = 0;
+    for (const q of ideal) {
+      const dq = distance(p, q);
+      if (dq < bestD || (dq === bestD && q.gang > gang)) { bestD = dq; gang = q.gang; }
+    }
+    return bestD * 10 - (bestD === 0 ? Math.min(gang, 3) * 0.5 : 0) + distance(p, target) * 0.01 + jitter;
+  };
+}
+
 /** 1ユニット分の行動（AI） */
 function actUnit(unit) {
   tickUnit(unit);
@@ -690,13 +743,8 @@ function actUnit(unit) {
   }
   if (!charge && !holding && !unit.rooted && distance(unit, target) > unit.best) {
     const before = unit.posText;
-    // 最も近い敵との距離が最適距離にできるだけ近いマスへ（近すぎるマスは避ける）
-    // 後衛は前衛より前のマスには止まらない
-    const moved = moveUnit(unit, unit.move, p => {
-      if (!withinFrontLine(unit, p)) return Infinity;
-      const m = nearestEnemyDist(unit, p);
-      return Math.abs(m - unit.best) * 10 + (m < unit.best ? 5 : 0) + distance(p, target) * 0.01;
-    });
+    // 「敵を最適距離で攻撃できる空きマス」（側面・背後を含む）に近づく。後衛は前衛より前に出ない
+    const moved = moveUnit(unit, unit.move, advanceScorer(unit, target));
     if (moved) {
       log(`${unit.name} は前進した。${before} → ${unit.posText}`, unit.side);
     } else {
