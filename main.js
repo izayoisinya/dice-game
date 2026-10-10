@@ -20,17 +20,17 @@ const MAP_TYPES = ['平野'];
 // コスト制ステータス
 //   各ユニットは「ステータス値の合計 = 階級のコスト」になるよう作る。
 //   射程は強力なので、RNG だけは 1 上げるごとに 30 ポイント払う（rngCost）。
-//   雑兵のプリセット（合計500）を基準に、上の階級はコスト比で拡大する（部隊長 ×2、総大将 ×4）。
+//   雑兵のプリセット（合計500）を基準に、上の階級はコスト比で拡大する（兵長 ×2、総大将 ×4）。
 //   射程の値は階級で変わらないが、払うコストも同じ比率で上がるので兵種間の比率は保たれる。
 // ------------------------------------------------------------
 
 // 階級の序列（大きいほど上）。戦局の決着は「お互いの最も階級が上の者」を倒したとき
-const RANK_ORDER = { '雑兵': 0, '部隊長': 1, '副将': 2, '総大将': 3 };
+const RANK_ORDER = { '雑兵': 0, '兵長': 1, '副将': 2, '総大将': 3 };
 
 // 階級: コスト = ステータス合計の予算
 const RANKS = {
   '雑兵':   { cost: 500 },
-  '部隊長': { cost: 1000 },
+  '兵長': { cost: 1000 },
   '総大将': { cost: 2000 },
 };
 const BASE_COST = RANKS['雑兵'].cost;
@@ -330,7 +330,7 @@ class Unit {
 
 /**
  * 3d6 で配下の部隊数を決め、1軍を生成する。
- * 出目合計 N = 部隊長 + 雑兵 の総数。部隊長は N/6 人（最低1人）、残りが雑兵。
+ * 出目合計 N = 兵長 + 雑兵 の総数。兵長は N/6 人（最低1人）、残りが雑兵。
  * これとは別に総大将が1人つく。
  */
 function formArmy(side, map) {
@@ -365,7 +365,7 @@ function formArmy(side, map) {
   const troops = [];
   for (let i = 1; i <= leaders; i++) {
     const type = pick(TYPE_NAMES);
-    troops.push(new Unit(side, '部隊長', type, `${label}${type}長${i}`, 0, 0));
+    troops.push(new Unit(side, '兵長', type, `${label}${type}長${i}`, 0, 0));
   }
   for (let i = 1; i <= soldiers; i++) {
     const type = pick(TYPE_NAMES);
@@ -1183,7 +1183,9 @@ function loadGame() {
   let data;
   try { data = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return false; }
   if (!data || data.v !== 1 || !data.player) return false;
-  const revive = army => ({ ...army, units: army.units.map(u => Object.assign(Object.create(Unit.prototype), u)) });
+  // 旧版の保存データでは「兵長」を「部隊長」と呼んでいたので読み替える
+  const revive = army => ({ ...army, units: army.units.map(u =>
+    Object.assign(Object.create(Unit.prototype), u, u.rank === '部隊長' ? { rank: '兵長' } : {})) });
   Object.assign(state, {
     mode: data.mode, map: data.map, player: revive(data.player), cpu: revive(data.cpu),
     turn: data.turn, queue: data.queue, running: data.running, over: data.over, result: data.result,
@@ -1243,7 +1245,7 @@ function renderArmy(army, side, acting) {
   const alive = army.units.filter(u => u.alive);
   const cost = army.units.reduce((s, u) => s + u.cost, 0);
   $(`${side}-summary`).textContent =
-    `総大将1 / 部隊長${army.leaders} / 雑兵${army.soldiers}　生存 ${alive.length}/${army.units.length}　総コスト ${cost}`;
+    `総大将1 / 兵長${army.leaders} / 雑兵${army.soldiers}　生存 ${alive.length}/${army.units.length}　総コスト ${cost}`;
   $(`${side}-dice`).textContent =
     `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
@@ -1253,7 +1255,7 @@ function renderField(acting) {
   const field = $('field');
   field.innerHTML = '';
   field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
-  const short = u => (u.isCommander ? '★' : u.rank === '部隊長' ? '◆' : '') + u.type[0];
+  const short = u => (u.isCommander ? '★' : u.rank === '兵長' ? '◆' : '') + u.type[0];
   const cur = currentUnit();
   const reach = new Set(cur ? manualReach(cur).map(([x, y]) => `${x},${y}`) : []);
   const targets = new Set(cur ? manualTargets(cur).map(u => u.id) : []);
@@ -1274,7 +1276,7 @@ function renderField(acting) {
       field.appendChild(cell);
     }
   }
-  const legend = '★将=総大将 ◆部隊長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
+  const legend = '★将=総大将 ◆兵長 / 剣 槍 弓 盾 騎 = 兵種 / 青=プレイヤー 赤=CPU';
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
     (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
@@ -1439,8 +1441,8 @@ $('btn-form').addEventListener('click', () => {
   state.player = formArmy('player', state.map);
   state.cpu = formArmy('cpu', state.map);
   log(`🎲 マップ: ${state.map.type} 幅 ${MAP_MIN_W}+[${state.map.wd.dice.join(', ')}] = ${state.map.w} / 高さ ${MAP_MIN_H}+[${state.map.hd.dice.join(', ')}] = ${state.map.h}`);
-  log(`🎲 プレイヤー軍 3d6 = [${state.player.dice.dice.join(', ')}] → 部隊数 ${state.player.dice.total}（部隊長${state.player.leaders} / 雑兵${state.player.soldiers}）`, 'player');
-  log(`🎲 CPU軍 3d6 = [${state.cpu.dice.dice.join(', ')}] → 部隊数 ${state.cpu.dice.total}（部隊長${state.cpu.leaders} / 雑兵${state.cpu.soldiers}）`, 'cpu');
+  log(`🎲 プレイヤー軍 3d6 = [${state.player.dice.dice.join(', ')}] → 部隊数 ${state.player.dice.total}（兵長${state.player.leaders} / 雑兵${state.player.soldiers}）`, 'player');
+  log(`🎲 CPU軍 3d6 = [${state.cpu.dice.dice.join(', ')}] → 部隊数 ${state.cpu.dice.total}（兵長${state.cpu.leaders} / 雑兵${state.cpu.soldiers}）`, 'cpu');
   log(state.mode === 'manual'
     ? '編成完了。総大将の振り分けを決めてから「戦闘開始」で開戦します。'
     : '編成完了。「戦闘開始」で開戦します。');

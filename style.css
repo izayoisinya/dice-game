@@ -38,7 +38,7 @@ th { color: #aaa; font-weight: normal; }
 tr.dead { opacity: 0.35; text-decoration: line-through; }
 tr.acting { background: #4a4520; }
 tr.rank-総大将 td:first-child { color: #ffd76f; font-weight: bold; }
-tr.rank-部隊長 td:first-child { color: #9fe39f; }
+tr.rank-兵長 td:first-child { color: #9fe39f; }
 .hpbar { width: 70px; height: 8px; background: #444; border-radius: 4px; display: inline-block; vertical-align: middle; margin-right: 4px; }
 .hpbar > div { height: 100%; border-radius: 4px; background: #5c5; }
 
