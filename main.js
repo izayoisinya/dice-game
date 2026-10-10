@@ -49,6 +49,14 @@ const ACT_GAUGE_MAX = 100;    // ゲージの上限（ため込みすぎ防止�
 const DAMAGE_DIE_SCALE = 10;  // ダメージのダイス = 1d6 × 10（ステータスの桁に合わせる）
 const MIN_DAMAGE = 10;        // 最低ダメージ（固定値）
 const MIN_DAMAGE_RATE = 0.15; // 最低でも ATK のこの割合は通る（DEF が高すぎて削れない状態を防ぐ）
+// 駒の人数（雑兵の駒だけ。将は人数で数えない個人の駒）
+//   今の雑兵のステータスは BASE_TROOPS 人の駒の強さ。HP は人数に比例し、攻撃を受けると人数が減る。
+//   1回の威力と手数（行動ゲージのたまり方）はそれぞれ √(人数比) 倍 → 総火力は人数に比例。
+//   人数が多いほど心強く DEF が上がる（倍になるごとに +SIZE_DEF_BONUS、上下限あり）。
+const BASE_TROOPS = 50;
+const MIN_TROOPS = 10;
+const SIZE_DEF_BONUS = 0.05;
+const SIZE_DEF_CAP = 0.1;
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
 
@@ -261,7 +269,7 @@ function pick(arr) {
 let unitSeq = 0;
 
 class Unit {
-  constructor(side, rank, type, name, x, y, build = 'バランス型') {
+  constructor(side, rank, type, name, x, y, build = 'バランス型', troops = BASE_TROOPS) {
     const r = RANKS[rank];
     const t = TYPES[type];
     const isCommander = rank === '総大将';
@@ -279,7 +287,9 @@ class Unit {
     this.cost = r.cost;
     this.build = cs ? (typeof build === 'string' ? build : 'カスタム') : null;
     this.stats = st;                       // コスト制のステータス値（合計 = cost）
-    this.maxHp = st.hp * HP_SCALE;
+    // 雑兵の駒は人数を持つ（HP は人数に比例）。将は人数なし
+    this.troops = rank === '雑兵' ? Math.max(MIN_TROOPS, troops) : null;
+    this.maxHp = this.troops ? Math.round(st.hp * HP_SCALE * this.troops / BASE_TROOPS) : st.hp * HP_SCALE;
     this.hp = this.maxHp;
     this.atk = st.atk;
     this.def = st.def;
@@ -306,6 +316,8 @@ class Unit {
   }
 
   get alive() { return this.hp > 0; }
+  /** 今の人数（HP の減り具合から計算。将は null） */
+  get troopsNow() { return this.troops ? Math.ceil(this.hp / (this.maxHp / this.troops)) : null; }
   get isCommander() { return this.rank === '総大将'; }
   get posText() { return `(${this.x},${this.y})`; }
   /** 後退できるマス数（移動力の半分・端数切り上げ） */
@@ -461,7 +473,29 @@ function statMult(u, stat) {
 }
 
 function effAtk(u) { return u.atk * statMult(u, 'atk'); }
-function effDef(u) { return u.def * statMult(u, 'def'); }
+function effDef(u) { return u.def * statMult(u, 'def') * (1 + sizeDefBonus(u)); }
+
+/** 今の人数 ÷ 基準人数（将は 1） */
+function sizeRatio(u) {
+  return u.troops ? u.troopsNow / BASE_TROOPS : 1;
+}
+
+/** 人数が多いほど心強い: 倍になるごとに DEF +5%（半分になるごとに −5%）、±10% まで */
+function sizeDefBonus(u) {
+  if (!u.troops) return 0;
+  const b = SIZE_DEF_BONUS * Math.log2(Math.max(sizeRatio(u), 1e-6));
+  return Math.max(-SIZE_DEF_CAP, Math.min(SIZE_DEF_CAP, b));
+}
+
+/** 1回の行動でたまる行動ゲージ（人数が多いほど手数が増える） */
+function actGain(u) {
+  return u.actRate * Math.sqrt(sizeRatio(u));
+}
+
+/** 行動ゲージの上限（手数が多い駒はため込める量も多い） */
+function gaugeCap(u) {
+  return ACT_GAUGE_MAX * Math.max(1, Math.sqrt(sizeRatio(u)));
+}
 function effRng(u) { return u.rng + u.rngBonus; }
 
 function skillReady(u, name) {
@@ -508,7 +542,8 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   const baseAtk = effAtk(attacker) * atkMult;
   const atk = crit ? Math.floor(baseAtk * 1.5) : baseAtk;
   const surround = surroundCount(attacker, defender);
-  const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus * (1 + SURROUND_BONUS * surround);
+  const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus * (1 + SURROUND_BONUS * surround)
+    * Math.sqrt(sizeRatio(attacker));   // 人数が多い駒ほど1回の威力も大きい
   const base = Math.max(atk * MIN_DAMAGE_RATE, atk - effDef(defender) * 0.5 + die * DAMAGE_DIE_SCALE);
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult));
   return { hit: true, hitRate, hitRoll, dmg, die, crit, surround };
@@ -808,7 +843,7 @@ function actUnit(unit) {
   }
 
   // 射程内 → 行動ゲージが ACT_PER_ATTACK たまっている分だけ攻撃
-  unit.gauge = Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  unit.gauge = Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
   // 一撃離脱: 攻撃できるなら攻撃の前に使う（反撃を受けず、攻撃後に離脱する）
   if (!unit.rooted && skillReady(unit, '一撃離脱') && unit.gauge >= ACT_PER_ATTACK &&
       target && distance(unit, target) <= effRng(unit)) {
@@ -962,7 +997,7 @@ function beginManual(unit) {
 /** 攻撃フェーズへ。行動ゲージはこの行動で1回だけたまる */
 function enterAttack(unit) {
   if (!state.manual.gaugeAdded) {
-    unit.gauge = Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+    unit.gauge = Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
     state.manual.gaugeAdded = true;
   }
   state.phase = 'attack';
@@ -984,7 +1019,7 @@ function manualReach(unit) {
 /** 今攻撃できる敵 */
 function manualTargets(unit) {
   if (state.phase !== 'move' && state.phase !== 'attack') return [];
-  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
   if (gauge < ACT_PER_ATTACK) return [];
   return enemiesOf(unit).filter(e => distance(unit, e) <= effRng(unit));
 }
@@ -1200,7 +1235,7 @@ function renderArmy(army, side, acting) {
     const ratio = u.hp / u.maxHp;
     const color = ratio > 0.5 ? '#5c5' : ratio > 0.25 ? '#dc5' : '#d55';
     tr.innerHTML = `
-      <td>${u.name}</td><td>${u.rank}${u.build ? `<small class="sub">(${u.build}${u.skills.length ? '・' + u.skills.join('/') : ''})</small>` : ''}</td><td>${u.type}</td>
+      <td>${u.name}${u.troops ? `<small class="sub">(${u.troopsNow}人)</small>` : ''}</td><td>${u.rank}${u.build ? `<small class="sub">(${u.build}${u.skills.length ? '・' + u.skills.join('/') : ''})</small>` : ''}</td><td>${u.type}</td>
       <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
       <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}<small class="sub">(${(u.actRate / ACT_PER_ATTACK).toFixed(1)}回)</small></td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
@@ -1254,7 +1289,7 @@ function renderActionPanel() {
     return;
   }
   panel.classList.remove('hidden');
-  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(ACT_GAUGE_MAX, unit.gauge + unit.actRate);
+  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
   const hint = {
     move: '青いマスをクリックで移動（移動しないで攻撃も可）。赤枠の敵をクリックで攻撃。',
     attack: state.manual && unit.hitAndRun && state.manual.attacked > 0
