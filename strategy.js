@@ -425,7 +425,7 @@ function attackToken(t, target) {
   smapLog(`⚔ ${tokenSquad(t).name} が ${tokenSquad(target).name} に攻撃！`, t.side);
   saveCampaign();
   startCampaignBattle(pt.id, ct.id);
-  log(t.side === 'player' ? '「戦闘開始」で開戦します。' : `CPU軍の攻撃！ 迎え撃つ ${tokenSquad(pt).name} を「戦闘開始」で開戦します。`, 'turn');
+  if (t.side === 'cpu') log(`CPU軍の攻撃！ 迎え撃つのは ${tokenSquad(pt).name} です。`, 'turn');
   renderStrat();
 }
 

@@ -1087,7 +1087,9 @@ function step() {
     state.turn++;
     const q = buildQueue();
     state.queue = q.map(u => u.id);
-    log(`--- ターン ${state.turn} --- 行動順: ${q.map(u => `${u.name}(${u.spd})`).join(' > ')}`, 'turn');
+    // 手動プレイで視界があるとき、見えていない敵は行動順に出さない（数や顔ぶれが分からないように）
+    const shown = q.filter(u => !(state.fog && state.mode === 'manual' && u.side === 'cpu' && !visibleTo('player', u)));
+    log(`--- ターン ${state.turn} --- 行動順: ${shown.map(u => `${u.name}(${u.spd})`).join(' > ')}${shown.length < q.length ? ' ＋ 霧の中の敵' : ''}`, 'turn');
   }
 
   const unit = unitById(state.queue.shift());
@@ -1107,7 +1109,7 @@ function step() {
     const buf = state.logBuffer;
     state.logBuffer = null;
     const seen = !unit.alive || visibleTo('player', unit);
-    for (const l of buf) if (seen || !/→|待機|阻まれ|見守/.test(l.text)) log(l.text, l.cls);
+    for (const l of buf) if (seen || !/→|待機|阻まれ|見守|✨/.test(l.text)) log(l.text, l.cls);
   }
   render(unit);
   saveGame();

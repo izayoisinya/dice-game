@@ -178,3 +178,5 @@ button.go:disabled { background: #555; }
 .scell .trap { position: absolute; bottom: 0; right: 1px; font-size: 0.85em; }
 .scell .trap.foe { filter: drop-shadow(0 0 3px #ff5a4f); }
 .scell .trap.own { filter: drop-shadow(0 0 3px #4aa0ff); }
+.scell .trap.foe { background: rgba(255, 70, 60, 0.85); border-radius: 4px; padding: 0 1px; filter: none; }
+.scell .trap.own { background: rgba(60, 140, 255, 0.85); border-radius: 4px; padding: 0 1px; filter: none; }
