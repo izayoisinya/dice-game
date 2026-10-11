@@ -2005,8 +2005,9 @@ function renderCampaign() {
       <button data-act="auto">おまかせ編成</button>
       <button data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置（隊はそのまま）</button>
       <button data-act="sortie" class="go" ${over ? 'disabled' : ''} title="この編成で戦略マップへ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣（戦略マップへ）</button>
-      ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}
     </div>
+    ${over ? `<div class="cp-over">${P.defeated ? '<b class="warn">💀 自軍は敗北しました。</b>' : '<b>🏆 CPU軍に勝利しました！</b>'}
+      この軍での戦いは終わりです。上の「🎲 戦力集結」で新しい軍を作るか、「↺ リセット」で最初に戻してください。</div>` : ''}
     <div class="cp-pool">兵力（予備 / 総数）: ${pool}
       <span class="sub">副将 🎲[${P.generalRoll.dice.join('][')}]+${GENERAL_DICE.plus} = ${P.generalRoll.total}人 ／ 兵長 ${P.sergeants.length}人
         ／ 斥候 🎲[${P.scoutRoll?.dice.join('][') ?? ''}] = ${P.specials.filter(x => x.kind === '斥候').length}人
@@ -2175,9 +2176,15 @@ $('btn-start').addEventListener('click', () => {
   step();
 });
 
+// リセット: 戦闘も軍（編成・戦略マップ）も消して、最初の状態に戻す
 $('btn-reset').addEventListener('click', () => {
+  if (campaign.armies && !confirm('戦闘も軍（編成・戦略マップ）もすべて消して、最初からやり直しますか？')) return;
   clearSave();
+  Object.assign(campaign, { armies: null, editing: null, smap: null });
+  try { localStorage.removeItem(CAMPAIGN_KEY); } catch (e) { /* 保存できない環境では何もしない */ }
   reset();
+  renderCampaign();
+  renderStrat();
 });
 
 $('field').addEventListener('click', e => {
