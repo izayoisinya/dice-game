@@ -44,7 +44,8 @@ function rngCost(rng) {
 
 // ステータス値 → ゲーム内の値への換算
 const HP_SCALE = 3;           // 実HP = HP値 × 3
-const MOVE_DIV = 40;          // 移動力 = 階級補正後SPD ÷ 40（切り上げ）
+const MOVE_DIV = 40;          // 移動力 = 階級補正後SPD ÷ 40（切り上げ）+ MOVE_BONUS
+const MOVE_BONUS = 1;         // テンポのため全員 +1（盾 3 / 槍・弓・将 3〜4 / 剣 4 / 騎 5）
 const ACT_PER_ATTACK = 50;    // 行動ゲージがこの値たまるごとに1回攻撃できる
 const ACT_GAUGE_MAX = 100;    // ゲージの上限（ため込みすぎ防止）
 const DAMAGE_DIE_SCALE = 10;  // ダメージのダイス = 1d6 × 10（ステータスの桁に合わせる）
@@ -74,6 +75,7 @@ const ADVANCE_MODES = {
 // 固有能力: ステータスの予算からコストを払って持つ（階級が上がるとコストも同じ比率で上がる）
 const TRAITS = {
   zoc:    { name: '足止め', cost: 40 },  // 隣接したマスに入った敵はそこで移動が止まる
+  cover:  { name: '庇う',   cost: 0 },   // 敵と味方の間（同じ縦・横の直線上）にいると、その攻撃を代わりに受ける
   charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
   scout:  { name: '索敵',   cost: 100 }, // 視界が広い。隠密の敵も2マスまで見つけられる
   stealth: { name: '隠密',  cost: 50 },  // 敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで姿が見える）
@@ -85,6 +87,14 @@ const ASSASSIN_VS_TROOPS = 0.5;    // 暗殺者 → 兵士の駒・斥候の威�
 // 視界（戦場の霧）: 味方の誰かの視界に入っている敵だけが見え、狙える（視界は軍全体で共有）
 const VISION_DEFAULT = 4;
 const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と保つ距離
+const TRAIT_HELP = {
+  zoc: '上下左右に隣接したマスに入った敵は、そこで移動が止まる',
+  cover: '敵と味方の間（同じ縦・横の直線上）にいると、その味方への攻撃を代わりに受ける',
+  charge: '上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×30%だけ初撃の威力が上がる（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示',
+  scout: '視界が広い。隠密の敵も2マスまで見つけられる',
+  stealth: '敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで見える）',
+  assassin: '将（兵長以上）への攻撃 ×1.6、兵士の駒への攻撃 ×0.5',
+};
 const CHARGE_MIN = 2;         // 突撃になる最低直進マス数
 const CHARGE_BONUS = 0.3;     // 直進1マスあたりの威力上昇（初撃のみ）
 
@@ -118,7 +128,7 @@ const TYPES = {
                        4: { hit: 0.9, pow: 0.9 },    // 準最大
                        5: { hit: 0.7, pow: 0.7 } } },// 最低
   // 被ダメも与ダメも低い壁役。足止め（ZOC）で敵の進軍を止める
-  '盾兵': { stats: { hp: 140, atk: 70, def: 140, spd: 50, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['zoc'],
+  '盾兵': { stats: { hp: 140, atk: 70, def: 140, spd: 50, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['zoc', 'cover'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 移動速度重視。一直線に走り込んでの突撃が武器
   '騎兵': { stats: { hp: 100, atk: 110, def: 80, spd: 130, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
@@ -322,7 +332,7 @@ class Unit {
     this.spd = st.spd + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
     this.rng = cs ? cs.rng : t.rng;
     this.act = st.act;
-    this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV));
+    this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV)) + MOVE_BONUS;
     this.actRate = st.act / tempoDiv;      // 1行動ごとに行動ゲージにたまる量
     this.gauge = (d(5) - 1) * 10;          // 初期ゲージ 0〜40（全員が同じタイミングで動かないようずらす）
     this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
@@ -570,7 +580,7 @@ function skillReady(u, name) {
 
 function useSkill(u, name) {
   u.cooldowns[name] = SKILLS[name].cooldown;
-  log(`✨ ${u.name} の「${name}」！`, u.side);
+  log(`✨ ${u.name} の「${name}」！ ${SKILLS[name].desc}`, u.side);
 }
 
 /** 自分の行動の始めに、スキルの待ち時間とバフの残りを1つ進める */
@@ -734,10 +744,27 @@ function findCharge(unit) {
 }
 
 /**
+ * 庇う（盾兵）: 攻撃する側と狙われた側が同じ縦・横の直線上にいて、その間に狙われた側の味方の盾兵がいれば、
+ * 盾兵が代わりに攻撃を受ける（いちばん攻撃側に近い盾兵）。隣接した相手への攻撃には間がないので起きない
+ */
+function coverFor(attacker, target) {
+  if (attacker.x !== target.x && attacker.y !== target.y) return target;
+  const between = u => u.alive && u.side === target.side && u !== target && u.traits.includes('cover') &&
+    (attacker.x === target.x
+      ? u.x === target.x && (u.y - attacker.y) * (u.y - target.y) < 0
+      : u.y === target.y && (u.x - attacker.x) * (u.x - target.x) < 0);
+  const guards = allUnits().filter(between).sort((a, b) => distance(a, attacker) - distance(b, attacker));
+  if (!guards.length) return target;
+  log(`🛡 ${guards[0].name} が ${target.name} を庇った！`, guards[0].side);
+  return guards[0];
+}
+
+/**
  * 1回の攻撃を行い、ログを出す。決着したら true を返す。
  * bonus = 突撃などの威力倍率、atkMult = 強撃などの ATK 倍率
  */
 function performAttack(unit, target, bonus = 1, atkMult = 1) {
+  target = coverFor(unit, target);
   const dist = distance(unit, target);
   if (unit.traits.includes('stealth')) unit.revealed = true;
   const r = calcAttack(unit, target, bonus, atkMult);
@@ -766,6 +793,16 @@ function counterAttack(defender, attacker) {
   if (attacker.counteredBy.includes(defender.id)) return false;
   if (attacker.hitAndRun) return false;   // 一撃離脱中は反撃を受けない
   attacker.counteredBy.push(defender.id);
+  const victim = coverFor(defender, attacker);
+  if (victim !== attacker) {
+    // 反撃も盾兵が庇う
+    const r = calcAttack(defender, victim, COUNTER_MULT);
+    if (!r.hit) { log(`↩ ${defender.name} の反撃！ ${victim.name} にかわされた！`, defender.side); return false; }
+    victim.hp = Math.max(0, victim.hp - r.dmg);
+    log(`↩ ${defender.name} の反撃！ ${victim.name} に ${r.dmg} のダメージ！ (残HP ${victim.hp}/${victim.maxHp})`, defender.side);
+    if (!victim.alive) { log(`☠ ${victim.name} は倒れた！`, 'death'); return checkVictory(); }
+    return false;
+  }
   const r = calcAttack(defender, attacker, COUNTER_MULT);
   if (!r.hit) {
     log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}% 🎲${r.hitRoll}] ${attacker.name} にかわされた！`, defender.side);
@@ -847,6 +884,7 @@ function actUnit(unit) {
     if (near.length >= 1 && distance(unit, target) <= 6) {
       useSkill(unit, '一斉指揮');
       for (const a of [unit, ...near]) a.buffs.push({ stat: 'atk', value: 0.3, turns: 3 }, { stat: 'def', value: 0.15, turns: 3 });
+      log(`　→ 周囲${COMMAND_RANGE}マスの ${near.length + 1}体（${[unit, ...near].map(x => x.name).join('・')}）に効果`, unit.side);
     }
   }
 
@@ -1185,6 +1223,7 @@ function manualCharge(unit, fromX, fromY) {
 }
 
 function onCellClick(x, y) {
+  if (deployMode()) return onDeployClick(x, y);
   const unit = currentUnit();
   if (!unit || state.over) return;
   const other = unitAt(x, y);
@@ -1249,6 +1288,8 @@ function onSkill(name) {
   } else if (name === '一斉指揮') {
     const near = alliesOf(unit).filter(a => distance(a, unit) <= COMMAND_RANGE);
     for (const a of [unit, ...near]) a.buffs.push({ stat: 'atk', value: 0.3, turns: 3 }, { stat: 'def', value: 0.15, turns: 3 });
+    log(`　→ 周囲${COMMAND_RANGE}マスの ${near.length + 1}体（${[unit, ...near].map(x => x.name).join('・')}）に効果`, unit.side);
+    ui2.preview = null;
   } else if (name === '遠隔狙撃') {
     unit.rngBonus = 1;
   } else if (name === '強撃') {
@@ -1410,12 +1451,64 @@ function renderArmy(army, side, acting) {
     : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
 
+const ui2 = { preview: null, deploySel: null };   // preview = 範囲を表示するスキル、deploySel = 布陣で選んだ駒
+
+/** その駒にかかっているバフの説明（例: ATK+30%・残2回） */
+function buffText(u) {
+  const parts = u.buffs.map(b => `${b.stat.toUpperCase()}+${Math.round(b.value * 100)}%（残${b.turns}回）`);
+  if (u.rooted) parts.push('鉄壁の構え中（移動不可）');
+  if (u.hitAndRun) parts.push('一撃離脱中');
+  if (u.rngBonus) parts.push(`射程+${u.rngBonus}`);
+  return parts.join(' / ');
+}
+
+/** 手動で (x,y) へ移動したら突撃になるか */
+function chargeFrom(unit, x, y) {
+  const [ox, oy] = [unit.x, unit.y];
+  [unit.x, unit.y] = [x, y];
+  const c = manualCharge(unit, ox, oy);
+  [unit.x, unit.y] = [ox, oy];
+  return c;
+}
+
+/** 布陣の手直し中か（手動プレイで、開戦前） */
+function deployMode() {
+  return state.mode === 'manual' && state.player && state.cmdReady && !state.running && !state.over && state.turn === 0;
+}
+
+function inDeployZone(x, y) {
+  return y >= state.map.h - DEPLOY_ROWS && y < state.map.h && x >= 0 && x < state.map.w;
+}
+
+/** 布陣の手直し: 自軍の駒を選び、自陣の空いたマスへ移す（自軍の駒をクリックすると入れ替え） */
+function onDeployClick(x, y) {
+  const other = unitAt(x, y);
+  const sel = ui2.deploySel != null ? unitById(ui2.deploySel) : null;
+  if (other && other.side === 'player' && (!sel || other === sel)) {
+    ui2.deploySel = other === sel ? null : other.id;
+  } else if (sel && inDeployZone(x, y)) {
+    if (other && other.side === 'player') [other.x, other.y] = [sel.x, sel.y];
+    if (!other || other.side === 'player') [sel.x, sel.y] = [x, y];
+    ui2.deploySel = null;
+    saveGame();
+  } else {
+    ui2.deploySel = null;
+  }
+  render();
+}
+
 function renderField(acting) {
   const { w, h, type, wd, hd } = state.map;
   const field = $('field');
   field.innerHTML = '';
   field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
   const short = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '') + u.type[0];
+  // 突撃になる移動先（騎兵など）と、一斉指揮の範囲
+  const curU = currentUnit();
+  const chargeSet = new Set(curU && state.phase === 'move' && curU.traits.includes('charge')
+    ? manualReach(curU).filter(([x, y]) => chargeFrom(curU, x, y)).map(([x, y]) => `${x},${y}`) : []);
+  const cmdRange = curU && skillReady(curU, '一斉指揮') && canUseSkill(curU, '一斉指揮') && ui2.preview === '一斉指揮';
+  const deploy = deployMode();
   const cur = currentUnit();
   const reach = new Set(cur ? manualReach(cur).map(([x, y]) => `${x},${y}`) : []);
   const targets = new Set(cur ? manualTargets(cur).map(u => u.id) : []);
@@ -1432,11 +1525,16 @@ function renderField(acting) {
         (u && u === acting ? ' acting' : '') +
         (reach.has(`${x},${y}`) ? ' reach' : '') +
         (u && targets.has(u.id) ? ' target' : '') +
-        (inSight(x, y) ? '' : ' fog') + (u && ghost ? ' ghost' : '');
+        (inSight(x, y) ? '' : ' fog') + (u && ghost ? ' ghost' : '') +
+        (chargeSet.has(`${x},${y}`) ? ' charge' : '') +
+        (cmdRange && Math.abs(curU.x - x) + Math.abs(curU.y - y) <= COMMAND_RANGE ? ' skillrange' : '') +
+        (deploy && inDeployZone(x, y) ? ' deployzone' : '') + (deploy && u && u.id === ui2.deploySel ? ' acting' : '') +
+        (u && u.buffs.length ? ' buffed' : '');
       cell.dataset.x = x;
       cell.dataset.y = y;
+      if (chargeSet.has(`${x},${y}`)) cell.title = '🐎 ここへ一直線に走ると突撃（初撃の威力アップ）';
       if (u) {
-        cell.title = `${u.name} HP ${u.hp}/${u.maxHp}`;
+        cell.title = `${u.name} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
         cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>`;
       }
       field.appendChild(cell);
@@ -1453,6 +1551,14 @@ function renderField(acting) {
 function renderActionPanel() {
   const panel = $('action-panel');
   const unit = currentUnit();
+  if (deployMode()) {
+    panel.classList.remove('hidden');
+    const sel = ui2.deploySel != null ? unitById(ui2.deploySel) : null;
+    panel.innerHTML = `<div class="ap-head"><b>布陣</b>（開戦前に駒の位置を変えられます）</div>
+      <div class="ap-hint">自軍の駒をクリック → 黄色の自陣のマスをクリックで移動（自軍の駒をクリックすると入れ替え）。終わったら上の「⚔ 戦闘開始」。
+      ${sel ? `<br>選択中: <b>${sel.name}</b>（${sel.type}・移動${sel.move}・射程${sel.rng}）` : ''}</div>`;
+    return;
+  }
   if (!unit || state.over) {
     panel.classList.add('hidden');
     return;
@@ -1474,11 +1580,18 @@ function renderActionPanel() {
     const wait = ready ? '' : `（あと${unit.cooldowns[name]}）`;
     return `<button class="skill" data-skill="${name}" ${ok ? '' : 'disabled'} title="${SKILLS[name].desc}">✨${name}${wait}</button>`;
   }).join('');
+  // スキルの説明（スマホでは title が見えないので常に表示）と、今かかっている効果
+  const skillHelp = unit.skills.map(name => `<div>✨<b>${name}</b>: ${SKILLS[name].desc}（使うと自分の行動${SKILLS[name].cooldown}回分は使えない）${
+    name === '一斉指揮' ? ' <button class="small" data-preview="一斉指揮">範囲を表示</button>' : ''}</div>`).join('');
+  const traitHelp = unit.traits.map(k => `<div>◇<b>${TRAITS[k].name}</b>: ${TRAIT_HELP[k] || ''}</div>`).join('');
+  const nowBuff = buffText(unit);
   panel.innerHTML = `
     <div class="ap-head"><b>${unit.name}</b>（${unit.rank}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
       ／ 移動 ${unit.rooted ? '不可' : unit.move} ／ 射程 ${effRng(unit)} ／ 攻撃できる回数 ${Math.floor(gauge / ACT_PER_ATTACK)}
       ${state.manual.smash ? ' ／ 強撃 準備中' : ''}${unit.hitAndRun ? ' ／ 一撃離脱中（反撃なし・攻撃後に移動可）' : ''}${state.manual.charge ? ` ／ 突撃 ${state.manual.charge.run}マス` : ''}</div>
     <div class="ap-hint">${hint}</div>
+    ${nowBuff ? `<div class="ap-buff">効果中: ${nowBuff}</div>` : ''}
+    ${skillHelp || traitHelp ? `<div class="ap-help">${skillHelp}${traitHelp}</div>` : ''}
     <div class="ap-buttons">
       ${state.phase === 'move' ? '<button id="ap-stay">移動しない</button>' : ''}
       ${skills}
@@ -1494,6 +1607,7 @@ function renderActionPanel() {
   const wd = $('ap-withdraw');
   if (wd) wd.onclick = () => onWithdraw(unit);
   for (const b of panel.querySelectorAll('button.skill')) b.onclick = () => onSkill(b.dataset.skill);
+  for (const b of panel.querySelectorAll('[data-preview]')) b.onclick = () => { ui2.preview = ui2.preview ? null : b.dataset.preview; render(unit); };
 }
 
 function render(acting = null) {

@@ -180,3 +180,12 @@ button.go:disabled { background: #555; }
 .scell .trap.own { filter: drop-shadow(0 0 3px #4aa0ff); }
 .scell .trap.foe { background: rgba(255, 70, 60, 0.85); border-radius: 4px; padding: 0 1px; filter: none; }
 .scell .trap.own { background: rgba(60, 140, 255, 0.85); border-radius: 4px; padding: 0 1px; filter: none; }
+
+/* 突撃・スキル範囲・布陣・バフ */
+.cell.charge { background: #a8662a; cursor: pointer; }
+.cell.skillrange { box-shadow: inset 0 0 0 100px rgba(170, 120, 255, 0.35); }
+.cell.deployzone { box-shadow: inset 0 0 0 2px #ffd76f; cursor: pointer; }
+.cell.buffed::after { content: '▲'; position: absolute; top: 0; right: 1px; font-size: 0.7em; color: #ffd76f; }
+.ap-buff { color: #ffd76f; font-size: 0.85rem; margin-bottom: 4px; }
+.ap-help { font-size: 0.8rem; color: #bbb; margin: 4px 0 6px; line-height: 1.5; }
+.ap-help button.small { padding: 1px 6px; font-size: 0.75rem; }
