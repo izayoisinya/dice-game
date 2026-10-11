@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ダイス戦記 プロトタイプ</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1d1f24">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
   <header>
@@ -97,5 +103,9 @@
 
   <script src="strategy.js"></script>
   <script src="main.js"></script>
+  <script>
+    // ホーム画面へのインストール（PWA）用
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js');
+  </script>
 </body>
 </html>
