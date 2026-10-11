@@ -10,6 +10,9 @@
   <header>
     <h1>ダイス戦記 <small>プロトタイプ</small></h1>
     <div class="controls">
+      <button id="btn-muster">🎲 戦力集結</button>
+      <button id="btn-start" disabled>⚔ 戦闘開始</button>
+      <button id="btn-reset">↺ リセット</button>
       <label>モード
         <select id="mode">
           <option value="manual" selected>手動プレイ</option>
@@ -17,9 +20,6 @@
         </select>
       </label>
       <label title="味方の視界に入っている敵だけが見え、狙える"><input type="checkbox" id="fog" checked> 視界（霧）</label>
-      <button id="btn-form">🎲 編成</button>
-      <button id="btn-start" disabled>⚔ 戦闘開始</button>
-      <button id="btn-reset">↺ リセット</button>
       <label>速度
         <select id="speed">
           <option value="600">遅い</option>

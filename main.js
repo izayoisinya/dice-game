@@ -1505,7 +1505,7 @@ function render(acting = null) {
 }
 
 function updateButtons() {
-  $('btn-form').disabled = state.running;
+  $('btn-muster').disabled = state.running;
   $('btn-start').disabled = !state.player || state.running || state.over || (state.mode === 'manual' && !state.cmdReady);
   $('mode').disabled = state.running;
 }
@@ -1941,8 +1941,8 @@ function renderCampaign() {
   const box = $('campaign');
   const A = campaign.armies;
   if (!A) {
-    box.innerHTML = `<div class="cp-head"><button data-act="new">🎲 新しい軍を作る</button>
-      <span class="sub">兵種ごとの総数・副将・兵長をダイスで決め、本隊と分隊に割り振って出陣します。</span></div>`;
+    box.innerHTML = `<div class="cp-head"><span class="sub">上の「🎲 戦力集結」で、兵種ごとの総数・副将・兵長・斥候・暗殺者をダイスで決めます。
+      そのあと本隊と分隊に割り振り（おまかせ編成も可）、隊の「出陣」で戦う相手を選びます。</span></div>`;
     return;
   }
   const P = A.player;
@@ -1986,7 +1986,6 @@ function renderCampaign() {
   const leaderOpts = freeMembers(() => true).map(m => `<option value="${m.id}">${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）</option>`).join('');
   box.innerHTML = `
     <div class="cp-head">
-      <button data-act="new">🎲 新しい軍を作る</button>
       <button data-act="auto">おまかせ編成</button>
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}
     </div>
@@ -2071,11 +2070,6 @@ function onCampaignClick(e) {
   const P = A && A.player;
   const q = P && P.squads.find(x => x.id === el.dataset.q);
   switch (el.dataset.act) {
-    case 'new':
-      if (A && !confirm('今の軍を破棄して、新しい軍を作りますか？')) return;
-      campaign.armies = { player: newArmy('player'), cpu: newArmy('cpu') };
-      autoForm(campaign.armies.cpu);
-      break;
     case 'auto': autoForm(P); break;
     case 'edit': campaign.editing = el.dataset.id; break;
     case 'disband': P.squads = P.squads.filter(x => x !== q); break;
@@ -2125,22 +2119,21 @@ function onCampaignChange(e) {
 $('campaign').addEventListener('click', onCampaignClick);
 $('campaign').addEventListener('change', onCampaignChange);
 
-$('btn-form').addEventListener('click', () => {
+// 戦力集結: ダイスで新しい軍（自軍・CPU軍）を作る。CPU軍はおまかせ編成まで済ませる
+$('btn-muster').addEventListener('click', () => {
+  if (state.running) return;
+  if (campaign.armies && !confirm('今の軍を破棄して、新しく戦力を集結しますか？')) return;
+  campaign.armies = { player: newArmy('player'), cpu: newArmy('cpu') };
+  autoForm(campaign.armies.cpu);
+  campaign.editing = null;
+  saveCampaign();
+  clearSave();
   reset();
-  state.mode = $('mode').value;
-  state.map = formMap();
-  state.player = formArmy('player', state.map);
-  state.cpu = formArmy('cpu', state.map);
-  log(`🎲 マップ: ${state.map.type} 幅 ${MAP_MIN_W}+[${state.map.wd.dice.join(', ')}] = ${state.map.w} / 高さ ${MAP_MIN_H}+[${state.map.hd.dice.join(', ')}] = ${state.map.h}`);
-  log(`🎲 プレイヤー軍 3d6 = [${state.player.dice.dice.join(', ')}] → 部隊数 ${state.player.dice.total}（兵長${state.player.leaders} / 雑兵${state.player.soldiers}）`, 'player');
-  log(`🎲 CPU軍 3d6 = [${state.cpu.dice.dice.join(', ')}] → 部隊数 ${state.cpu.dice.total}（兵長${state.cpu.leaders} / 雑兵${state.cpu.soldiers}）`, 'cpu');
-  log(state.mode === 'manual'
-    ? '編成完了。総大将の振り分けを決めてから「戦闘開始」で開戦します。'
-    : '編成完了。「戦闘開始」で開戦します。');
-  render();
-  renderEditor();
-  updateButtons();
-  saveGame();
+  const P = campaign.armies.player;
+  log(`🎲 戦力集結: ${TYPE_NAMES.map(t => `${t}${P.totals[t]}`).join('・')} / 副将${P.generalRoll.total} / 兵長${P.sergeants.length} / 斥候・暗殺者${P.specials.length}`, 'player');
+  log('本隊と分隊に割り振って（おまかせ編成も可）、隊の「出陣」で戦う相手を選んでください。');
+  renderCampaign();
+  $('campaign-box').open = true;
 });
 
 $('btn-start').addEventListener('click', () => {
@@ -2188,7 +2181,7 @@ function reset() {
   $('turn-label').textContent = '';
   $('action-panel').classList.add('hidden');
   $('cmd-editor').classList.add('hidden');
-  log('「編成」ボタンでダイスを振り、両軍を編成してください。');
+  log(campaign.armies ? '隊の「出陣」で戦う相手を選び、「戦闘開始」で開戦します。' : '「🎲 戦力集結」でダイスを振り、軍を作ってください。');
   updateButtons();
 }
 
