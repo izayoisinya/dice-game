@@ -174,3 +174,7 @@ button.go { background: #3f8a4f; }
 .scell.fort-cpu { box-shadow: inset 0 0 0 3px #ff5a4f; }
 button.go:disabled { background: #555; }
 .cp-over { background: #3a3520; border-radius: 6px; padding: 8px 10px; margin: 6px 0; color: #ffd76f; font-size: 0.9rem; }
+.scell.trapmode { box-shadow: inset 0 0 0 100px rgba(255, 215, 111, 0.45); }
+.scell .trap { position: absolute; bottom: 0; right: 1px; font-size: 0.85em; }
+.scell .trap.foe { filter: drop-shadow(0 0 3px #ff5a4f); }
+.scell .trap.own { filter: drop-shadow(0 0 3px #4aa0ff); }

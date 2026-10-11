@@ -23,6 +23,11 @@ const SCOUT_MOVE_MAP = 6;
 const ASSASSIN_MOVE_MAP = 4;
 const CPU_ATTACK_RATIO = 0.7;             // CPU は相手を囲む自軍の戦力の合計が相手の 0.7 倍以上なら攻撃する
 const FORT_NAMES = ['東砦', '西砦', '南砦', '北砦', '中砦', '旧砦'];
+// 罠（落とし穴）: 斥候が仕掛ける。仕掛けたマスに乗るまで相手には分からない
+const TRAPS_PER_SCOUT = 2;                // 斥候1人につき仕掛けられる数
+const TRAP_DETECT = 2;                    // 斥候はこのマス数まで近づくと罠を見つける
+const TRAP_LOSS = 0.1;                    // かかった隊の兵士の駒は人数の10%を失う
+const TRAP_LOSS_CAVALRY = 0.2;            // 騎兵の駒は20%（落とし穴は騎兵に効く）
 
 // ------------------------------------------------------------
 // マップ生成
@@ -181,9 +186,19 @@ function tokenVisibleTo(side, t) {
 
 /** 隊が今のターンに止まれるマス（地形のコスト。敵の隊は通れない、味方の隊は通れるが止まれない） */
 function tokenReach(t) {
+  return [...tokenPaths(t).stops.values()];
+}
+
+/**
+ * 移動の経路探索。stops = 止まれるマス、prev = 経路をたどるための1つ前のマス。
+ * 敵の隊は通れない、味方の隊は通れるが止まれない。見つけている敵の罠のマスには入らない
+ */
+function tokenPaths(t) {
   const m = smap(), mp = tokenMove(t);
   const dist = new Map([[`${t.x},${t.y}`, 0]]);
-  const open = [[0, t.x, t.y]], cells = [];
+  const prev = new Map();
+  const stops = new Map();
+  const open = [[0, t.x, t.y]];
   while (open.length) {
     open.sort((a, b) => a[0] - b[0]);
     const [c, x, y] = open.shift();
@@ -196,12 +211,15 @@ function tokenReach(t) {
       if ((nc > mp && c > 0) || TERRAIN[ter].cost === Infinity || nc >= (dist.get(key) ?? Infinity)) continue;
       const o = tokenAt(nx, ny);
       if (o && o.side !== t.side) continue;
+      const trap = trapAt(nx, ny);
+      if (trap && trap.side !== t.side && trap.known[t.side]) continue;
       dist.set(key, nc);
+      prev.set(key, `${x},${y}`);
       open.push([nc, nx, ny]);
-      if (!o) cells.push([nx, ny]);
+      if (!o) stops.set(key, [nx, ny]); else stops.delete(key);
     }
   }
-  return [...new Map(cells.map(c => [`${c[0]},${c[1]}`, c])).values()];
+  return { stops, prev };
 }
 
 /** 隣接している、攻撃できる（見えている）敵の隊。単独の斥候は攻撃しない */
@@ -213,13 +231,123 @@ function tokenTargets(t) {
 /** 隊を移動する。砦に入ったら、守備隊のいない砦は自軍のものになる */
 function moveToken(t, x, y) {
   const before = `(${t.x},${t.y})`;
-  [t.x, t.y] = [x, y];
   const q = tokenSquad(t);
+  // 経路をたどり、知らない敵の罠があればそこで止まる（単独の暗殺者は罠にかからない）
+  const { prev } = tokenPaths(t);
+  const path = [];
+  for (let k = `${x},${y}`; k && k !== `${t.x},${t.y}`; k = prev.get(k)) path.unshift(k.split(',').map(Number));
+  let trap = null;
+  if (tokenKind(t) !== '暗殺者') {
+    for (let i = 0; i < path.length; i++) {
+      const tr = trapAt(path[i][0], path[i][1]);
+      if (tr && tr.side !== t.side) {
+        trap = tr;
+        // 斥候のいる隊は、踏む前に罠に気づいて手前で止まる。ほかは罠のマスで止まる
+        // （止まるマスに別の隊がいれば、その手前の空いたマス）
+        let j = hasScout(t) ? i - 1 : i;
+        while (j >= 0 && tokenAt(path[j][0], path[j][1])) j--;
+        [x, y] = j >= 0 ? path[j] : [t.x, t.y];
+        break;
+      }
+    }
+  }
+  [t.x, t.y] = [x, y];
   if (t.side === 'player' || tokenVisibleTo('player', t)) smapLog(`${q.name} が移動 ${before} → (${x},${y})`, t.side);
+  if (trap && hasScout(t)) {
+    trap.known[t.side] = true;
+    t.acted = true;
+    t.trapped = true;
+    if (t.side === 'player') smapLog(`🔍 ${q.name} が (${trap.x},${trap.y}) の罠に気づいて足を止めた。`, 'player');
+  } else if (trap) springTrap(t, trap);
   const f = fortAt(x, y);
   if (f && f.owner !== t.side && tokenKind(t) !== '斥候' && tokenKind(t) !== '暗殺者') {
     f.owner = t.side;
     smapLog(`🏯 ${q.name} が${f.name}を押さえた！`, t.side);
+  }
+  updateTrapKnowledge();
+}
+
+// ------------------------------------------------------------
+// 罠
+// ------------------------------------------------------------
+
+function trapAt(x, y) {
+  return (smap().traps || []).find(tr => tr.x === x && tr.y === y);
+}
+
+/** 斥候がいる隊か（単独の斥候、または配下に斥候がいる隊） */
+function hasScout(t) {
+  if (tokenKind(t) === '斥候') return true;
+  const army = campaign.armies[t.side];
+  return tokenSquad(t).members.some(id => memberById(army, id)?.kind === '斥候');
+}
+
+/** その陣営が今仕掛けられる罠の残り数（生きている斥候1人につき TRAPS_PER_SCOUT） */
+function trapsLeft(side) {
+  const scouts = campaign.armies[side].specials.filter(x => x.kind === '斥候').length;
+  return scouts * TRAPS_PER_SCOUT - (smap().traps || []).filter(tr => tr.side === side).length;
+}
+
+/** 罠を仕掛けられるマス: 隣の空いたマス（川・砦・本陣・すでに罠があるマスは不可） */
+function trapCells(t) {
+  const m = smap();
+  if (!hasScout(t) || trapsLeft(t.side) <= 0) return [];
+  return DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy]).filter(([x, y]) => {
+    const ter = smapCell(m, x, y);
+    return ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && !fortAt(x, y) && !trapAt(x, y) &&
+      !Object.values(m.bases).some(b => b.x === x && b.y === y);
+  });
+}
+
+/** 解除できる罠: 隣接している、見つけている敵の罠 */
+function disarmCells(t) {
+  if (!hasScout(t)) return [];
+  return (smap().traps || []).filter(tr => tr.side !== t.side && tr.known[t.side] && distance(tr, t) === 1).map(tr => [tr.x, tr.y]);
+}
+
+function placeTrap(t, x, y) {
+  const m = smap();
+  m.traps = m.traps || [];
+  m.traps.push({ x, y, side: t.side, known: { [t.side]: true } });
+  if (t.side === 'player') smapLog(`🪤 ${tokenSquad(t).name} が (${x},${y}) に罠を仕掛けた。`, t.side);
+  t.acted = true;
+}
+
+function disarmTrap(t, x, y) {
+  const m = smap();
+  m.traps = m.traps.filter(tr => !(tr.x === x && tr.y === y));
+  if (t.side === 'player' || tokenVisibleTo('player', t)) smapLog(`🪤 ${tokenSquad(t).name} が (${x},${y}) の罠を解除した。`, t.side);
+  t.acted = true;
+}
+
+/** 罠にかかる: 兵士の駒が人数の10%（騎兵は20%）を失い、その隊の行動は終わる */
+function springTrap(t, trap) {
+  const m = smap(), army = campaign.armies[t.side], q = tokenSquad(t);
+  m.traps = m.traps.filter(tr => tr !== trap);
+  let lost = 0;
+  q.pieces = q.pieces.map(p => {
+    const rate = p.type === '騎兵' ? TRAP_LOSS_CAVALRY : TRAP_LOSS;
+    const n = Math.min(p.size, Math.max(10, Math.round(p.size * rate / 10) * 10));
+    army.totals[p.type] -= n;
+    lost += n;
+    return { ...p, size: p.size - n };
+  }).filter(p => p.size >= MIN_TROOPS);
+  t.acted = true;
+  t.trapped = true;
+  smapLog(`🪤 ${q.name} が罠にかかった！ 兵 ${lost}人を失い、足が止まった。`, trap.side);
+}
+
+/** 斥候が近づいた敵の罠を見つける */
+function updateTrapKnowledge() {
+  const m = smap();
+  for (const tr of m.traps || []) {
+    for (const side of ['player', 'cpu']) {
+      if (side === tr.side || tr.known[side]) continue;
+      if (liveTokens().some(o => o.side === side && hasScout(o) && distance(o, tr) <= TRAP_DETECT)) {
+        tr.known[side] = true;
+        if (side === 'player') smapLog(`🔍 斥候が (${tr.x},${tr.y}) に敵の罠を見つけた！`, 'player');
+      }
+    }
   }
 }
 
@@ -272,7 +400,7 @@ function startMapStage() {
   const A = campaign.armies;
   if (!A || A.player.defeated || A.cpu.defeated) return;
   campaign.smap = genStrategicMap();
-  Object.assign(campaign.smap, { tokens: [], turn: 1, phase: 'player', cpuQueue: [], battle: null, pending: null, logs: [] });
+  Object.assign(campaign.smap, { tokens: [], traps: [], turn: 1, phase: 'player', cpuQueue: [], battle: null, pending: null, logs: [] });
   deploy('player');
   deploy('cpu');
   ui.selected = null;
@@ -384,6 +512,7 @@ function cpuRun() {
   m.turn++;
   for (const t of m.tokens) t.acted = false;
   smapLog(`--- ターン ${m.turn}（自軍） ---`, 'turn');
+  updateTrapKnowledge();
   saveCampaign();
   renderStrat();
 }
@@ -432,8 +561,20 @@ function cpuAct(t) {
     const c = dist[y * m.w + x] + Math.random() * 0.3;
     if (safe([x, y]) && c < bestC) { bestC = c; best = [x, y]; }
   }
+  // 見つけている罠が隣にあれば解除してこのターンは終わり
+  const dis = disarmCells(t);
+  if (dis.length) { disarmTrap(t, dis[0][0], dis[0][1]); return false; }
   if (best) moveToken(t, best[0], best[1]);
+  if (t.trapped) { t.trapped = false; return false; }   // 罠にかかって足が止まった
   if (t.goal && fortAt(t.x, t.y)?.owner === 'cpu') t.goal = null;
+  // 斥候がいれば、自軍の本陣より前で、プレイヤーの本陣へ向かう側に罠を仕掛ける（ときどき）
+  const tc = trapCells(t).filter(([x, y]) => y > m.bases.cpu.y + 2);
+  if (tc.length && d(3) === 1) {
+    const pd = costMap(m, m.bases.player);
+    tc.sort((a, b) => pd[a[1] * m.w + a[0]] - pd[b[1] * m.w + b[0]]);
+    placeTrap(t, tc[0][0], tc[0][1]);
+    return false;
+  }
   target = cpuTarget(t);
   if (target) { attackToken(t, target); return true; }
   t.acted = true;
@@ -444,7 +585,7 @@ function cpuAct(t) {
 // 画面
 // ------------------------------------------------------------
 
-const ui = { selected: null, moved: false };
+const ui = { selected: null, moved: false, mode: null };   // mode = 'trap'（罠を仕掛ける）/ 'disarm'（解除）
 
 function smapLog(text, cls = 'sys') {
   const m = smap();
@@ -466,7 +607,9 @@ function renderStrat() {
   const sight = state.fog ? smapSight('player') : null;
   const sel = liveTokens().find(t => t.id === ui.selected);
   const myTurn = m.phase === 'player' && !m.battle;
-  const reach = new Set(sel && myTurn && !sel.acted && !ui.moved ? tokenReach(sel).map(([x, y]) => `${x},${y}`) : []);
+  if (!sel || sel.acted || !myTurn) ui.mode = null;
+  const reach = new Set(sel && myTurn && !sel.acted && !ui.moved && !ui.mode ? tokenReach(sel).map(([x, y]) => `${x},${y}`) : []);
+  const modeCells = new Set(!sel || !ui.mode ? [] : (ui.mode === 'trap' ? trapCells(sel) : disarmCells(sel)).map(([x, y]) => `${x},${y}`));
   const targets = new Set(sel && myTurn && !sel.acted ? tokenTargets(sel).map(o => o.id) : []);
   const grid = $('smap');
   grid.style.gridTemplateColumns = `repeat(${m.w}, minmax(0, 1fr))`;
@@ -476,7 +619,10 @@ function renderStrat() {
     let t = tokenAt(x, y);
     if (t && !tokenVisibleTo('player', t)) t = null;
     const base = m.bases.player.x === x && m.bases.player.y === y ? 'player' : m.bases.cpu.x === x && m.bases.cpu.y === y ? 'cpu' : null;
+    const tr = trapAt(x, y);
+    const trapShown = tr && tr.known.player;
     const cls = ['scell', `t-${ter}`,
+      ui.mode && modeCells.has(`${x},${y}`) ? 'trapmode' : '',
       sight && !sight.has(`${x},${y}`) ? 'fog' : '',
       reach.has(`${x},${y}`) ? 'reach' : '',
       t && targets.has(t.id) ? 'target' : '',
@@ -489,6 +635,7 @@ function renderStrat() {
     html += `<div class="${cls}" data-x="${x}" data-y="${y}" title="${title}">` +
       (f ? `<span class="fort ${f.owner ? 'own-' + f.owner : ''}">🏯</span>` : '') +
       (base ? `<span class="base own-${base}">陣</span>` : '') +
+      (trapShown ? `<span class="trap ${tr.side === 'player' ? 'own' : 'foe'}">🪤</span>` : '') +
       (t ? `<span class="glyph">${tokenGlyph(t)}</span>` : '') + `</div>`;
   }
   grid.innerHTML = html;
@@ -507,9 +654,11 @@ function renderStrat() {
   } else if (sel && sel.side === 'player') {
     const q = tokenSquad(sel), opts = stationOptions(sel);
     info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
-      <div class="sub">${sel.acted ? '' : ui.moved ? '赤枠の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の赤枠の敵をクリックで攻撃。'}</div>
+      <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : ui.moved ? '赤枠の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の赤枠の敵をクリックで攻撃。'}</div>
       <div class="ap-buttons">
         ${!sel.acted ? '<button id="sm-wait">待機</button>' : ''}
+        ${!sel.acted && hasScout(sel) ? `<button id="sm-trap" class="${ui.mode === 'trap' ? 'skill' : ''}" ${trapCells(sel).length ? '' : 'disabled'}>🪤 罠を仕掛ける（残り${trapsLeft('player')}）</button>` : ''}
+        ${!sel.acted && disarmCells(sel).length ? `<button id="sm-disarm" class="${ui.mode === 'disarm' ? 'skill' : ''}">罠を解除</button>` : ''}
         ${!sel.acted && opts.length ? `<select id="sm-station"><option value="">副将を駐留させる…</option>${opts.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}</select>` : ''}
       </div>`;
   } else {
@@ -521,6 +670,8 @@ function renderStrat() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
   on('sm-end', 'onclick', endPlayerTurn);
+  on('sm-trap', 'onclick', () => { ui.mode = ui.mode === 'trap' ? null : 'trap'; renderStrat(); });
+  on('sm-disarm', 'onclick', () => { ui.mode = ui.mode === 'disarm' ? null : 'disarm'; renderStrat(); });
   on('sm-wait', 'onclick', () => { sel.acted = true; ui.selected = null; ui.moved = false; saveCampaign(); renderStrat(); });
   on('sm-station', 'onchange', e => {
     if (e.target.value && station(sel, e.target.value)) { sel.acted = true; ui.selected = null; ui.moved = false; saveCampaign(); renderCampaign(); }
@@ -533,6 +684,18 @@ function onSmapClick(x, y) {
   if (!m || m.phase !== 'player' || m.battle) return;
   const sel = liveTokens().find(t => t.id === ui.selected);
   const t = tokenAt(x, y);
+  // 罠を仕掛ける / 解除
+  if (sel && ui.mode) {
+    const cells = ui.mode === 'trap' ? trapCells(sel) : disarmCells(sel);
+    if (cells.some(([cx, cy]) => cx === x && cy === y)) {
+      if (ui.mode === 'trap') placeTrap(sel, x, y); else disarmTrap(sel, x, y);
+      ui.mode = null; ui.selected = null; ui.moved = false;
+      saveCampaign();
+      renderStrat();
+      return;
+    }
+    ui.mode = null;
+  }
   // 攻撃
   if (sel && t && t.side === 'cpu' && !sel.acted && tokenTargets(sel).includes(t)) {
     ui.selected = null; ui.moved = false;
@@ -543,7 +706,10 @@ function onSmapClick(x, y) {
   if (sel && !t && !sel.acted && !ui.moved && tokenReach(sel).some(([cx, cy]) => cx === x && cy === y)) {
     moveToken(sel, x, y);
     ui.moved = true;
-    if (!tokenTargets(sel).length && !stationOptions(sel).length) { sel.acted = true; ui.selected = null; ui.moved = false; }
+    if (sel.trapped) sel.trapped = false;   // 罠にかかった隊は springTrap で行動済み
+    if (sel.acted || (!tokenTargets(sel).length && !stationOptions(sel).length && !trapCells(sel).length && !disarmCells(sel).length)) {
+      sel.acted = true; ui.selected = null; ui.moved = false;
+    }
     saveCampaign();
     renderStrat();
     return;
