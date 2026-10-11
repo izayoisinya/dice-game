@@ -1612,7 +1612,7 @@ const PIECE_DEFAULT = 100;                               // 兵士の駒を追�
 const AUTO_PIECE = 100;                                  // おまかせ編成の1駒の目安の人数
 const CAMPAIGN_KEY = 'dice-senki-campaign-v1';
 
-const campaign = { armies: null, editing: null };
+const campaign = { armies: null, editing: null, smap: null };   // smap = 戦略マップ（strategy.js）
 
 function rollExpr(e) {
   const r = roll(e.n, e.sides);
@@ -1687,6 +1687,8 @@ function squadCap(army, q) {
 
 function squadKind(army, q) {
   if (q.name === '本隊') return '本隊';
+  if (q.garrison) return '守備隊';
+  if (q.solo) return '単独';
   return memberById(army, q.leader)?.rank === '副将' ? '分隊' : '小隊';
 }
 
@@ -1830,8 +1832,8 @@ function buildBattleArmy(side, army, q, map) {
 
   const units = [];
   const lead = memberById(army, q.leader);
-  const leader = lead.rank
-    ? new Unit(side, lead.rank, COMMANDER_TYPE, lead.name, cx, back, lead.build)
+  const leader = lead.rank ? new Unit(side, lead.rank, COMMANDER_TYPE, lead.name, cx, back, lead.build)
+    : lead.kind ? new Unit(side, lead.kind === '暗殺者' ? '兵長' : '雑兵', lead.kind, lead.name, cx, back)
     : new Unit(side, '兵長', lead.type, lead.name, cx, back);
   leader.ref = { kind: 'member', id: lead.id };
   units.push(leader);
@@ -1921,6 +1923,7 @@ function applyBattleResult(msg) {
   cb.applied = true;
   saveCampaign();
   renderCampaign();
+  if (campaign.smap) onMapBattleEnd(msg);
 }
 
 // ------------------------------------------------------------
@@ -1928,13 +1931,17 @@ function applyBattleResult(msg) {
 // ------------------------------------------------------------
 
 function saveCampaign() {
-  try { localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(campaign.armies)); } catch (e) { /* 保存できない環境では何もしない */ }
+  const data = { v: 2, armies: campaign.armies, smap: campaign.smap };
+  try { localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(data)); } catch (e) { /* 保存できない環境では何もしない */ }
 }
 
 function loadCampaign() {
   try {
-    const a = JSON.parse(localStorage.getItem(CAMPAIGN_KEY));
+    const data = JSON.parse(localStorage.getItem(CAMPAIGN_KEY));
+    // v1 は軍だけを保存していた
+    const a = data && data.v === 2 ? data.armies : data;
     if (!a || !a.player || !a.cpu) return;
+    campaign.smap = data.v === 2 ? data.smap : null;
     // 旧版では隊の配下を sergeants と呼んでいた
     for (const army of [a.player, a.cpu]) {
       army.specials = army.specials || [];   // 斥候・暗殺者の追加前の保存データ
@@ -1953,11 +1960,12 @@ function renderCampaign() {
   const A = campaign.armies;
   if (!A) {
     box.innerHTML = `<div class="cp-head"><span class="sub">上の「🎲 戦力集結」で、兵種ごとの総数・副将・兵長・斥候・暗殺者をダイスで決めます。
-      そのあと本隊と分隊に割り振り（おまかせ編成も可）、隊の「出陣」で戦う相手を選びます。</span></div>`;
+      そのあと本隊と分隊に割り振り（おまかせ編成も可）、「出陣」で戦略マップに出ます。</span></div>`;
     return;
   }
   const P = A.player;
   const over = P.defeated || A.cpu.defeated;
+  if (campaign.smap) return renderCampaignLocked();
   const usedBy = id => squadOf(P, id)?.name || '予備';
   const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
   const generals = P.generals.map(g => `<tr><td>${g.name}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
@@ -1968,7 +1976,6 @@ function renderCampaign() {
   // 隊に入れられる将（副将・兵長）と斥候・暗殺者。隊長にできるのは副将・兵長だけ
   const freeMembers = (filter, withSpecials = false) => [...P.generals.filter(g => g.rank === '副将'), ...P.sergeants, ...(withSpecials ? P.specials : [])]
     .filter(m => !squadOf(P, m.id) && filter(m));
-  const cpuSquads = A.cpu.squads.map(q => `<option value="${q.id}">${q.name}（${q.pieces.length}駒・${squadTroops(q)}人）</option>`).join('');
   const squads = P.squads.map(q => {
     const lead = memberById(P, q.leader);
     const cap = squadCap(P, q);
@@ -1990,8 +1997,6 @@ function renderCampaign() {
         <button class="small" data-act="addpiece" data-q="${q.id}" ${q.pieces.length >= cap ? 'disabled' : ''}>駒を追加</button>
         <span class="sub">（★=兵長が隊長、ATK/DEF+${SERGEANT_BUFF * 100}%）</span>
       </div>
-      <div class="sq-go">相手: <select data-role="foe" data-q="${q.id}">${cpuSquads}</select>
-        <button data-act="sortie" data-q="${q.id}" ${(q.pieces.length || q.members.length) && !over ? '' : 'disabled'}>出陣</button></div>
     </div>`;
   }).join('');
   const leaderOpts = freeMembers(() => true).map(m => `<option value="${m.id}">${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）</option>`).join('');
@@ -1999,6 +2004,7 @@ function renderCampaign() {
     <div class="cp-head">
       <button data-act="auto">おまかせ編成</button>
       <button data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置（隊はそのまま）</button>
+      <button data-act="sortie" class="go" ${over ? 'disabled' : ''} title="この編成で戦略マップへ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣（戦略マップへ）</button>
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}
     </div>
     <div class="cp-pool">兵力（予備 / 総数）: ${pool}
@@ -2018,6 +2024,19 @@ function renderCampaign() {
       ${A.cpu.squads.map(q => `<div>${q.name}（${squadKind(A.cpu, q)}）: 配下の将${q.members.length} / ${q.pieces.map(p => `${p.type}${p.size}`).join('・')}</div>`).join('')}
     </details>`;
   if (campaign.editing) renderGeneralEditor();
+}
+
+/** 戦略マップに出たあとの編成（見るだけ） */
+function renderCampaignLocked() {
+  const A = campaign.armies, P = A.player;
+  const desc = m => m ? (m.kind ? m.name : `${m.name}（${m.rank || m.type + '長'}）`) : '?';
+  $('campaign').innerHTML = `
+    <div class="cp-head"><span class="sub">出陣中のため編成は変えられません（隊の再編成は今後の予定）。</span>
+      ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}</div>
+    <div class="cp-pool">兵力（残り）: ${TYPE_NAMES.map(t => `<span class="chip">${t} ${P.totals[t]}人</span>`).join('')}</div>
+    ${P.squads.map(q => `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${desc(memberById(P, q.leader))} ／ 兵 ${squadTroops(q)}人</div>
+      <div>配下: ${q.members.map(id => desc(memberById(P, id))).join('・') || 'なし'}</div>
+      <div>兵士の駒: ${q.pieces.map(p => `${p.type}${p.size}`).join('・') || 'なし'}</div></div>`).join('')}`;
 }
 
 function renderGeneralEditor() {
@@ -2097,11 +2116,7 @@ function onCampaignClick(e) {
       q.pieces.push({ type, size });
       break;
     }
-    case 'sortie': {
-      const foe = $('campaign').querySelector(`[data-role="foe"][data-q="${q.id}"]`).value;
-      startCampaignBattle(q.id, foe);
-      return;
-    }
+    case 'sortie': startMapStage(); return;
     default: return;
   }
   saveCampaign();
@@ -2139,13 +2154,15 @@ $('btn-muster').addEventListener('click', () => {
   campaign.armies = { player: newArmy('player'), cpu: newArmy('cpu') };
   autoForm(campaign.armies.cpu);
   campaign.editing = null;
+  campaign.smap = null;
   saveCampaign();
   clearSave();
   reset();
   const P = campaign.armies.player;
   log(`🎲 戦力集結: ${TYPE_NAMES.map(t => `${t}${P.totals[t]}`).join('・')} / 副将${P.generalRoll.total} / 兵長${P.sergeants.length} / 斥候・暗殺者${P.specials.length}`, 'player');
-  log('本隊と分隊に割り振って（おまかせ編成も可）、隊の「出陣」で戦う相手を選んでください。');
+  log('本隊と分隊に割り振って（おまかせ編成も可）、「🗺 出陣（戦略マップへ）」で戦略マップに出ます。');
   renderCampaign();
+  renderStrat();
   $('campaign-box').open = true;
 });
 
@@ -2172,6 +2189,7 @@ for (const id of ['advance-player', 'advance-cpu']) $(id).addEventListener('chan
 $('fog').addEventListener('change', () => {
   state.fog = $('fog').checked;
   render();
+  renderStrat();
   saveGame();
 });
 
@@ -2194,13 +2212,14 @@ function reset() {
   $('turn-label').textContent = '';
   $('action-panel').classList.add('hidden');
   $('cmd-editor').classList.add('hidden');
-  log(campaign.armies ? '隊の「出陣」で戦う相手を選び、「戦闘開始」で開戦します。' : '「🎲 戦力集結」でダイスを振り、軍を作ってください。');
+  log(campaign.smap ? '戦略マップで敵の隊に攻撃すると、ここで戦闘になります。' : campaign.armies ? '編成して「🗺 出陣（戦略マップへ）」で戦略マップに出ます。' : '「🎲 戦力集結」でダイスを振り、軍を作ってください。');
   updateButtons();
 }
 
 // 起動時: 保存があれば続きから、なければ初期状態
 loadCampaign();
 renderCampaign();
+if (typeof initStrategy === 'function') initStrategy();
 if (loadGame()) {
   showResult();
   render();

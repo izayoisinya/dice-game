@@ -54,6 +54,15 @@
     <div id="campaign"></div>
   </details>
 
+  <section id="strat-box" class="panel hidden">
+    <h2>戦略マップ <small id="strat-label"></small></h2>
+    <div class="strat-wrap">
+      <div id="smap" class="smap"></div>
+      <div id="strat-info" class="strat-info"></div>
+    </div>
+    <div class="sub">★本=本隊 ☆=分隊 ◆=小隊 斥=斥候 暗=暗殺者 守=砦の守備隊 / 🏯砦 陣=本陣 / 地形: 平地1 森2 山3 浅瀬2 川×（数字は移動コスト）</div>
+  </section>
+
   <section id="cmd-editor" class="panel hidden"></section>
 
   <section class="armies">
@@ -86,6 +95,7 @@
     <div id="log" class="log"></div>
   </section>
 
+  <script src="strategy.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

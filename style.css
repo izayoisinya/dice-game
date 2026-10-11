@@ -136,3 +136,39 @@ button.small { padding: 3px 8px; font-size: 0.8rem; }
 /* 視界（戦場の霧） */
 .cell.fog { filter: brightness(0.55); }
 .cell.ghost { opacity: 0.45; }
+
+/* 戦略マップ */
+button.go { background: #3f8a4f; }
+.strat-wrap { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 900px) { .strat-wrap { grid-template-columns: 1fr; } }
+.smap { display: grid; gap: 1px; background: #1a1c20; padding: 4px; border-radius: 8px; }
+.scell { position: relative; aspect-ratio: 1; border-radius: 2px; display: flex; align-items: center; justify-content: center;
+  font-size: clamp(0.5rem, 1.1vw, 0.8rem); font-weight: bold; cursor: pointer; overflow: hidden; }
+.scell.t-平地 { background: #3a4a32; }
+.scell.t-森 { background: #22402a; }
+.scell.t-山 { background: #6a5f50; }
+.scell.t-川 { background: #2a4a72; }
+.scell.t-浅瀬 { background: #4a7090; }
+.scell.fog { filter: brightness(0.5); }
+.scell.reach { box-shadow: inset 0 0 0 100px rgba(90, 160, 255, 0.45); }
+.scell.target { outline: 3px solid #ff5a4f; outline-offset: -3px; }
+.scell.p .glyph { background: #2d5f9c; color: #e0f0ff; }
+.scell.c .glyph { background: #9c2d2d; color: #ffe0dc; }
+.scell .glyph { position: relative; z-index: 1; padding: 1px 3px; border-radius: 4px; }
+.scell.acting { outline: 2px solid #ffd76f; outline-offset: -2px; }
+.scell.done .glyph { opacity: 0.55; }
+.scell .fort, .scell .base { position: absolute; font-size: 0.9em; opacity: 0.9; }
+.scell .fort { top: 0; right: 1px; }
+.scell .base { top: 0; left: 1px; color: #ddd; }
+.fort.own-player, .base.own-player { text-shadow: 0 0 4px #4aa0ff; }
+.fort.own-cpu, .base.own-cpu { text-shadow: 0 0 4px #ff5a4f; }
+.strat-info { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; }
+.smap-log { background: #111317; border-radius: 6px; padding: 6px 8px; font-size: 0.8rem; max-height: 260px; overflow-y: auto; line-height: 1.5; }
+.smap-log .turn { color: #ffd76f; }
+.smap-log .player { color: #8fc4ff; }
+.smap-log .cpu { color: #ff9a8f; }
+.scell.fortcell .fort { font-size: 1.2em; top: auto; right: auto; opacity: 1; }
+.scell.fortcell .glyph { position: absolute; bottom: 1px; }
+.scell.fort-none { box-shadow: inset 0 0 0 2px #bbb; }
+.scell.fort-player { box-shadow: inset 0 0 0 3px #4aa0ff; }
+.scell.fort-cpu { box-shadow: inset 0 0 0 3px #ff5a4f; }

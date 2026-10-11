@@ -1,0 +1,567 @@
+// ============================================================
+// ダイス戦記 - 戦略マップ（戦略レイヤー）
+//   軍の編成のあと「出陣」で戦略マップへ。プレイヤーとCPUが交互に、すべての隊を動かす（SRPG方式）。
+//   敵の隊に隣接して「攻撃」すると戦術戦闘（main.js の戦闘画面）になり、結果をマップに持ち帰る。
+//   main.js より先に読み込む（関数と定数の定義だけ。画面のイベントは initStrategy で登録する）
+// ============================================================
+
+const SMAP_MIN_W = 12;
+const SMAP_MIN_H = 12;
+const SMAP_DICE = { n: 2, sides: 4 };     // 幅・高さ = 最低値 + 2d4（14〜20）
+const TERRAIN = {
+  '平地': { cost: 1 },
+  '森':   { cost: 2 },
+  '山':   { cost: 3 },
+  '浅瀬': { cost: 2 },
+  '川':   { cost: Infinity },             // 通れない（浅瀬から渡る）
+};
+const SQUAD_VISION_MAP = 3;               // 隊の視界（戦略マップ）
+const SCOUT_VISION_MAP = 6;               // 単独の斥候の視界
+const ASSASSIN_VISION_MAP = 2;            // 単独の暗殺者の視界
+const FORT_VISION = 3;                    // 守備隊のいる砦の視界
+const SCOUT_MOVE_MAP = 6;
+const ASSASSIN_MOVE_MAP = 4;
+const CPU_ATTACK_RATIO = 0.7;             // CPU は相手を囲む自軍の戦力の合計が相手の 0.7 倍以上なら攻撃する
+const FORT_NAMES = ['東砦', '西砦', '南砦', '北砦', '中砦', '旧砦'];
+
+// ------------------------------------------------------------
+// マップ生成
+// ------------------------------------------------------------
+
+function smapCell(m, x, y) {
+  return x >= 0 && y >= 0 && x < m.w && y < m.h ? m.cells[y * m.w + x] : null;
+}
+
+function setCell(m, x, y, t) {
+  if (x >= 0 && y >= 0 && x < m.w && y < m.h) m.cells[y * m.w + x] = t;
+}
+
+/** 地形の塊をランダムウォークで置く（両軍の本陣の列には置かない） */
+function blob(m, type, size) {
+  let x = Math.floor(Math.random() * m.w), y = 2 + Math.floor(Math.random() * (m.h - 4));
+  for (let i = 0; i < size; i++) {
+    if (y >= 2 && y < m.h - 2 && smapCell(m, x, y) === '平地') setCell(m, x, y, type);
+    const [dx, dy] = DIRS[Math.floor(Math.random() * 4)];
+    x = Math.max(0, Math.min(m.w - 1, x + dx));
+    y = Math.max(2, Math.min(m.h - 3, y + dy));
+  }
+}
+
+/** 地形のコストで最短の移動コスト（ユニットは無視）。from から各マスまで */
+function costMap(m, from) {
+  const dist = new Array(m.w * m.h).fill(Infinity);
+  dist[from.y * m.w + from.x] = 0;
+  const open = [[0, from.x, from.y]];
+  while (open.length) {
+    open.sort((a, b) => a[0] - b[0]);
+    const [c, x, y] = open.shift();
+    if (c > dist[y * m.w + x]) continue;
+    for (const [dx, dy] of DIRS) {
+      const nx = x + dx, ny = y + dy, t = smapCell(m, nx, ny);
+      if (!t) continue;
+      const nc = c + TERRAIN[t].cost;
+      if (nc < dist[ny * m.w + nx]) { dist[ny * m.w + nx] = nc; open.push([nc, nx, ny]); }
+    }
+  }
+  return dist;
+}
+
+/** 戦略マップを作る: 広さはダイス。森・山・川（浅瀬）と砦を置く。両軍の本陣がつながるまで作り直す */
+function genStrategicMap() {
+  for (;;) {
+    const wd = roll(SMAP_DICE.n, SMAP_DICE.sides), hd = roll(SMAP_DICE.n, SMAP_DICE.sides);
+    const m = { w: SMAP_MIN_W + wd.total, h: SMAP_MIN_H + hd.total, wd, hd };
+    m.cells = new Array(m.w * m.h).fill('平地');
+    for (let i = 0; i < 2 + d(4); i++) blob(m, '森', 4 + d(8));
+    for (let i = 0; i < 1 + d(3); i++) blob(m, '山', 3 + d(5));
+    // 川: 半分の確率で、中央付近を横切る。浅瀬が 2〜3か所
+    if (d(2) === 1) {
+      let y = Math.floor(m.h / 2) + d(3) - 2;
+      const river = [];
+      for (let x = 0; x < m.w; x++) {
+        const ny = Math.max(3, Math.min(m.h - 4, y + d(3) - 2));
+        for (let yy = Math.min(y, ny); yy <= Math.max(y, ny); yy++) { setCell(m, x, yy, '川'); river.push([x, yy]); }
+        y = ny;
+      }
+      for (let i = 0; i < 1 + d(2); i++) { const [x, yy] = pick(river); setCell(m, x, yy, '浅瀬'); }
+    }
+    m.bases = { player: { x: Math.floor(m.w / 2), y: m.h - 1 }, cpu: { x: Math.floor((m.w - 1) / 2), y: 0 } };
+    // 砦: 1d3+1 か所。中ほどの平地に、互いと本陣から 4マス以上離して置く
+    m.forts = [];
+    const nForts = 1 + d(3);
+    for (let tries = 0; m.forts.length < nForts && tries < 500; tries++) {
+      const x = Math.floor(Math.random() * m.w), y = 3 + Math.floor(Math.random() * (m.h - 6));
+      if (smapCell(m, x, y) === '川') continue;
+      const p = { x, y };
+      if (m.forts.some(f => distance(f, p) < 4) || distance(p, m.bases.player) < 4 || distance(p, m.bases.cpu) < 4) continue;
+      setCell(m, x, y, '平地');
+      m.forts.push({ id: `F${m.forts.length}`, name: FORT_NAMES[m.forts.length], x, y, owner: null });
+    }
+    const dist = costMap(m, m.bases.player);
+    if (dist[m.bases.cpu.y * m.w + m.bases.cpu.x] < Infinity && m.forts.every(f => dist[f.y * m.w + f.x] < Infinity)) return m;
+  }
+}
+
+// ------------------------------------------------------------
+// 隊（トークン）
+// ------------------------------------------------------------
+
+function smap() { return campaign.smap; }
+
+function tokenSquad(t) {
+  return campaign.armies[t.side].squads.find(q => q.id === t.id);
+}
+
+/** 今もいる隊（戦闘で全滅・解散した隊は、結果の反映まで tokens に残るので除く） */
+function liveTokens() {
+  return smap().tokens.filter(t => tokenSquad(t));
+}
+
+function tokenAt(x, y) {
+  return liveTokens().find(t => t.x === x && t.y === y);
+}
+
+function fortAt(x, y) {
+  return smap().forts.find(f => f.x === x && f.y === y);
+}
+
+/** 隊の種類: 本隊 / 分隊 / 小隊 / 斥候 / 暗殺者 / 守備隊 */
+function tokenKind(t) {
+  const army = campaign.armies[t.side], q = tokenSquad(t);
+  if (q.garrison) return '守備隊';
+  if (q.solo) return memberById(army, q.leader).kind;
+  return squadKind(army, q);
+}
+
+/** 隊の兵数 */
+function tokenTroops(t) {
+  return squadTroops(tokenSquad(t));
+}
+
+/** 戦力のめやす（CPU の判断用）: 兵数 + 将1人あたり150 */
+function tokenStrength(t) {
+  const q = tokenSquad(t);
+  return squadTroops(q) + 150 * (1 + q.members.length);
+}
+
+/** 移動力: 兵数が多いほど遅い。統率オーバーなら −1。単独の斥候・暗殺者は固定、守備隊は動かない */
+function tokenMove(t) {
+  const kind = tokenKind(t);
+  if (kind === '守備隊') return 0;
+  if (kind === '斥候') return SCOUT_MOVE_MAP;
+  if (kind === '暗殺者') return ASSASSIN_MOVE_MAP;
+  const army = campaign.armies[t.side], q = tokenSquad(t);
+  const n = squadTroops(q);
+  const base = n <= 200 ? 4 : n <= 500 ? 3 : n <= 1000 ? 2 : 1;
+  return Math.max(1, base - (q.pieces.length > squadCap(army, q) ? 1 : 0));
+}
+
+function tokenVision(t) {
+  const kind = tokenKind(t);
+  return kind === '斥候' ? SCOUT_VISION_MAP : kind === '暗殺者' ? ASSASSIN_VISION_MAP : kind === '守備隊' ? FORT_VISION : SQUAD_VISION_MAP;
+}
+
+/** その陣営から見えているマス */
+function smapSight(side) {
+  const m = smap(), seen = new Set();
+  for (const t of liveTokens().filter(t => t.side === side)) {
+    const r = tokenVision(t);
+    for (let dy = -r; dy <= r; dy++) for (let dx = -(r - Math.abs(dy)); dx <= r - Math.abs(dy); dx++) seen.add(`${t.x + dx},${t.y + dy}`);
+  }
+  return seen;
+}
+
+/** その陣営から敵の隊 t が見えているか（単独の暗殺者は隣接、斥候なら2マスまで） */
+function tokenVisibleTo(side, t) {
+  if (t.side === side || !state.fog) return true;
+  const mine = liveTokens().filter(o => o.side === side);
+  if (tokenKind(t) === '暗殺者') return mine.some(o => distance(o, t) <= (tokenKind(o) === '斥候' ? 2 : 1));
+  return mine.some(o => distance(o, t) <= tokenVision(o));
+}
+
+/** 隊が今のターンに止まれるマス（地形のコスト。敵の隊は通れない、味方の隊は通れるが止まれない） */
+function tokenReach(t) {
+  const m = smap(), mp = tokenMove(t);
+  const dist = new Map([[`${t.x},${t.y}`, 0]]);
+  const open = [[0, t.x, t.y]], cells = [];
+  while (open.length) {
+    open.sort((a, b) => a[0] - b[0]);
+    const [c, x, y] = open.shift();
+    if (c > dist.get(`${x},${y}`)) continue;
+    for (const [dx, dy] of DIRS) {
+      const nx = x + dx, ny = y + dy, ter = smapCell(m, nx, ny);
+      if (!ter) continue;
+      const nc = c + TERRAIN[ter].cost, key = `${nx},${ny}`;
+      // 移動力が足りなくても、隣の1マスへは必ず進める（移動力1の大部隊が森や山で立ち往生しないように）
+      if ((nc > mp && c > 0) || TERRAIN[ter].cost === Infinity || nc >= (dist.get(key) ?? Infinity)) continue;
+      const o = tokenAt(nx, ny);
+      if (o && o.side !== t.side) continue;
+      dist.set(key, nc);
+      open.push([nc, nx, ny]);
+      if (!o) cells.push([nx, ny]);
+    }
+  }
+  return [...new Map(cells.map(c => [`${c[0]},${c[1]}`, c])).values()];
+}
+
+/** 隣接している、攻撃できる（見えている）敵の隊。単独の斥候は攻撃しない */
+function tokenTargets(t) {
+  if (tokenKind(t) === '斥候' || tokenKind(t) === '守備隊') return [];
+  return liveTokens().filter(o => o.side !== t.side && distance(o, t) === 1 && tokenVisibleTo(t.side, o));
+}
+
+/** 隊を移動する。砦に入ったら、守備隊のいない砦は自軍のものになる */
+function moveToken(t, x, y) {
+  const before = `(${t.x},${t.y})`;
+  [t.x, t.y] = [x, y];
+  const q = tokenSquad(t);
+  if (t.side === 'player' || tokenVisibleTo('player', t)) smapLog(`${q.name} が移動 ${before} → (${x},${y})`, t.side);
+  const f = fortAt(x, y);
+  if (f && f.owner !== t.side && tokenKind(t) !== '斥候' && tokenKind(t) !== '暗殺者') {
+    f.owner = t.side;
+    smapLog(`🏯 ${q.name} が${f.name}を押さえた！`, t.side);
+  }
+}
+
+/** 駐留できる副将（隊長以外の配下の副将）。自軍の砦の上にいるときだけ */
+function stationOptions(t) {
+  const f = fortAt(t.x, t.y);
+  if (!f || f.owner !== t.side) return [];
+  const army = campaign.armies[t.side];
+  return tokenSquad(t).members.map(id => memberById(army, id)).filter(m => m?.rank === '副将');
+}
+
+/** 駐留: 副将を砦に残して守備隊にする（隊は隣の空いたマスへ出る） */
+function station(t, gid) {
+  const m = smap(), army = campaign.armies[t.side], q = tokenSquad(t), f = fortAt(t.x, t.y);
+  const exit = DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy])
+    .find(([x, y]) => smapCell(m, x, y) && TERRAIN[smapCell(m, x, y)].cost < Infinity && !tokenAt(x, y));
+  if (!f || !exit) return false;
+  const g = memberById(army, gid);
+  q.members = q.members.filter(id => id !== gid);
+  const gq = { id: `${t.side}-Q${army.seq++}`, name: `${f.name}守備隊`, leader: gid, members: [], pieces: [], garrison: f.id };
+  army.squads.push(gq);
+  [t.x, t.y] = exit;
+  m.tokens.push({ id: gq.id, side: t.side, x: f.x, y: f.y, acted: true, fort: f.id });
+  smapLog(`🏯 ${g.name} が${f.name}に駐留した。`, t.side);
+  return true;
+}
+
+// ------------------------------------------------------------
+// 出陣（戦略マップの開始）
+// ------------------------------------------------------------
+
+/** 本陣の近くの空いたマスへ、隊を順に置く */
+function deploy(side) {
+  const m = smap(), army = campaign.armies[side], base = m.bases[side];
+  // どの隊にも入っていない斥候・暗殺者は、単独の隊として出る
+  for (const x of army.specials.filter(x => !squadOf(army, x.id))) {
+    army.squads.push({ id: `${side}-Q${army.seq++}`, name: x.name, leader: x.id, members: [], pieces: [], solo: true });
+  }
+  const order = [...army.squads].sort((a, b) => (a.name === '本隊' ? -1 : b.name === '本隊' ? 1 : 0));
+  const dist = costMap(m, base);
+  const cells = [];
+  for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+    if (TERRAIN[smapCell(m, x, y)].cost < Infinity && !fortAt(x, y)) cells.push({ x, y, c: dist[y * m.w + x] + distance({ x, y }, base) * 0.01 });
+  }
+  cells.sort((a, b) => a.c - b.c);
+  order.forEach((q, i) => m.tokens.push({ id: q.id, side, x: cells[i].x, y: cells[i].y, acted: false }));
+}
+
+function startMapStage() {
+  const A = campaign.armies;
+  if (!A || A.player.defeated || A.cpu.defeated) return;
+  campaign.smap = genStrategicMap();
+  Object.assign(campaign.smap, { tokens: [], turn: 1, phase: 'player', cpuQueue: [], battle: null, pending: null, logs: [] });
+  deploy('player');
+  deploy('cpu');
+  ui.selected = null;
+  smapLog(`🗺 戦略マップ ${campaign.smap.w}×${campaign.smap.h}（幅 ${SMAP_MIN_W}+🎲[${campaign.smap.wd.dice.join('][')}] / 高さ ${SMAP_MIN_H}+🎲[${campaign.smap.hd.dice.join('][')}]）。砦 ${campaign.smap.forts.length}か所`, 'turn');
+  smapLog('--- ターン 1（自軍） ---', 'turn');
+  saveCampaign();
+  renderCampaign();
+  renderStrat();
+  $('campaign-box').open = false;   // 編成パネルは畳む
+  $('strat-box').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ------------------------------------------------------------
+// 戦闘（戦術レイヤーへ）
+// ------------------------------------------------------------
+
+function attackToken(t, target) {
+  const m = smap();
+  const pt = t.side === 'player' ? t : target, ct = t.side === 'player' ? target : t;
+  t.acted = true;
+  m.battle = { player: pt.id, cpu: ct.id, attacker: t.side };
+  smapLog(`⚔ ${tokenSquad(t).name} が ${tokenSquad(target).name} に攻撃！`, t.side);
+  saveCampaign();
+  startCampaignBattle(pt.id, ct.id);
+  log(t.side === 'player' ? '「戦闘開始」で開戦します。' : `CPU軍の攻撃！ 迎え撃つ ${tokenSquad(pt).name} を「戦闘開始」で開戦します。`, 'turn');
+  renderStrat();
+}
+
+/** 戦術戦闘が終わったとき（main.js の applyBattleResult から呼ばれる） */
+function onMapBattleEnd(msg) {
+  const m = smap();
+  if (!m || !m.battle || m.pending) return;
+  m.pending = { ...m.battle, msg };
+  smapLog(`📜 戦闘の結果: ${msg}`, 'turn');
+  saveCampaign();
+  renderStrat();
+}
+
+/** 「戦略マップに戻る」: 戦闘の結果をマップに反映する（全滅した隊は消え、負けた隊は1マス下がり、砦は落ちる） */
+function resolvePending() {
+  const m = smap(), p = m.pending, A = campaign.armies;
+  if (!p) return;
+  const winner = /勝利/.test(p.msg) ? 'player' : /敗北/.test(p.msg) ? 'cpu' : null;
+  for (const side of ['player', 'cpu']) {
+    const t = m.tokens.find(x => x.id === p[side]);
+    if (!t) continue;
+    const q = tokenSquad(t);
+    const lost = winner && winner !== side;
+    if (t.fort) {
+      // 守備隊: 負けるか全滅したら砦は落ちる（生き残った副将は予備に戻る）
+      if (lost || !q) {
+        const f = m.forts.find(x => x.id === t.fort);
+        if (lost) { f.owner = winner; smapLog(`🏯 ${f.name}が陥落した！`, winner); }
+        if (q) A[side].squads = A[side].squads.filter(x => x !== q);
+      }
+    } else if (q && lost) {
+      // 負けた隊は相手から1マス離れる（空いていて通れるマスがあれば）
+      const foe = m.tokens.find(x => x.id === p[winner]) || t;
+      const exits = DIRS.map(([dx, dy]) => ({ x: t.x + dx, y: t.y + dy }))
+        .filter(c => smapCell(m, c.x, c.y) && TERRAIN[smapCell(m, c.x, c.y)].cost < Infinity && !tokenAt(c.x, c.y) && distance(c, foe) > distance(t, foe));
+      if (exits.length) {
+        const c = pick(exits);
+        [t.x, t.y] = [c.x, c.y];
+        smapLog(`${q.name} は退いた。`, side);
+      }
+    }
+  }
+  // 全滅・解散した隊を消す
+  m.tokens = m.tokens.filter(t => tokenSquad(t));
+  m.battle = null;
+  m.pending = null;
+  if (A.player.defeated || A.cpu.defeated) {
+    m.phase = 'over';
+    smapLog(A.cpu.defeated ? '🏆 CPU軍の総大将を討ち取った！ 自軍の勝利！' : '💀 総大将を失い、自軍は敗北した。', 'turn');
+  }
+  saveCampaign();
+  renderCampaign();
+  renderStrat();
+  if (m.phase === 'cpu') setTimeout(cpuRun, 300);
+}
+
+// ------------------------------------------------------------
+// ターン
+// ------------------------------------------------------------
+
+function endPlayerTurn() {
+  const m = smap();
+  if (m.phase !== 'player' || m.battle) return;
+  ui.selected = null;
+  m.phase = 'cpu';
+  for (const t of m.tokens) t.acted = false;
+  m.cpuQueue = m.tokens.filter(t => t.side === 'cpu').map(t => t.id);
+  smapLog(`--- ターン ${m.turn}（CPU軍） ---`, 'turn');
+  renderStrat();
+  setTimeout(cpuRun, 300);
+}
+
+/** CPU の隊を順に動かす。戦闘が始まったらそこで止まり、結果の反映後に続きから */
+function cpuRun() {
+  const m = smap();
+  if (!m || m.phase !== 'cpu' || m.battle) return;
+  while (m.cpuQueue.length) {
+    const t = m.tokens.find(x => x.id === m.cpuQueue[0]);
+    m.cpuQueue.shift();
+    if (!t || !tokenSquad(t)) continue;
+    if (cpuAct(t)) return;   // 戦闘開始
+  }
+  m.phase = 'player';
+  m.turn++;
+  for (const t of m.tokens) t.acted = false;
+  smapLog(`--- ターン ${m.turn}（自軍） ---`, 'turn');
+  saveCampaign();
+  renderStrat();
+}
+
+/** CPU が攻撃したい相手（隣接・見えている・勝てそうな相手。弱い順） */
+function cpuTarget(t) {
+  // 相手を囲んでいる味方（隣接しているCPUの隊）の戦力も合わせて考える（順に攻めかかれば削り切れる）
+  const around = o => liveTokens().filter(x => x.side === t.side && distance(x, o) === 1 && tokenKind(x) !== '斥候')
+    .reduce((a, x) => a + tokenStrength(x), 0);
+  return tokenTargets(t)
+    .filter(o => ['守備隊', '斥候'].includes(tokenKind(o)) || tokenKind(t) === '暗殺者' || around(o) >= tokenStrength(o) * CPU_ATTACK_RATIO)
+    .sort((a, b) => tokenStrength(a) - tokenStrength(b))[0] || null;
+}
+
+/** CPU の1隊分の行動。戦闘を始めたら true */
+function cpuAct(t) {
+  const m = smap(), kind = tokenKind(t);
+  if (kind === '守備隊') return false;
+  let target = cpuTarget(t);
+  if (target) { attackToken(t, target); return true; }
+  // 総大将は本陣で待つ（砦をすべて押さえたか、ほかに動ける隊がいなくなったら自ら出る）
+  if (kind === '本隊' && m.forts.some(f => f.owner !== 'cpu') &&
+      liveTokens().some(o => o.side === 'cpu' && o !== t && !['守備隊', '斥候'].includes(tokenKind(o)))) return false;
+  // 自軍の砦にいて余っている副将がいれば駐留させる
+  const opts = stationOptions(t);
+  const f0 = fortAt(t.x, t.y);
+  if (opts.length && f0 && !liveTokens().some(o => o !== t && o.x === f0.x && o.y === f0.y)) station(t, opts[0].id);
+  // 目標: 自軍のものでない砦（ほかの隊が狙っていない近いもの）→ 見えている敵 → 敵の本陣
+  const sight = new Set(liveTokens().filter(o => o.side === 'player' && tokenVisibleTo('cpu', o)).map(o => o.id));
+  const claimed = new Set(liveTokens().filter(o => o.side === 'cpu' && o !== t && o.goal).map(o => o.goal));
+  let goal;
+  if (kind === '斥候') goal = m.bases.player;
+  else {
+    const forts = m.forts.filter(f => f.owner !== 'cpu' && !claimed.has(f.id) && kind !== '暗殺者')
+      .sort((a, b) => (b.id === t.goal) - (a.id === t.goal) || distance(a, t) - distance(b, t));   // 今の目標を優先
+    const foes = liveTokens().filter(o => sight.has(o.id)).sort((a, b) => distance(a, t) - distance(b, t));
+    if (forts[0]) { goal = forts[0]; t.goal = forts[0].id; }
+    else goal = foes[0] || m.bases.player;
+  }
+  const dist = costMap(m, goal);
+  const reach = tokenReach(t);
+  // 斥候は見えている敵から3マス以上離れる
+  const safe = ([x, y]) => kind !== '斥候' || liveTokens().every(o => o.side === 'cpu' || !sight.has(o.id) || distance(o, { x, y }) >= 3);
+  let best = null, bestC = dist[t.y * m.w + t.x];
+  for (const [x, y] of reach) {
+    const c = dist[y * m.w + x] + Math.random() * 0.3;
+    if (safe([x, y]) && c < bestC) { bestC = c; best = [x, y]; }
+  }
+  if (best) moveToken(t, best[0], best[1]);
+  if (t.goal && fortAt(t.x, t.y)?.owner === 'cpu') t.goal = null;
+  target = cpuTarget(t);
+  if (target) { attackToken(t, target); return true; }
+  t.acted = true;
+  return false;
+}
+
+// ------------------------------------------------------------
+// 画面
+// ------------------------------------------------------------
+
+const ui = { selected: null, moved: false };
+
+function smapLog(text, cls = 'sys') {
+  const m = smap();
+  if (!m) return;
+  m.logs.push({ text, cls });
+  if (m.logs.length > 200) m.logs.splice(0, m.logs.length - 200);
+}
+
+function tokenGlyph(t) {
+  const kind = tokenKind(t);
+  return { '本隊': '★本', '分隊': '☆', '小隊': '◆', '斥候': '斥', '暗殺者': '暗', '守備隊': '守' }[kind] || '?';
+}
+
+function renderStrat() {
+  const box = $('strat-box'), m = smap();
+  box.classList.toggle('hidden', !m);
+  if (!m) return;
+  const A = campaign.armies;
+  const sight = state.fog ? smapSight('player') : null;
+  const sel = liveTokens().find(t => t.id === ui.selected);
+  const myTurn = m.phase === 'player' && !m.battle;
+  const reach = new Set(sel && myTurn && !sel.acted && !ui.moved ? tokenReach(sel).map(([x, y]) => `${x},${y}`) : []);
+  const targets = new Set(sel && myTurn && !sel.acted ? tokenTargets(sel).map(o => o.id) : []);
+  const grid = $('smap');
+  grid.style.gridTemplateColumns = `repeat(${m.w}, minmax(0, 1fr))`;
+  let html = '';
+  for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+    const ter = smapCell(m, x, y), f = fortAt(x, y);
+    let t = tokenAt(x, y);
+    if (t && !tokenVisibleTo('player', t)) t = null;
+    const base = m.bases.player.x === x && m.bases.player.y === y ? 'player' : m.bases.cpu.x === x && m.bases.cpu.y === y ? 'cpu' : null;
+    const cls = ['scell', `t-${ter}`,
+      sight && !sight.has(`${x},${y}`) ? 'fog' : '',
+      reach.has(`${x},${y}`) ? 'reach' : '',
+      t && targets.has(t.id) ? 'target' : '',
+      t ? (t.side === 'player' ? 'p' : 'c') : '',
+      t && t === sel ? 'acting' : '',
+      t && t.side === 'player' && t.acted && m.phase === 'player' ? 'done' : '',
+      f ? `fortcell fort-${f.owner || 'none'}` : ''].filter(Boolean).join(' ');
+    const title = t ? `${tokenSquad(t).name}（${tokenKind(t)}）兵 ${tokenTroops(t)}人 / 移動 ${tokenMove(t)}`
+      : f ? `${f.name}（${f.owner ? (f.owner === 'player' ? '自軍' : 'CPU軍') : '中立'}）` : ter;
+    html += `<div class="${cls}" data-x="${x}" data-y="${y}" title="${title}">` +
+      (f ? `<span class="fort ${f.owner ? 'own-' + f.owner : ''}">🏯</span>` : '') +
+      (base ? `<span class="base own-${base}">陣</span>` : '') +
+      (t ? `<span class="glyph">${tokenGlyph(t)}</span>` : '') + `</div>`;
+  }
+  grid.innerHTML = html;
+  const forts = side => m.forts.filter(f => f.owner === side).length;
+  $('strat-label').textContent = `${m.w}×${m.h}　ターン ${m.turn}（${m.phase === 'player' ? '自軍の番' : m.phase === 'cpu' ? 'CPU軍の番' : '決着'}）　砦 自軍${forts('player')} / CPU${forts('cpu')} / 中立${m.forts.length - forts('player') - forts('cpu')}`;
+  // 操作パネル
+  let info = '';
+  if (m.phase === 'over') {
+    info = `<div class="result">${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'}</div>`;
+  } else if (m.pending) {
+    info = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">🗺 戦略マップに戻る</button>`;
+  } else if (m.battle) {
+    info = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}。下の戦場で決着をつけてください。</div>`;
+  } else if (m.phase === 'cpu') {
+    info = '<div>CPU軍が行動中…</div>';
+  } else if (sel && sel.side === 'player') {
+    const q = tokenSquad(sel), opts = stationOptions(sel);
+    info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
+      <div class="sub">${sel.acted ? '' : ui.moved ? '赤枠の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の赤枠の敵をクリックで攻撃。'}</div>
+      <div class="ap-buttons">
+        ${!sel.acted ? '<button id="sm-wait">待機</button>' : ''}
+        ${!sel.acted && opts.length ? `<select id="sm-station"><option value="">副将を駐留させる…</option>${opts.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}</select>` : ''}
+      </div>`;
+  } else {
+    info = '<div class="sub">自軍の隊（青）をクリックして選びます。全部動かしたら「ターン終了」。</div>';
+  }
+  if (m.phase === 'player' && !m.battle) info += `<div class="ap-buttons"><button id="sm-end">ターン終了</button></div>`;
+  info += `<div class="smap-log">${m.logs.slice(-12).reverse().map(l => `<div class="${l.cls}">${l.text}</div>`).join('')}</div>`;
+  $('strat-info').innerHTML = info;
+  const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
+  on('sm-resolve', 'onclick', resolvePending);
+  on('sm-end', 'onclick', endPlayerTurn);
+  on('sm-wait', 'onclick', () => { sel.acted = true; ui.selected = null; ui.moved = false; saveCampaign(); renderStrat(); });
+  on('sm-station', 'onchange', e => {
+    if (e.target.value && station(sel, e.target.value)) { sel.acted = true; ui.selected = null; ui.moved = false; saveCampaign(); renderCampaign(); }
+    renderStrat();
+  });
+}
+
+function onSmapClick(x, y) {
+  const m = smap();
+  if (!m || m.phase !== 'player' || m.battle) return;
+  const sel = liveTokens().find(t => t.id === ui.selected);
+  const t = tokenAt(x, y);
+  // 攻撃
+  if (sel && t && t.side === 'cpu' && !sel.acted && tokenTargets(sel).includes(t)) {
+    ui.selected = null; ui.moved = false;
+    attackToken(sel, t);
+    return;
+  }
+  // 移動
+  if (sel && !t && !sel.acted && !ui.moved && tokenReach(sel).some(([cx, cy]) => cx === x && cy === y)) {
+    moveToken(sel, x, y);
+    ui.moved = true;
+    if (!tokenTargets(sel).length && !stationOptions(sel).length) { sel.acted = true; ui.selected = null; ui.moved = false; }
+    saveCampaign();
+    renderStrat();
+    return;
+  }
+  // 選択（移動したまま別の隊を選んだら、前の隊は行動済み）
+  if (sel && ui.moved) sel.acted = true;
+  ui.moved = false;
+  ui.selected = t && t.side === 'player' ? t.id : null;
+  renderStrat();
+}
+
+function initStrategy() {
+  $('smap').addEventListener('click', e => {
+    const cell = e.target.closest('.scell');
+    if (cell) onSmapClick(Number(cell.dataset.x), Number(cell.dataset.y));
+  });
+  renderStrat();
+  // 戦闘中にCPUの番だった（再読み込み）なら続きから
+  const m = smap();
+  if (m && m.phase === 'cpu' && !m.battle) setTimeout(cpuRun, 500);
+}
