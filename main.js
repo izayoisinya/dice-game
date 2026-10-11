@@ -76,7 +76,10 @@ const ADVANCE_MODES = {
 const TRAITS = {
   zoc:    { name: '足止め', cost: 40 },  // 隣接したマスに入った敵はそこで移動が止まる
   cover:  { name: '庇う',   cost: 0 },
-  spear:  { name: '突き・薙ぎ払い', cost: 0 },   // 槍兵の範囲攻撃   // 敵と味方の間（同じ縦・横の直線上）にいると、その攻撃を代わりに受ける
+  spear:  { name: '突き・薙ぎ払い', cost: 0 },   // 槍兵の範囲攻撃
+  guard:  { name: '堅守',   cost: 0 },   // 盾兵: 受けるダメージを減らす
+  aim:    { name: '狙い撃ち', cost: 0 }, // 弓兵: 動かずに撃つと命中が上がる
+  pursuit: { name: '追撃',  cost: 0 },   // 剣兵: 敵を倒すと行動ゲージがたまる   // 敵と味方の間（同じ縦・横の直線上）にいると、その攻撃を代わりに受ける
   charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
   scout:  { name: '索敵',   cost: 100 }, // 視界が広い。隠密の敵も2マスまで見つけられる
   stealth: { name: '隠密',  cost: 50 },  // 敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで姿が見える）
@@ -89,19 +92,29 @@ const ASSASSIN_VS_TROOPS = 0.5;    // 暗殺者 → 兵士の駒・斥候の威�
 const VISION_DEFAULT = 4;
 const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と保つ距離
 // 槍兵の範囲攻撃（攻撃1回分を使う）
-const THRUST_MULT = [0.8, 0.5];   // 突き: 縦に並んだ敵2体（手前 80% / 奥 50%）
-const SWEEP_MULT = 0.4;           // 薙ぎ払い: 横に並んだ敵3体（それぞれ 40%）
+// 兵種の固有能力の強さ。[兵士の駒, 兵長] の順（兵長の方が少し強い）
+const THRUST_MULT = [[0.8, 0.5], [0.9, 0.6]];   // 突き: 縦に並んだ敵2体（手前 / 奥）
+const SWEEP_MULT = [0.4, 0.5];                  // 薙ぎ払い: 横に並んだ敵3体（それぞれ）
+const CHARGE_BONUS_LV = [0.3, 0.4];             // 突撃: 直進1マスあたりの威力上昇（初撃のみ）
+const GUARD_CUT = [0.15, 0.25];                 // 堅守: 受けるダメージの軽減
+const AIM_HIT = [5, 10];                        // 狙い撃ち: 移動しなかった行動の命中 +%
+const PURSUIT_GAUGE = [25, 50];                 // 追撃: 敵を倒したときに行動ゲージがたまる量（攻撃1回 = 50）
+/** 固有能力の段階: 兵長なら 1、兵士の駒なら 0 */
+function lv(u) { return u.rank === '兵長' ? 1 : 0; }
+const pct = v => Math.round(v * 100);
 const TRAIT_HELP = {
   zoc: '上下左右に隣接したマスに入った敵は、そこで移動が止まる',
-  spear: `突き: 自分から見て一直線に並んだ敵2体（隣と、その奥）を同時に攻撃（手前${THRUST_MULT[0] * 100}%・奥${THRUST_MULT[1] * 100}%）。薙ぎ払い: 隣の敵と、その左右に並んだ敵の3体を同時に攻撃（それぞれ${SWEEP_MULT * 100}%）。どちらも攻撃1回分`,
+  spear: `突き: 自分から見て一直線に並んだ敵2体（隣と、その奥）を同時に攻撃（手前${pct(THRUST_MULT[0][0])}%・奥${pct(THRUST_MULT[0][1])}%／兵長 ${pct(THRUST_MULT[1][0])}%・${pct(THRUST_MULT[1][1])}%）。薙ぎ払い: 隣の敵と、その左右に並んだ敵の3体を同時に攻撃（それぞれ${pct(SWEEP_MULT[0])}%／兵長 ${pct(SWEEP_MULT[1])}%）。どちらも攻撃1回分`,
+  guard: `受けるダメージ −${pct(GUARD_CUT[0])}%（兵長 −${pct(GUARD_CUT[1])}%）`,
+  aim: `その行動で移動しなかったら命中 +${AIM_HIT[0]}%（兵長 +${AIM_HIT[1]}%）。動かずに構えて撃つほど当たる（反撃にも効く）`,
+  pursuit: `敵を倒すと行動ゲージが ${PURSUIT_GAUGE[0]}（兵長 ${PURSUIT_GAUGE[1]}）たまる（攻撃1回分 = ${ACT_PER_ATTACK}）。弱った敵を続けて仕留める`,
   cover: '敵と味方の間（同じ縦・横の直線上）にいると、その味方への攻撃を代わりに受ける',
-  charge: '上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×30%だけ初撃の威力が上がる（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示',
+  charge: `上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×${pct(CHARGE_BONUS_LV[0])}%（兵長 ×${pct(CHARGE_BONUS_LV[1])}%）だけ初撃の威力が上がる（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示`,
   scout: '視界が広い。隠密の敵も2マスまで見つけられる',
   stealth: '敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで見える）',
   assassin: '将（兵長以上）への攻撃 ×1.6、兵士の駒への攻撃 ×0.5',
 };
 const CHARGE_MIN = 2;         // 突撃になる最低直進マス数
-const CHARGE_BONUS = 0.3;     // 直進1マスあたりの威力上昇（初撃のみ）
 
 // 兵種の相性（剣・槍・弓の三すくみ）。攻撃側 → 防御側 のダメージ倍率。書いていない組み合わせは ×1.0
 //   槍 → 剣: リーチで制す / 剣 → 弓: 詰め寄って斬る / 弓 → 槍: 鈍重な槍兵を射る
@@ -118,7 +131,7 @@ const MATCHUP = {
 // rear = 後衛（前衛より前に出ない）
 const TYPES = {
   // 近距離特化、足と手数が速い
-  '剣兵': { stats: { hp: 110, atk: 100, def: 90, spd: 100, act: 90 }, rng: 1, hit: 85, best: 1,
+  '剣兵': { stats: { hp: 110, atk: 100, def: 90, spd: 100, act: 90 }, rng: 1, hit: 85, best: 1, traits: ['pursuit'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 打たれ強く射程2、攻撃速度はやや遅い
   '槍兵': { stats: { hp: 120, atk: 100, def: 100, spd: 80, act: 60 }, rng: 2, hit: 80, best: 2, traits: ['spear'],
@@ -126,14 +139,14 @@ const TYPES = {
   // 遠距離攻撃の代わりに脆い。
   // 平面（マンハッタン距離）向け: 斜め方向は距離が長く数えられ、前衛越しに撃つと距離3〜4になるため
   // 最適帯を2〜3に広げ、射程を5にしている
-  '弓兵': { stats: { hp: 70, atk: 110, def: 40, spd: 80, act: 70 }, rng: 5, hit: 80, best: 3, rear: true,
+  '弓兵': { stats: { hp: 70, atk: 110, def: 40, spd: 80, act: 70 }, rng: 5, hit: 80, best: 3, rear: true, traits: ['aim'],
             falloff: { 1: { hit: 0.6, pow: 1.0 },    // 近すぎて狙いにくいが威力はある
                        2: { hit: 1.0, pow: 1.0 },    // 最大性能
                        3: { hit: 1.0, pow: 1.0 },    // 最大性能（前衛越しの基本距離）
                        4: { hit: 0.9, pow: 0.9 },    // 準最大
                        5: { hit: 0.7, pow: 0.7 } } },// 最低
   // 被ダメも与ダメも低い壁役。足止め（ZOC）で敵の進軍を止める
-  '盾兵': { stats: { hp: 140, atk: 70, def: 140, spd: 50, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['zoc', 'cover'],
+  '盾兵': { stats: { hp: 140, atk: 70, def: 140, spd: 50, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['zoc', 'cover', 'guard'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 移動速度重視。一直線に走り込んでの突撃が武器
   '騎兵': { stats: { hp: 100, atk: 110, def: 80, spd: 130, act: 50 }, rng: 1, hit: 80, best: 1, traits: ['charge'],
@@ -597,6 +610,7 @@ function tickUnit(u) {
   u.counteredBy = [];
   u.hitAndRun = false;
   u.revealed = false;
+  u.moved = false;   // この行動で移動したか（狙い撃ち）
 }
 
 /** 攻撃対象に上下左右で隣接している、攻撃側の味方の数（攻撃者自身は除く） */
@@ -616,7 +630,8 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   // 射程を伸ばした総大将など、表にない距離はいちばん遠い距離の値を使う
   const dist = distance(attacker, defender);
   const f = attacker.falloff[dist] ?? attacker.falloff[Math.max(...Object.keys(attacker.falloff).map(Number))];
-  const hitRate = Math.round(attacker.hit * f.hit);
+  const aim = attacker.traits.includes('aim') && !attacker.moved ? AIM_HIT[lv(attacker)] : 0;
+  const hitRate = Math.round(attacker.hit * f.hit) + aim;
   const hitRoll = d(100);
   if (hitRoll > hitRate) return { hit: false, hitRate, hitRoll };
   const die = d(6);
@@ -626,7 +641,8 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   const surround = surroundCount(attacker, defender);
   const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus * (1 + SURROUND_BONUS * surround)
     * Math.sqrt(sizeRatio(attacker))    // 人数が多い駒ほど1回の威力も大きい
-    * (attacker.traits.includes('assassin') ? (defender.rank === '雑兵' ? ASSASSIN_VS_TROOPS : ASSASSIN_VS_GENERAL) : 1);
+    * (attacker.traits.includes('assassin') ? (defender.rank === '雑兵' ? ASSASSIN_VS_TROOPS : ASSASSIN_VS_GENERAL) : 1)
+    * (defender.traits.includes('guard') ? 1 - GUARD_CUT[lv(defender)] : 1);
   const base = Math.max(atk * MIN_DAMAGE_RATE, atk - effDef(defender) * 0.5 + die * DAMAGE_DIE_SCALE);
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult));
   return { hit: true, hitRate, hitRoll, dmg, die, crit, surround };
@@ -763,10 +779,11 @@ function spearOptions(unit) {
     if (!front) continue;
     const back = foe(unit.x + 2 * dx, unit.y + 2 * dy);
     if (back && effRng(unit) >= 2) {
-      opts.push({ kind: 'thrust', name: '突き', hits: [{ u: front, mult: THRUST_MULT[0] }, { u: back, mult: THRUST_MULT[1] }] });
+      const m = THRUST_MULT[lv(unit)];
+      opts.push({ kind: 'thrust', name: '突き', hits: [{ u: front, mult: m[0] }, { u: back, mult: m[1] }] });
     }
     const l = foe(unit.x + dx - dy, unit.y + dy - dx), r = foe(unit.x + dx + dy, unit.y + dy + dx);
-    if (l && r) opts.push({ kind: 'sweep', name: '薙ぎ払い', hits: [l, front, r].map(u => ({ u, mult: SWEEP_MULT })) });
+    if (l && r) opts.push({ kind: 'sweep', name: '薙ぎ払い', hits: [l, front, r].map(u => ({ u, mult: SWEEP_MULT[lv(unit)] })) });
   }
   return opts;
 }
@@ -828,6 +845,10 @@ function performAttack(unit, target, bonus = 1, atkMult = 1) {
   if (!target.alive) {
     log(`☠ ${target.name} は倒れた！`, 'death');
     if (checkVictory()) return true;
+    if (unit.traits.includes('pursuit')) {
+      unit.gauge = Math.min(gaugeCap(unit), unit.gauge + PURSUIT_GAUGE[lv(unit)]);
+      log(`⚔ ${unit.name} の追撃の構え！（行動ゲージ +${PURSUIT_GAUGE[lv(unit)]}）`, unit.side);
+    }
     return false;
   }
   return counterAttack(target, unit);
@@ -969,6 +990,7 @@ function actUnit(unit) {
       const before = unit.posText;
       [unit.x, unit.y] = [charge.x, charge.y];
       movedBefore = true;
+      unit.moved = true;
       log(`🐎 ${unit.name} の突撃！ ${before} → ${unit.posText}（${charge.run}マス直進）`, unit.side);
       target = charge.target;
     }
@@ -979,6 +1001,7 @@ function actUnit(unit) {
     const moved = moveUnit(unit, unit.move, advanceScorer(unit, target));
     if (moved) {
       movedBefore = true;
+      unit.moved = true;
       log(`${unit.name} は前進した。${before} → ${unit.posText}`, unit.side);
     } else {
       log(unit.rear ? `${unit.name} は前衛の後ろで待機している。` : `${unit.name} は進路を阻まれて前進できない。`, unit.side);
@@ -998,6 +1021,7 @@ function actUnit(unit) {
     if (moveUnit(unit, unit.retreat, p =>
           withinFrontLine(unit, p) ? Math.abs(nearestEnemyDist(unit, p) - unit.best) : Infinity)) {
       movedBefore = true;
+      unit.moved = true;
       log(`${unit.name} は間合いを取った。${before} → ${unit.posText}`, unit.side);
     }
     target = nearestEnemy(unit);
@@ -1020,7 +1044,7 @@ function actUnit(unit) {
     unit.gauge -= ACT_PER_ATTACK;
     attacked++;
     // 突撃ボーナスは初撃のみ
-    const bonus = charge && first ? 1 + CHARGE_BONUS * charge.run : 1;
+    const bonus = charge && first ? 1 + CHARGE_BONUS_LV[lv(unit)] * charge.run : 1;
     // 強撃: 攻撃できるときに初撃へ乗せる
     let atkMult = 1;
     if (first && skillReady(unit, '強撃')) {
@@ -1309,6 +1333,7 @@ function onCellClick(x, y) {
     return;
   }
   state.manual.moved = true;
+  unit.moved = true;
   const charge = manualCharge(unit, fromX, fromY);
   if (charge) {
     state.manual.charge = charge;
@@ -1338,7 +1363,7 @@ function manualSpear(unit, opt) {
 function manualAttack(unit, target) {
   unit.gauge -= ACT_PER_ATTACK;
   const m = state.manual;
-  const bonus = m.charge && m.attacked === 0 && m.charge.target === target.id ? 1 + CHARGE_BONUS * m.charge.run : 1;
+  const bonus = m.charge && m.attacked === 0 && m.charge.target === target.id ? 1 + CHARGE_BONUS_LV[lv(unit)] * m.charge.run : 1;
   const atkMult = m.smash ? SMASH_MULT : 1;
   m.smash = false;
   m.attacked++;
