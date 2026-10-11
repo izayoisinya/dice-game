@@ -59,6 +59,7 @@ const BASE_TROOPS = 50;
 const MIN_TROOPS = 10;
 const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
+const FORT_DEF = 0.2;          // 戦略マップの砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
 const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
@@ -558,7 +559,8 @@ function inMorale(u) {
 /** バフと士気を合わせた能力の倍率 */
 function statMult(u, stat) {
   const buff = u.buffs.filter(b => b.stat === stat).reduce((s, b) => s + b.value, 0);
-  return 1 + buff + (inMorale(u) ? MORALE_BONUS : 0) + (hasSergeant(u) ? SERGEANT_BUFF : 0);
+  return 1 + buff + (inMorale(u) ? MORALE_BONUS : 0) + (hasSergeant(u) ? SERGEANT_BUFF : 0)
+    + (stat === 'def' && state.campaignBattle?.fortBonus?.[u.side] ? FORT_DEF : 0);
 }
 
 /** 兵士の駒に、同じ兵種の兵長（隊長）が同じ戦場で健在か */
@@ -2251,7 +2253,7 @@ function renderCampaignLocked() {
   const A = campaign.armies, P = A.player;
   const desc = m => m ? (m.kind ? m.name : `${m.name}（${m.rank || m.type + '長'}）`) : '?';
   $('campaign').innerHTML = `
-    <div class="cp-head"><span class="sub">出陣中のため編成は変えられません（隊の再編成は今後の予定）。</span>
+    <div class="cp-head"><span class="sub">出陣中はここでは編成を変えられません。戦略マップで自軍の砦・本陣の上か隣にいる隊を選ぶと「再編成」できます。</span>
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}</div>
     <div class="cp-pool">兵力（残り）: ${TYPE_NAMES.map(t => `<span class="chip">${t} ${P.totals[t]}人</span>`).join('')}</div>
     ${P.squads.map(q => `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${desc(memberById(P, q.leader))} ／ 兵 ${squadTroops(q)}人</div>

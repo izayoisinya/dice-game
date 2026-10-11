@@ -173,6 +173,11 @@ function smapSight(side) {
     const r = tokenVision(t);
     for (let dy = -r; dy <= r; dy++) for (let dx = -(r - Math.abs(dy)); dx <= r - Math.abs(dy); dx++) seen.add(`${t.x + dx},${t.y + dy}`);
   }
+  // 自軍の砦は見張り台: 守備隊がいなくても周囲が見える
+  for (const f of m.forts.filter(f => f.owner === side)) {
+    const r = FORT_VISION;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -(r - Math.abs(dy)); dx <= r - Math.abs(dy); dx++) seen.add(`${f.x + dx},${f.y + dy}`);
+  }
   return seen;
 }
 
@@ -180,8 +185,9 @@ function smapSight(side) {
 function tokenVisibleTo(side, t) {
   if (t.side === side || !state.fog) return true;
   const mine = liveTokens().filter(o => o.side === side);
-  if (tokenKind(t) === '暗殺者') return mine.some(o => distance(o, t) <= (tokenKind(o) === '斥候' ? 2 : 1));
-  return mine.some(o => distance(o, t) <= tokenVision(o));
+  const forts = smap().forts.filter(f => f.owner === side);
+  if (tokenKind(t) === '暗殺者') return mine.some(o => distance(o, t) <= (tokenKind(o) === '斥候' ? 2 : 1)) || forts.some(f => distance(f, t) <= 1);
+  return mine.some(o => distance(o, t) <= tokenVision(o)) || forts.some(f => distance(f, t) <= FORT_VISION);
 }
 
 /** 隊が今のターンに止まれるマス（地形のコスト。敵の隊は通れない、味方の隊は通れるが止まれない） */
@@ -376,6 +382,133 @@ function station(t, gid) {
 }
 
 // ------------------------------------------------------------
+// 再編成（自軍の砦・本陣で）
+// ------------------------------------------------------------
+
+/** 隊がいる拠点（自軍の本陣か自軍の砦の上・隣）。なければ null */
+function hubOf(t) {
+  const m = smap();
+  const base = m.bases[t.side];
+  if (distance(t, base) <= 1) return { kind: 'base', x: base.x, y: base.y, name: '本陣' };
+  const f = m.forts.find(f => f.owner === t.side && distance(f, t) <= 1);
+  return f ? { kind: 'fort', x: f.x, y: f.y, name: f.name, id: f.id } : null;
+}
+
+/** 拠点に集まっている自軍の隊 */
+function hubSquads(hub, side) {
+  return liveTokens().filter(o => o.side === side && distance(o, hub) <= 1).map(tokenSquad);
+}
+
+/** 副将は総大将・副将が率いる隊にだけ入れる（兵長が率いる小隊には入れない） */
+function canHold(army, q, mid) {
+  const m = memberById(army, mid), lead = memberById(army, q.leader);
+  return !(m?.rank === '副将' && !lead?.rank);
+}
+
+function reorg(op, a) {
+  const army = campaign.armies.player, hub = ui.reorg;
+  const group = hubSquads(hub, 'player');
+  const Q = id => group.find(q => q.id === id);
+  const from = Q(a.from), to = Q(a.to);
+  const fail = msg => { alert(msg); return false; };
+  switch (op) {
+    case 'piece': {   // 兵士の駒を別の隊へ（to なしなら予備へ: 本陣だけ）
+      const piece = from.pieces[a.i];
+      if (to) {
+        if (to.pieces.length >= squadCap(army, to)) return fail(`${to.name}は隊長の統率力の上限です。`);
+        to.pieces.push(piece);
+      } else if (hub.kind !== 'base') return fail('予備に戻せるのは本陣だけです。');
+      from.pieces.splice(a.i, 1);
+      break;
+    }
+    case 'member': {  // 配下の将・斥候・暗殺者を別の隊へ（to なしなら予備へ: 本陣だけ）
+      if (to) {
+        if (!canHold(army, to, a.id)) return fail('副将は、兵長が率いる小隊には入れません。');
+        to.members.push(a.id);
+      } else if (hub.kind !== 'base') return fail('予備に戻せるのは本陣だけです。');
+      from.members = from.members.filter(x => x !== a.id);
+      break;
+    }
+    case 'split': {   // 配下の副将・兵長を隊長にして、新しい隊を作る
+      const m = smap();
+      const cell = [];
+      // 拠点にいちばん近い空きマス（3マス以内）に置く
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+        const x = hub.x + dx, y = hub.y + dy, ter = smapCell(m, x, y);
+        if (ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && distance({ x, y }, hub) <= 3) cell.push([x, y]);
+      }
+      cell.sort((p1, p2) => distance({ x: p1[0], y: p1[1] }, hub) - distance({ x: p2[0], y: p2[1] }, hub));
+      if (!cell.length) return fail('拠点のまわり（3マス以内）に新しい隊を置く空きマスがありません。');
+      from.members = from.members.filter(x => x !== a.id);
+      const leader = memberById(army, a.id);
+      const q = { id: `player-Q${army.seq++}`, name: `${leader.name}隊`, leader: a.id, members: [], pieces: [] };
+      army.squads.push(q);
+      m.tokens.push({ id: q.id, side: 'player', x: cell[0][0], y: cell[0][1], acted: true });
+      smapLog(`🏯 ${hub.name}で ${q.name} を編成した。`, 'player');
+      break;
+    }
+    case 'merge': {   // 隊ごと別の隊に合流（隊長は合流先の配下になる）
+      if (!canHold(army, to, from.leader)) return fail('副将が率いる隊は、兵長が率いる小隊には合流できません。');
+      to.pieces.push(...from.pieces);
+      to.members.push(from.leader, ...from.members);
+      army.squads = army.squads.filter(q => q !== from);
+      smap().tokens = smap().tokens.filter(t => t.id !== from.id);
+      smapLog(`🏯 ${from.name} が ${to.name} に合流した。`, 'player');
+      break;
+    }
+    case 'addpiece': {  // 予備から兵士の駒を足す（本陣だけ）
+      const size = Math.floor(a.size / 10) * 10;
+      if (size < MIN_TROOPS) return fail(`1駒は${MIN_TROOPS}人以上です。`);
+      if (size > poolLeft(army, a.type)) return fail(`${a.type}の予備は${poolLeft(army, a.type)}人です。`);
+      if (to.pieces.length >= squadCap(army, to)) return fail(`${to.name}は隊長の統率力の上限です。`);
+      to.pieces.push({ type: a.type, size });
+      break;
+    }
+    case 'addmember': {  // 予備の将・斥候・暗殺者を隊に入れる（本陣だけ）
+      if (!canHold(army, to, a.id)) return fail('副将は、兵長が率いる小隊には入れません。');
+      to.members.push(a.id);
+      break;
+    }
+  }
+  saveCampaign();
+  renderCampaign();
+  renderStrat();
+  return true;
+}
+
+/** 再編成の画面（拠点に集まっている隊どうしで、駒・将の受け渡し、分割、合流。本陣では予備も使える） */
+function renderReorg() {
+  const hub = ui.reorg, army = campaign.armies.player;
+  const group = hubSquads(hub, 'player');
+  if (!group.length) { ui.reorg = null; return ''; }
+  const atBase = hub.kind === 'base';
+  const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}）`;
+  const dests = (q, extra = '') => `<option value="">移す…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${o.name}</option>`).join('')}${atBase ? '<option value="__pool">→ 予備</option>' : ''}${extra}`;
+  const rows = group.map(q => {
+    const lead = memberById(army, q.leader);
+    const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type}${p.size}
+      <select class="ro" data-op="piece" data-from="${q.id}" data-i="${i}">${dests(q)}</select></span>`).join('') || '<span class="sub">なし</span>';
+    const members = q.members.map(id => { const m = memberById(army, id); return `<span class="chip">${desc(m)}
+      <select class="ro" data-op="member" data-from="${q.id}" data-id="${id}">${dests(q)}</select>
+      ${!m.kind ? `<button class="small ro-btn" data-op="split" data-from="${q.id}" data-id="${id}">新しい隊に</button>` : ''}</span>`; }).join('') || '<span class="sub">なし</span>';
+    const merge = q.name !== '本隊' && !q.garrison && group.length > 1
+      ? `<select class="ro" data-op="merge" data-from="${q.id}"><option value="">隊ごと合流…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${o.name}</option>`).join('')}</select>` : '';
+    const add = atBase ? `<div class="ro-add">予備から:
+      <select data-role="ro-type">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
+      <input type="number" data-role="ro-size" value="${PIECE_DEFAULT}" step="10" min="${MIN_TROOPS}">人
+      <button class="small ro-btn" data-op="addpiece" data-to="${q.id}">駒を足す</button>
+      <select class="ro" data-op="addmember" data-to="${q.id}"><option value="">将などを入れる…</option>${
+        [...army.generals.filter(g => g.rank === '副将'), ...army.sergeants, ...army.specials].filter(m => !squadOf(army, m.id)).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('')}</select></div>` : '';
+    return `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(army, q)}）隊長 ${desc(lead)} ／ 駒 ${q.pieces.length}/${squadCap(army, q)} ／ 兵 ${squadTroops(q)}人 ${merge}</div>
+      <div>配下: ${members}</div><div>兵士の駒: ${pieces}</div>${add}</div>`;
+  }).join('');
+  return `<div class="reorg"><div class="ap-head"><b>🏯 ${hub.name}で再編成</b> <button class="small" id="sm-reorg-close">閉じる</button></div>
+    <div class="sub">拠点（${atBase ? '本陣' : '砦'}）の上か隣にいる隊どうしで、駒や将を受け渡し・分割・合流できます（行動は使いません）。${atBase ? '本陣では予備の兵・将も使えます。' : '予備の兵・将は本陣でしか使えません。'}</div>
+    ${atBase ? `<div class="sub">予備: ${TYPE_NAMES.map(t => `${t}${poolLeft(army, t)}`).join('・')}</div>` : ''}
+    ${rows}</div>`;
+}
+
+// ------------------------------------------------------------
 // 出陣（戦略マップの開始）
 // ------------------------------------------------------------
 
@@ -426,6 +559,13 @@ function attackToken(t, target) {
   saveCampaign();
   startCampaignBattle(pt.id, ct.id);
   if (t.side === 'cpu') log(`CPU軍の攻撃！ 迎え撃つのは ${tokenSquad(pt).name} です。`, 'turn');
+  // 砦の守り: 自軍の砦の上か隣にいる隊（守備隊を含む）は DEF +20%
+  if (state.campaignBattle) {
+    const bonus = side => { const tok = side === 'player' ? pt : ct; return !!tok.fort || m.forts.some(f => f.owner === side && distance(f, tok) <= 1); };
+    state.campaignBattle.fortBonus = { player: bonus('player'), cpu: bonus('cpu') };
+    for (const side of ['player', 'cpu']) if (state.campaignBattle.fortBonus[side]) log(`🏯 ${side === 'player' ? '自軍' : 'CPU軍'}は砦の守りを得ている（DEF +${Math.round(FORT_DEF * 100)}%）`, side);
+    saveGame();
+  }
   renderStrat();
 }
 
@@ -585,7 +725,7 @@ function cpuAct(t) {
 // 画面
 // ------------------------------------------------------------
 
-const ui = { selected: null, moved: false, mode: null };   // mode = 'trap'（罠を仕掛ける）/ 'disarm'（解除）
+const ui = { selected: null, moved: false, mode: null, reorg: null, info: null };   // reorg = 再編成中の拠点、info = 説明を出している砦・本陣   // mode = 'trap'（罠を仕掛ける）/ 'disarm'（解除）
 
 function smapLog(text, cls = 'sys') {
   const m = smap();
@@ -651,8 +791,11 @@ function renderStrat() {
     info = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}。下の戦場で決着をつけてください。</div>`;
   } else if (m.phase === 'cpu') {
     info = '<div>CPU軍が行動中…</div>';
+  } else if (ui.reorg) {
+    info = renderReorg();
   } else if (sel && sel.side === 'player') {
     const q = tokenSquad(sel), opts = stationOptions(sel);
+    const hub = hubOf(sel);
     info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
       <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : ui.moved ? '赤枠の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の赤枠の敵をクリックで攻撃。'}</div>
       <div class="ap-buttons">
@@ -660,7 +803,11 @@ function renderStrat() {
         ${!sel.acted && hasScout(sel) ? `<button id="sm-trap" class="${ui.mode === 'trap' ? 'skill' : ''}" ${trapCells(sel).length ? '' : 'disabled'}>🪤 罠を仕掛ける（残り${trapsLeft('player')}）</button>` : ''}
         ${!sel.acted && disarmCells(sel).length ? `<button id="sm-disarm" class="${ui.mode === 'disarm' ? 'skill' : ''}">罠を解除</button>` : ''}
         ${!sel.acted && opts.length ? `<select id="sm-station"><option value="">副将を駐留させる…</option>${opts.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}</select>` : ''}
-      </div>`;
+        ${hub ? `<button id="sm-reorg">🏯 ${hub.name}で再編成</button>` : ''}
+      </div>
+      ${hub ? `<div class="sub">${hub.name}の上か隣にいるので、再編成できます${hub.kind === 'fort' ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
+  } else if (ui.info) {
+    info = placeInfo(ui.info);
   } else {
     info = '<div class="sub">自軍の隊（青）をクリックして選びます。全部動かしたら「ターン終了」。</div>';
   }
@@ -669,6 +816,22 @@ function renderStrat() {
   $('strat-info').innerHTML = info;
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
+  on('sm-reorg', 'onclick', () => { ui.reorg = hubOf(sel); ui.mode = null; renderStrat(); });
+  on('sm-reorg-close', 'onclick', () => { ui.reorg = null; renderStrat(); });
+  const box2 = $('strat-info');
+  box2.querySelectorAll('select.ro').forEach(el => el.onchange = () => {
+    if (!el.value) return;
+    const d = el.dataset, to = el.value === '__pool' ? null : el.value;
+    if (d.op === 'addmember') reorg('addmember', { to: d.to, id: el.value });
+    else reorg(d.op, { from: d.from, to, i: +d.i, id: d.id });
+  });
+  box2.querySelectorAll('button.ro-btn').forEach(el => el.onclick = () => {
+    const d = el.dataset;
+    if (d.op === 'addpiece') {
+      const row = el.closest('.ro-add');
+      reorg('addpiece', { to: d.to, type: row.querySelector('[data-role=ro-type]').value, size: +row.querySelector('[data-role=ro-size]').value });
+    } else reorg('split', { from: d.from, id: d.id });
+  });
   on('sm-end', 'onclick', endPlayerTurn);
   on('sm-trap', 'onclick', () => { ui.mode = ui.mode === 'trap' ? null : 'trap'; renderStrat(); });
   on('sm-disarm', 'onclick', () => { ui.mode = ui.mode === 'disarm' ? null : 'disarm'; renderStrat(); });
@@ -677,6 +840,26 @@ function renderStrat() {
     if (e.target.value && station(sel, e.target.value)) { sel.acted = true; ui.selected = null; ui.moved = false; saveCampaign(); renderCampaign(); }
     renderStrat();
   });
+}
+
+/** 砦・本陣の説明 */
+function placeInfo(key) {
+  const m = smap();
+  const f = m.forts.find(f => f.id === key);
+  if (f) {
+    const g = liveTokens().find(t => t.fort === f.id);
+    const owner = f.owner ? (f.owner === 'player' ? '自軍' : 'CPU軍') : '中立';
+    return `<div><b>🏯 ${f.name}</b>（${owner}）${g && tokenVisibleTo('player', g) ? ` 守備隊: ${tokenSquad(g).name}` : ''}</div>
+      <div class="sub">砦の効果（持ち主の軍に）:<br>
+      ・守り: 砦の上か隣にいる隊・守備隊は、戦闘で DEF +${Math.round(FORT_DEF * 100)}%<br>
+      ・再編成: 砦の上か隣にいる隊どうしで、駒や将を受け渡し・分割・合流できる<br>
+      ・見張り: 守備隊がいなくても、周囲${FORT_VISION}マスが見える<br>
+      ・奪い方: 守備隊のいない砦は、隊が入ると自軍のものになる。守備隊がいれば戦って倒す<br>
+      ・駐留: 砦の上にいる隊から、配下の副将を残して守備隊にできる</div>`;
+  }
+  const side = key === 'base-player' ? 'player' : 'cpu';
+  return `<div><b>陣 ${side === 'player' ? '自軍' : 'CPU軍'}の本陣</b></div>
+    <div class="sub">本陣の上か隣にいる隊は再編成でき、予備の兵・将も使える。</div>`;
 }
 
 function onSmapClick(x, y) {
@@ -717,7 +900,11 @@ function onSmapClick(x, y) {
   // 選択（移動したまま別の隊を選んだら、前の隊は行動済み）
   if (sel && ui.moved) sel.acted = true;
   ui.moved = false;
+  ui.reorg = null;
   ui.selected = t && t.side === 'player' ? t.id : null;
+  // 砦・本陣のマス（隊がいない）をクリックしたら説明を出す
+  const f = fortAt(x, y);
+  ui.info = !ui.selected ? (f ? f.id : m.bases.player.x === x && m.bases.player.y === y ? 'base-player' : m.bases.cpu.x === x && m.bases.cpu.y === y ? 'base-cpu' : null) : null;
   renderStrat();
 }
 
