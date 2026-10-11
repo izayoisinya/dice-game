@@ -1717,42 +1717,53 @@ function splitPieces(type, n, target) {
   return pieces.filter(p => p.size >= MIN_TROOPS);
 }
 
-/**
- * おまかせ編成:
- *   - 副将の半分が分隊を率い、残りは本隊に残る
- *   - 分隊は得意な兵種を2〜4つ選ぶ（全兵種をそろえるとは限らない）。本隊は全兵種
- *   - 兵長は、各隊の兵種に1人ずつ（本隊から）。余った兵長は予備に残る
- *   - 兵士は本隊 2 : 分隊 1 の割合で配り、100人前後の駒にする（統率力に収まらなければ駒を大きくする）
- */
+/** おまかせ編成: 副将の半分を分隊長にして隊を作り直し、自動配置する */
 function autoForm(army) {
   const main = army.squads.find(q => q.name === '本隊');
-  main.members = [];
-  main.pieces = [];
   army.squads = [main];
   const subs = shuffled(army.generals.filter(g => g.rank === '副将'));
-  const nSquads = Math.floor(subs.length / 2);
-  for (const g of subs.slice(nSquads)) main.members.push(g.id);
-  const focus = new Map([[main, TYPE_NAMES]]);
-  for (const g of subs.slice(0, nSquads)) {
-    const q = { id: `${army.side}-Q${army.seq++}`, name: `${g.name}隊`, leader: g.id, members: [], pieces: [] };
-    army.squads.push(q);
-    focus.set(q, shuffled(TYPE_NAMES).slice(0, 1 + d(3)));
+  for (const g of subs.slice(0, Math.floor(subs.length / 2))) {
+    army.squads.push({ id: `${army.side}-Q${army.seq++}`, name: `${g.name}隊`, leader: g.id, members: [], pieces: [] });
   }
-  const freeSergeants = [...army.sergeants];
+  autoFill(army);
+}
+
+/**
+ * 自動配置: 今ある隊（隊の数と隊長）はそのままに、配下の将・斥候・暗殺者・兵士を配り直す。
+ *   - 隊長でない副将は本隊に残る
+ *   - 分隊は得意な兵種を2〜4つ、小隊（兵長が隊長）は隊長の兵種＋0〜1つ。本隊は全兵種
+ *   - 兵長は各隊の兵種に1人ずつ（本隊から）。余った兵長は予備
+ *   - 斥候は本隊から1人ずつ、暗殺者は本隊以外の隊（なければ本隊）に1人ずつ。余りは予備
+ *   - 兵士は 本隊 2 : 分隊 1 : 小隊 0.5 の割合で配り、100人前後の駒にする（統率力に収まらなければ駒を大きくする）
+ */
+function autoFill(army) {
+  const main = army.squads.find(q => q.name === '本隊');
+  for (const q of army.squads) { q.members = []; q.pieces = []; }
+  const leaders = new Set(army.squads.map(q => q.leader));
+  for (const g of army.generals) if (g.rank === '副将' && !leaders.has(g.id)) main.members.push(g.id);
+  const focus = new Map();
   for (const q of army.squads) {
+    const lead = memberById(army, q.leader);
+    if (q === main) focus.set(q, TYPE_NAMES);
+    else if (lead.rank) focus.set(q, shuffled(TYPE_NAMES).slice(0, 1 + d(3)));
+    else focus.set(q, [lead.type, ...shuffled(TYPE_NAMES.filter(t => t !== lead.type)).slice(0, d(2) - 1)]);
+  }
+  const freeSergeants = army.sergeants.filter(sg => !leaders.has(sg.id));
+  for (const q of army.squads) {
+    const lead = memberById(army, q.leader);
     for (const t of focus.get(q)) {
+      if (!lead.rank && lead.type === t) continue;   // 小隊の隊長がすでにその兵種の兵長
       const i = freeSergeants.findIndex(sg => sg.type === t);
       if (i >= 0) q.members.push(freeSergeants.splice(i, 1)[0].id);
     }
   }
-  // 斥候は本隊から1人ずつ、暗殺者は分隊（なければ本隊）に1人ずつ。余りは予備
   army.specials.filter(x => x.kind === '斥候').forEach((x, i) => { if (i < army.squads.length) army.squads[i].members.push(x.id); });
-  const hideouts = army.squads.length > 1 ? army.squads.slice(1) : army.squads;
+  const hideouts = army.squads.length > 1 ? army.squads.filter(q => q !== main) : army.squads;
   army.specials.filter(x => x.kind === '暗殺者').forEach((x, i) => hideouts[i % hideouts.length].members.push(x.id));
+  const weight = q => (q === main ? 2 : memberById(army, q.leader).rank ? 1 : 0.5);
   const share = new Map(army.squads.map(q => [q, {}]));
   for (const t of TYPE_NAMES) {
     const takers = army.squads.filter(q => focus.get(q).includes(t));
-    const weight = q => (q === main ? 2 : 1);
     const W = takers.reduce((a, q) => a + weight(q), 0);
     let rest = army.totals[t];
     for (const q of takers.filter(q => q !== main)) {
@@ -1760,7 +1771,7 @@ function autoForm(army) {
       share.get(q)[t] = n;
       rest -= n;
     }
-    share.get(main)[t] = rest;
+    if (main) share.get(main)[t] = rest;
   }
   for (const q of army.squads) {
     const cap = squadCap(army, q);
@@ -1987,6 +1998,7 @@ function renderCampaign() {
   box.innerHTML = `
     <div class="cp-head">
       <button data-act="auto">おまかせ編成</button>
+      <button data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置（隊はそのまま）</button>
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}
     </div>
     <div class="cp-pool">兵力（予備 / 総数）: ${pool}
@@ -2071,6 +2083,7 @@ function onCampaignClick(e) {
   const q = P && P.squads.find(x => x.id === el.dataset.q);
   switch (el.dataset.act) {
     case 'auto': autoForm(P); break;
+    case 'fill': autoFill(P); break;
     case 'edit': campaign.editing = el.dataset.id; break;
     case 'disband': P.squads = P.squads.filter(x => x !== q); break;
     case 'rmpiece': q.pieces.splice(+el.dataset.i, 1); break;
