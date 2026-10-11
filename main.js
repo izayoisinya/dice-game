@@ -75,7 +75,8 @@ const ADVANCE_MODES = {
 // 固有能力: ステータスの予算からコストを払って持つ（階級が上がるとコストも同じ比率で上がる）
 const TRAITS = {
   zoc:    { name: '足止め', cost: 40 },  // 隣接したマスに入った敵はそこで移動が止まる
-  cover:  { name: '庇う',   cost: 0 },   // 敵と味方の間（同じ縦・横の直線上）にいると、その攻撃を代わりに受ける
+  cover:  { name: '庇う',   cost: 0 },
+  spear:  { name: '突き・薙ぎ払い', cost: 0 },   // 槍兵の範囲攻撃   // 敵と味方の間（同じ縦・横の直線上）にいると、その攻撃を代わりに受ける
   charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
   scout:  { name: '索敵',   cost: 100 }, // 視界が広い。隠密の敵も2マスまで見つけられる
   stealth: { name: '隠密',  cost: 50 },  // 敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで姿が見える）
@@ -87,8 +88,12 @@ const ASSASSIN_VS_TROOPS = 0.5;    // 暗殺者 → 兵士の駒・斥候の威�
 // 視界（戦場の霧）: 味方の誰かの視界に入っている敵だけが見え、狙える（視界は軍全体で共有）
 const VISION_DEFAULT = 4;
 const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と保つ距離
+// 槍兵の範囲攻撃（攻撃1回分を使う）
+const THRUST_MULT = [0.8, 0.5];   // 突き: 縦に並んだ敵2体（手前 80% / 奥 50%）
+const SWEEP_MULT = 0.4;           // 薙ぎ払い: 横に並んだ敵3体（それぞれ 40%）
 const TRAIT_HELP = {
   zoc: '上下左右に隣接したマスに入った敵は、そこで移動が止まる',
+  spear: `突き: 自分から見て一直線に並んだ敵2体（隣と、その奥）を同時に攻撃（手前${THRUST_MULT[0] * 100}%・奥${THRUST_MULT[1] * 100}%）。薙ぎ払い: 隣の敵と、その左右に並んだ敵の3体を同時に攻撃（それぞれ${SWEEP_MULT * 100}%）。どちらも攻撃1回分`,
   cover: '敵と味方の間（同じ縦・横の直線上）にいると、その味方への攻撃を代わりに受ける',
   charge: '上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×30%だけ初撃の威力が上がる（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示',
   scout: '視界が広い。隠密の敵も2マスまで見つけられる',
@@ -116,7 +121,7 @@ const TYPES = {
   '剣兵': { stats: { hp: 110, atk: 100, def: 90, spd: 100, act: 90 }, rng: 1, hit: 85, best: 1,
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 打たれ強く射程2、攻撃速度はやや遅い
-  '槍兵': { stats: { hp: 120, atk: 100, def: 100, spd: 80, act: 60 }, rng: 2, hit: 80, best: 2,
+  '槍兵': { stats: { hp: 120, atk: 100, def: 100, spd: 80, act: 60 }, rng: 2, hit: 80, best: 2, traits: ['spear'],
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 0.85, pow: 1.0 } } },
   // 遠距離攻撃の代わりに脆い。
   // 平面（マンハッタン距離）向け: 斜め方向は距離が長く数えられ、前衛越しに撃つと距離3〜4になるため
@@ -744,6 +749,52 @@ function findCharge(unit) {
 }
 
 /**
+ * 槍兵の範囲攻撃の候補。上下左右それぞれの向きで、
+ *   突き = 隣の敵とその奥の敵（2体とも見えている）
+ *   薙ぎ払い = 隣の敵と、その左右の敵（3体とも見えている）
+ * を探す。{ kind, name, hits: [{ u, mult }] } の配列
+ */
+function spearOptions(unit) {
+  if (!unit.traits.includes('spear')) return [];
+  const foe = (x, y) => { const o = unitAt(x, y); return o && o.side !== unit.side && visibleTo(unit.side, o) ? o : null; };
+  const opts = [];
+  for (const [dx, dy] of DIRS) {
+    const front = foe(unit.x + dx, unit.y + dy);
+    if (!front) continue;
+    const back = foe(unit.x + 2 * dx, unit.y + 2 * dy);
+    if (back && effRng(unit) >= 2) {
+      opts.push({ kind: 'thrust', name: '突き', hits: [{ u: front, mult: THRUST_MULT[0] }, { u: back, mult: THRUST_MULT[1] }] });
+    }
+    const l = foe(unit.x + dx - dy, unit.y + dy - dx), r = foe(unit.x + dx + dy, unit.y + dy + dx);
+    if (l && r) opts.push({ kind: 'sweep', name: '薙ぎ払い', hits: [l, front, r].map(u => ({ u, mult: SWEEP_MULT })) });
+  }
+  return opts;
+}
+
+/** 範囲攻撃の見込み（倍率 × 相性の合計）。オートで普通の攻撃と比べる */
+function spearValue(unit, opt) {
+  return opt.hits.reduce((a, h) => a + h.mult * (MATCHUP[unit.type]?.[h.u.type] ?? 1), 0);
+}
+
+/** 範囲攻撃を行う。反撃は真ん中（突きは手前）の相手からだけ。決着したら true */
+function performSpear(unit, opt, atkMult = 1) {
+  log(`🔱 ${unit.name} の${opt.name}！（${opt.hits.map(h => `${h.u.name} ${Math.round(h.mult * 100)}%`).join('・')}）`, unit.side);
+  for (const h of opt.hits) {
+    if (!h.u.alive) continue;
+    const r = calcAttack(unit, h.u, h.mult, atkMult);
+    if (!r.hit) { log(`　${h.u.name} にかわされた！ [命中${r.hitRate}% 🎲${r.hitRoll}]`, unit.side); continue; }
+    h.u.hp = Math.max(0, h.u.hp - r.dmg);
+    log(`　${h.u.name} に ${r.dmg} のダメージ！${r.crit ? ' 会心！' : ''} (残HP ${h.u.hp}/${h.u.maxHp})`, unit.side);
+    if (!h.u.alive) {
+      log(`☠ ${h.u.name} は倒れた！`, 'death');
+      if (checkVictory()) return true;
+    }
+  }
+  const main = opt.kind === 'sweep' ? opt.hits[1].u : opt.hits[0].u;
+  return counterAttack(main, unit);
+}
+
+/**
  * 庇う（盾兵）: 攻撃する側と狙われた側が同じ縦・横の直線上にいて、その間に狙われた側の味方の盾兵がいれば、
  * 盾兵が代わりに攻撃を受ける（いちばん攻撃側に近い盾兵）。隣接した相手への攻撃には間がないので起きない
  */
@@ -977,6 +1028,13 @@ function actUnit(unit) {
       atkMult = SMASH_MULT;
     }
     first = false;
+    // 槍兵: 突き・薙ぎ払いの方が見込みが大きければそちらを使う
+    const sp = spearOptions(unit).sort((a, b) => spearValue(unit, b) - spearValue(unit, a))[0];
+    if (sp && spearValue(unit, sp) > (MATCHUP[unit.type]?.[target.type] ?? 1)) {
+      if (performSpear(unit, sp, atkMult)) return;
+      if (!unit.alive) return;
+      continue;
+    }
     if (performAttack(unit, target, bonus, atkMult)) return;
     if (!unit.alive) return;   // 反撃で倒れた
   }
@@ -1259,6 +1317,20 @@ function onCellClick(x, y) {
     log(`${unit.name} は移動した。${before} → ${unit.posText}`, unit.side);
   }
   enterAttack(unit);
+  render(unit);
+  saveGame();
+}
+
+function manualSpear(unit, opt) {
+  if (state.phase === 'move') enterAttack(unit);
+  if (unit.gauge < ACT_PER_ATTACK) return;
+  unit.gauge -= ACT_PER_ATTACK;
+  const m = state.manual;
+  const atkMult = m.smash ? SMASH_MULT : 1;
+  m.smash = false;
+  m.attacked++;
+  if (performSpear(unit, opt, atkMult)) return;
+  if (!unit.alive) { endManual(); return; }
   render(unit);
   saveGame();
 }
@@ -1585,6 +1657,10 @@ function renderActionPanel() {
     name === '一斉指揮' ? ' <button class="small" data-preview="一斉指揮">範囲を表示</button>' : ''}</div>`).join('');
   const traitHelp = unit.traits.map(k => `<div>◇<b>${TRAITS[k].name}</b>: ${TRAIT_HELP[k] || ''}</div>`).join('');
   const nowBuff = buffText(unit);
+  // 槍兵の範囲攻撃（攻撃できる回数が残っていれば）
+  const canHit = (state.phase === 'move' || state.phase === 'attack') && gauge >= ACT_PER_ATTACK;
+  const spOpts = canHit ? spearOptions(unit) : [];
+  const spearBtns = spOpts.map((o, i) => `<button class="skill" data-spear="${i}">🔱${o.name}（${o.hits.map(h => `${h.u.name} ${Math.round(h.mult * 100)}%`).join('・')}）</button>`).join('');
   panel.innerHTML = `
     <div class="ap-head"><b>${unit.name}</b>（${unit.rank}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
       ／ 移動 ${unit.rooted ? '不可' : unit.move} ／ 射程 ${effRng(unit)} ／ 攻撃できる回数 ${Math.floor(gauge / ACT_PER_ATTACK)}
@@ -1594,6 +1670,7 @@ function renderActionPanel() {
     ${skillHelp || traitHelp ? `<div class="ap-help">${skillHelp}${traitHelp}</div>` : ''}
     <div class="ap-buttons">
       ${state.phase === 'move' ? '<button id="ap-stay">移動しない</button>' : ''}
+      ${spearBtns}
       ${skills}
       ${state.phase !== 'retreat' ? '<button id="ap-end">行動終了</button>' : '<button id="ap-noretreat">離脱しない</button>'}
       ${unit === leaderOf(state.player) ? '<button id="ap-withdraw" class="danger">撤退</button>' : ''}
@@ -1607,6 +1684,7 @@ function renderActionPanel() {
   const wd = $('ap-withdraw');
   if (wd) wd.onclick = () => onWithdraw(unit);
   for (const b of panel.querySelectorAll('button.skill')) b.onclick = () => onSkill(b.dataset.skill);
+  for (const b of panel.querySelectorAll('[data-spear]')) b.onclick = () => manualSpear(unit, spOpts[+b.dataset.spear]);
   for (const b of panel.querySelectorAll('[data-preview]')) b.onclick = () => { ui2.preview = ui2.preview ? null : b.dataset.preview; render(unit); };
 }
 
