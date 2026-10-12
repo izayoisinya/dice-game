@@ -20,8 +20,7 @@
       <button class="tab" data-view="map">🗺 戦域図</button>
     </nav>
     <div class="controls">
-      <button id="btn-muster">🎲 戦力集結</button>
-      <button id="btn-reset">↺ リセット</button>
+      <button id="btn-title">🏠 タイトル</button>
       <details class="settings">
         <summary>⚙ 設定</summary>
         <div class="settings-body">
@@ -62,6 +61,20 @@
   </header>
 
   <main>
+    <!-- タイトル -->
+    <section id="view-title" class="view hidden">
+      <div class="title-box">
+        <div class="title-logo">🎲</div>
+        <h1 class="title-name">ダイス戦記</h1>
+        <p class="title-copy">ダイスの出目でついた不利を、采配で覆せ。</p>
+        <div class="title-buttons">
+          <button id="btn-new" class="go big">▶ 新しく始める</button>
+          <button id="btn-continue" class="big hidden">▶ 続きから</button>
+        </div>
+        <p class="sub">戦力（兵士・副将・兵長・斥候・暗殺者）をダイスで決め、将を育て、隊を組んで戦域図へ出陣します。</p>
+      </div>
+    </section>
+
     <!-- 編成の画面 -->
     <section id="view-form" class="view">
       <div id="campaign-box" class="panel">
@@ -134,6 +147,7 @@
     </div>
   </div>
 
+  <script src="setup.js"></script>
   <script src="strategy.js"></script>
   <script src="main.js"></script>
   <script>

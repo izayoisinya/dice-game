@@ -1795,7 +1795,8 @@ function initZoom(kind) {
 }
 
 function showView(v) {
-  for (const id of ['form', 'map']) $(`view-${id}`).classList.toggle('hidden', id !== v);
+  for (const id of ['title', 'form', 'map']) $(`view-${id}`).classList.toggle('hidden', id !== v);
+  if (v === 'title') $('btn-continue').classList.toggle('hidden', !campaign.armies && !campaign.setup);
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   window.scrollTo(0, 0);
   if (v === 'map') requestAnimationFrame(() => applyZoom('smap'));
@@ -1805,7 +1806,7 @@ function setBattleOpen(open) {
   $('battle').classList.toggle('hidden', !open);
   document.body.classList.toggle('battle-open', open);
   updateButtons();
-  if (open) requestAnimationFrame(() => applyZoom('field'));
+  if (open) { fitTopbar(); requestAnimationFrame(() => applyZoom('field')); }
 }
 
 /** 局地戦の画面の「戻る」ボタン: 決着後は結果を戦域図に反映して閉じる。戦闘中はマップを見るだけ */
@@ -1820,7 +1821,6 @@ function updateButtons() {
   const close = $('btn-battle-close');
   close.classList.toggle('hidden', !state.player);
   close.textContent = state.over ? '🗺 戦域図に戻る' : '🗺 マップを見る';
-  $('btn-muster').disabled = state.running;
   $('btn-start').disabled = !state.player || state.running || state.over || (state.mode === 'manual' && !state.cmdReady);
   $('mode').disabled = state.running;
 }
@@ -1927,7 +1927,7 @@ const PIECE_DEFAULT = 100;                               // 兵士の駒を追�
 const AUTO_PIECE = 100;                                  // おまかせ編成の1駒の目安の人数
 const CAMPAIGN_KEY = 'dice-senki-campaign-v1';
 
-const campaign = { armies: null, editing: null, smap: null };   // smap = 戦域図（strategy.js）
+const campaign = { armies: null, editing: null, smap: null, setup: null };   // setup = ゲーム開始の手順（setup.js）   // smap = 戦域図（strategy.js）
 
 function rollExpr(e) {
   const r = roll(e.n, e.sides);
@@ -1940,27 +1940,28 @@ function defaultBuild(ldr) {
 }
 
 /** ダイスで新しい軍を作る（本隊だけがある状態） */
-function newArmy(side) {
+function newArmy(side, pre = null) {
+  // pre = ゲーム開始の画面で振ったダイス（setup.js の rolls）。なければここで振る
   const label = side === 'player' ? 'P' : 'C';
   const totals = {}, troopDice = {}, sergeantDice = {};
   for (const t of TYPE_NAMES) {
-    troopDice[t] = d(TROOP_DICE.sides);
+    troopDice[t] = pre ? pre[`troop-${t}`].total : d(TROOP_DICE.sides);
     totals[t] = troopDice[t] * TROOP_DICE.unit;
   }
-  const generalRoll = rollExpr(GENERAL_DICE);
+  const generalRoll = pre ? pre.generals : rollExpr(GENERAL_DICE);
   const generals = [{ id: `${side}-G0`, rank: '総大将', name: `${label}総大将`, build: defaultBuild(LDR_BASE + 4) }];
   for (let i = 1; i <= generalRoll.total; i++) {
     generals.push({ id: `${side}-G${i}`, rank: '副将', name: `${label}副将${i}`, build: defaultBuild(LDR_BASE + 2) });
   }
   const sergeants = [];
   for (const t of TYPE_NAMES) {
-    sergeantDice[t] = rollExpr(SERGEANT_DICE);
+    sergeantDice[t] = pre ? pre[`sg-${t}`] : rollExpr(SERGEANT_DICE);
     for (let i = 1; i <= sergeantDice[t].total; i++) {
       sergeants.push({ id: `${side}-S${t}${i}`, type: t, name: `${label}${t}長${i}`, ldr: rollExpr(SERGEANT_LDR_DICE).total });
     }
   }
   const specials = [];
-  const scoutRoll = rollExpr(SCOUT_DICE), assassinRoll = rollExpr(ASSASSIN_DICE);
+  const scoutRoll = pre ? pre.scouts : rollExpr(SCOUT_DICE), assassinRoll = pre ? pre.assassins : rollExpr(ASSASSIN_DICE);
   for (let i = 1; i <= scoutRoll.total; i++) specials.push({ id: `${side}-X斥候${i}`, kind: '斥候', name: `${label}斥候${i}` });
   for (let i = 1; i <= assassinRoll.total; i++) specials.push({ id: `${side}-X暗殺者${i}`, kind: '暗殺者', name: `${label}暗殺者${i}` });
   return {
@@ -2247,7 +2248,7 @@ function applyBattleResult(msg) {
 // ------------------------------------------------------------
 
 function saveCampaign() {
-  const data = { v: 2, armies: campaign.armies, smap: campaign.smap };
+  const data = { v: 2, armies: campaign.armies, smap: campaign.smap, setup: campaign.setup };
   try { localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(data)); } catch (e) { /* 保存できない環境では何もしない */ }
 }
 
@@ -2256,6 +2257,7 @@ function loadCampaign() {
     const data = JSON.parse(localStorage.getItem(CAMPAIGN_KEY));
     // v1 は軍だけを保存していた
     const a = data && data.v === 2 ? data.armies : data;
+    if (data && data.v === 2) campaign.setup = data.setup || null;
     if (!a || !a.player || !a.cpu) return;
     campaign.smap = data.v === 2 ? data.smap : null;
     // 旧版では隊の配下を sergeants と呼んでいた
@@ -2273,9 +2275,10 @@ function loadCampaign() {
 
 function renderCampaign() {
   const box = $('campaign');
+  if (campaign.setup && campaign.setup.step < 3) return renderSetup();
   const A = campaign.armies;
   if (!A) {
-    box.innerHTML = `<div class="cp-head"><span class="sub">上の「🎲 戦力集結」で、兵種ごとの総数・副将・兵長・斥候・暗殺者をダイスで決めます。
+    box.innerHTML = `<div class="cp-head"><span class="sub">「🏠 タイトル」の「▶ 新しく始める」で、兵種ごとの総数・副将・兵長・斥候・暗殺者をダイスで決めます。
       そのあと本隊と分隊に割り振り（おまかせ編成も可）、「出陣」で戦域図に出ます。</span></div>`;
     return;
   }
@@ -2317,13 +2320,14 @@ function renderCampaign() {
   }).join('');
   const leaderOpts = freeMembers(() => true).map(m => `<option value="${m.id}">${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）</option>`).join('');
   box.innerHTML = `
+    ${campaign.setup ? setupSteps(3) : ''}
     <div class="cp-head">
       <button data-act="auto">おまかせ編成</button>
       <button data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置（隊はそのまま）</button>
       <button data-act="sortie" class="go" ${over ? 'disabled' : ''} title="この編成で戦域図へ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣（戦域図へ）</button>
     </div>
     ${over ? `<div class="cp-over">${P.defeated ? '<b class="warn">💀 自軍は敗北しました。</b>' : '<b>🏆 CPU軍に勝利しました！</b>'}
-      この軍での戦いは終わりです。上の「🎲 戦力集結」で新しい軍を作るか、「↺ リセット」で最初に戻してください。</div>` : ''}
+      この軍での戦いは終わりです。「🏠 タイトル」の「▶ 新しく始める」で次の戦いへ。</div>` : ''}
     <div class="cp-pool">兵力（予備 / 総数）: ${pool}
       <span class="sub">副将 🎲[${P.generalRoll.dice.join('][')}]+${GENERAL_DICE.plus} = ${P.generalRoll.total}人 ／ 兵長 ${P.sergeants.length}人
         ／ 斥候 🎲[${P.scoutRoll?.dice.join('][') ?? ''}] = ${P.specials.filter(x => x.kind === '斥候').length}人
@@ -2403,6 +2407,7 @@ function renderGeneralEditor() {
   box.querySelectorAll('input, select').forEach(el => el.addEventListener('input', preview));
   box.querySelector('[data-act="edok"]').onclick = () => {
     g.build = read();
+    g.buildName = 'カスタム';
     campaign.editing = null;
     saveCampaign();
     renderCampaign();
@@ -2464,25 +2469,6 @@ function onCampaignChange(e) {
 $('campaign').addEventListener('click', onCampaignClick);
 $('campaign').addEventListener('change', onCampaignChange);
 
-// 戦力集結: ダイスで新しい軍（自軍・CPU軍）を作る。CPU軍はおまかせ編成まで済ませる
-$('btn-muster').addEventListener('click', () => {
-  if (state.running) return;
-  if (campaign.armies && !confirm('今の軍を破棄して、新しく戦力を集結しますか？')) return;
-  campaign.armies = { player: newArmy('player'), cpu: newArmy('cpu') };
-  autoForm(campaign.armies.cpu);
-  campaign.editing = null;
-  campaign.smap = null;
-  saveCampaign();
-  clearSave();
-  reset();
-  const P = campaign.armies.player;
-  log(`🎲 戦力集結: ${TYPE_NAMES.map(t => `${t}${P.totals[t]}`).join('・')} / 副将${P.generalRoll.total} / 兵長${P.sergeants.length} / 斥候・暗殺者${P.specials.length}`, 'player');
-  log('本隊と分隊に割り振って（おまかせ編成も可）、「🗺 出陣（戦域図へ）」で戦域図に出ます。');
-  renderCampaign();
-  renderStrat();
-  showView('form');
-});
-
 $('btn-start').addEventListener('click', () => {
   if (!state.player || state.running || state.over) return;
   state.running = true;
@@ -2492,29 +2478,20 @@ $('btn-start').addEventListener('click', () => {
   step();
 });
 
-// リセット: 戦闘も軍（編成・戦域図）も消して、最初の状態に戻す
 $('btn-battle-close').addEventListener('click', onBattleClose);
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
   if (!$('battle').classList.contains('hidden')) setBattleOpen(false);   // 戦闘中にタブを押したら、局地戦の画面を下げて見る
   showView(b.dataset.view);
 }));
 // 局地戦の画面は上部バーの下に重ねる（上部バーの高さは画面幅で変わる）
-const fitTopbar = () => document.documentElement.style.setProperty('--topbar-h', `${document.querySelector('.topbar').offsetHeight}px`);
+function fitTopbar() {
+  document.documentElement.style.setProperty('--topbar-h', `${document.querySelector('.topbar').offsetHeight}px`);
+}
 window.addEventListener('resize', () => { fitTopbar(); applyZoom('field'); applyZoom('smap'); });
+if (typeof ResizeObserver === 'function') new ResizeObserver(fitTopbar).observe(document.querySelector('.topbar'));
 fitTopbar();
 initZoom('field');
 initZoom('smap');
-
-$('btn-reset').addEventListener('click', () => {
-  if (campaign.armies && !confirm('戦闘も軍（編成・戦域図）もすべて消して、最初からやり直しますか？')) return;
-  clearSave();
-  Object.assign(campaign, { armies: null, editing: null, smap: null });
-  try { localStorage.removeItem(CAMPAIGN_KEY); } catch (e) { /* 保存できない環境では何もしない */ }
-  reset();
-  renderCampaign();
-  renderStrat();
-  showView('form');
-});
 
 $('field').addEventListener('click', e => {
   const cell = e.target.closest('.cell');
@@ -2549,7 +2526,7 @@ function reset() {
   $('action-panel').classList.add('hidden');
   $('cmd-editor').classList.add('hidden');
   if ($('battle')) setBattleOpen(false);
-  log(campaign.smap ? '戦域図で敵の隊に攻撃すると、ここで戦闘になります。' : campaign.armies ? '編成して「🗺 出陣（戦域図へ）」で戦域図に出ます。' : '「🎲 戦力集結」でダイスを振り、軍を作ってください。');
+  log(campaign.smap ? '戦域図で敵の隊に攻撃すると、ここで戦闘になります。' : campaign.armies ? '編成して「🗺 出陣（戦域図へ）」で戦域図に出ます。' : '「🏠 タイトル」の「▶ 新しく始める」から始めてください。');
   updateButtons();
 }
 
@@ -2557,7 +2534,13 @@ function reset() {
 loadCampaign();
 renderCampaign();
 if (typeof initStrategy === 'function') initStrategy();
-showView(campaign.smap ? 'map' : 'form');
+if (typeof initSetup === 'function') initSetup();
+showView(campaign.smap ? 'map' : campaign.armies || campaign.setup ? 'form' : 'title');
+// 設定のパネルは、外側をタップ・クリックしたら閉じる
+document.addEventListener('click', e => {
+  const st = document.querySelector('.settings');
+  if (st && st.open && !st.contains(e.target)) st.open = false;
+});
 if (loadGame()) {
   showResult();
   render();

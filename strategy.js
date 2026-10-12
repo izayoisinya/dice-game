@@ -534,6 +534,7 @@ function startMapStage() {
   const A = campaign.armies;
   if (!A || A.player.defeated || A.cpu.defeated) return;
   campaign.smap = genStrategicMap();
+  campaign.setup = null;   // ゲーム開始の手順はここで終わり
   Object.assign(campaign.smap, { tokens: [], traps: [], turn: 1, phase: 'player', cpuQueue: [], battle: null, pending: null, logs: [] });
   deploy('player');
   deploy('cpu');
