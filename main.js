@@ -1586,8 +1586,7 @@ function showResult() {
 }
 
 function renderArmy(army, side, acting) {
-  const tbody = $(`${side}-units`);
-  tbody.innerHTML = '';
+  const tbody = document.createElement('tbody');   // 作り終えてから差し替える（途中で表が空になってスクロールが戻らないように）
   const hidden = u => side === 'cpu' && state.mode === 'manual' && u.alive && !visibleTo('player', u);
   for (const u of army.units) {
     if (hidden(u)) continue;
@@ -1607,6 +1606,7 @@ function renderArmy(army, side, acting) {
     tr.innerHTML = `<td colspan="11" class="sub">🌫 霧の中に見えない敵がいる</td>`;
     tbody.appendChild(tr);
   }
+  $(`${side}-units`).replaceChildren(...tbody.childNodes);
   const known = army.units.filter(u => !hidden(u));
   const alive = known.filter(u => u.alive);
   const cost = known.reduce((s, u) => s + u.cost, 0);
@@ -1671,9 +1671,9 @@ function onDeployClick(x, y) {
 function renderField(acting) {
   const { w, h, type, wd, hd } = state.map;
   const field = $('field');
-  field.innerHTML = '';
+  // 新しいマスは別の入れ物に作ってから一度に差し替える（途中で空になると、スクロール位置が先頭に戻されるため）
+  const cells = document.createDocumentFragment();
   field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
-  applyZoom('field');
   const short = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '') + u.type[0];
   // 突撃になる移動先（騎兵など）と、一斉指揮の範囲
   const curU = currentUnit();
@@ -1709,9 +1709,11 @@ function renderField(acting) {
         cell.title = `${u.name} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
         cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>`;
       }
-      field.appendChild(cell);
+      cells.appendChild(cell);
     }
   }
+  field.replaceChildren(cells);
+  applyZoom('field');
   const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者 / 青=プレイヤー 赤=CPU' +
     (state.fog ? ' / 暗いマス=視界の外' : '');
   $('turn-label').textContent =
