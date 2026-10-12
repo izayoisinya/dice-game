@@ -2337,9 +2337,8 @@ function renderCampaign() {
       <div><h3>兵長</h3><table><thead><tr><th>名前</th><th>兵種</th><th>統率</th><th>所属</th></tr></thead><tbody>${sergeants}</tbody></table></div>
       <div><h3>斥候・暗殺者</h3><table><thead><tr><th>名前</th><th>役職</th><th>所属</th></tr></thead><tbody>${specials}</tbody></table></div>
     </div>
-    <div id="gen-editor"></div>
     <h3>隊</h3>
-    ${squads}
+    <div class="squad-grid">${squads}</div>
     <div class="sq-new">${leaderOpts ? `新しい隊（副将 → 分隊 / 兵長 → 小隊）: <select data-role="newleader"><option value="">隊長を選ぶ…</option>${leaderOpts}</select>` : '<span class="sub">隊長にできる将が残っていません</span>'}</div>
     <details class="cp-cpu"><summary>CPU軍の編成</summary>
       ${A.cpu.squads.map(q => `<div>${q.name}（${squadKind(A.cpu, q)}）: 配下の将${q.members.length} / ${q.pieces.map(p => `${p.type}${p.size}`).join('・')}</div>`).join('')}
@@ -2360,47 +2359,60 @@ function renderCampaignLocked() {
       <div>兵士の駒: ${q.pieces.map(p => `${p.type}${p.size}`).join('・') || 'なし'}</div></div>`).join('')}`;
 }
 
+/**
+ * 将の振り分け（ポップアップ）。1行 = 項目 / 振り分け / バー / 実際の値
+ */
 function renderGeneralEditor() {
   const P = campaign.armies.player;
   const g = P.generals.find(x => x.id === campaign.editing);
-  const box = $('gen-editor');
-  if (!g || !box) return;
+  const box = $('modal-body');
+  if (!g || !box) return closeModal();
   const b = g.build;
   const slots = SKILL_SLOTS[g.rank];
   const skillOpts = sel => Object.entries(SKILLS).map(([k, sk]) => `<option value="${k}" ${sel === k ? 'selected' : ''}>${k}（${sk.cost}）</option>`).join('');
   const upOpts = sel => [0, 10, 20, 30, 40, 50].map(n => `<option value="${n}" ${sel === n ? 'selected' : ''}>+${n}</option>`).join('');
-  box.innerHTML = `<div class="panel">
+  // bar が空なら、振り分けの欄（選択肢）をバーの欄まで広げる
+  const row = (label, alloc, bar, real) => `<div class="ge-row"><div class="ge-label">${label}</div>${
+    bar === '' && alloc.includes('<select') ? `<div class="ge-alloc wide">${alloc}</div>` : `<div class="ge-alloc">${alloc}</div><div class="ge-bar">${bar}</div>`}<div class="ge-real">${real}</div></div>`;
+  box.innerHTML = `
     <h3>${g.name}（${g.rank}）の振り分け</h3>
-    <div class="ed-grid">
-      <label>HP <input type="range" data-g="hp" min="1" max="10" step="0.5" value="${b.hp}"></label>
-      <label>ATK <input type="range" data-g="atk" min="1" max="10" step="0.5" value="${b.atk}"></label>
-      <label>DEF <input type="range" data-g="def" min="1" max="10" step="0.5" value="${b.def}"></label>
-      <label>統率力 <input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}"><span data-g="ldrv">${b.ldr}</span></label>
-      <label>SPD 強化 <select data-g="spd">${upOpts(b.buy?.spd || 0)}</select></label>
-      <label>ACT 強化 <select data-g="act">${upOpts(b.buy?.act || 0)}</select></label>
-      <label>スキル1 <select data-g="s1">${skillOpts(b.skills[0])}</select></label>
-      ${slots > 1 ? `<label>スキル2 <select data-g="s2"><option value="">なし</option>${skillOpts(b.skills[1])}</select></label>` : ''}
-    </div>
+    <div class="ge-head">${row('項目', '振り分け', '', '実際の値')}</div>
+    ${row('HP', '<span data-v="hp"></span>', `<input type="range" data-g="hp" min="1" max="10" step="0.5" value="${b.hp}">`, '<b data-r="hp"></b>')}
+    ${row('ATK', '<span data-v="atk"></span>', `<input type="range" data-g="atk" min="1" max="10" step="0.5" value="${b.atk}">`, '<b data-r="atk"></b>')}
+    ${row('DEF', '<span data-v="def"></span>', `<input type="range" data-g="def" min="1" max="10" step="0.5" value="${b.def}">`, '<b data-r="def"></b>')}
+    ${row('統率力', '<span data-v="ldr"></span>', `<input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}">`, '<span data-r="ldr"></span>')}
+    ${row('SPD 強化', `<select data-g="spd">${upOpts(b.buy?.spd || 0)}</select>`, '', '<span data-r="spd"></span>')}
+    ${row('ACT 強化', `<select data-g="act">${upOpts(b.buy?.act || 0)}</select>`, '', '<span data-r="act"></span>')}
+    ${row('スキル1', `<select data-g="s1">${skillOpts(b.skills[0])}</select>`, '', '<span class="sub" data-r="s1"></span>')}
+    ${slots > 1 ? row('スキル2', `<select data-g="s2"><option value="">なし</option>${skillOpts(b.skills[1])}</select>`, '', '<span class="sub" data-r="s2"></span>') : ''}
     <div class="ed-preview" data-g="preview"></div>
-    <div class="ed-buttons"><button data-act="edok">決定</button><button data-act="edcancel">閉じる</button></div>
-  </div>`;
-  const read = () => {
-    const v = k => box.querySelector(`[data-g="${k}"]`);
-    return {
-      hp: +v('hp').value, atk: +v('atk').value, def: +v('def').value, ldr: +v('ldr').value,
-      buy: { spd: +v('spd').value, act: +v('act').value },
-      skills: [v('s1').value, v('s2')?.value].filter(Boolean),
-    };
-  };
+    <div class="ed-buttons"><button data-act="edok">決定</button><button data-act="edcancel" class="off">閉じる</button></div>`;
+  const v = k => box.querySelector(`[data-g="${k}"]`);
+  const out = (k, html) => { const el = box.querySelector(`[data-r="${k}"]`); if (el) el.innerHTML = html; };
+  const read = () => ({
+    hp: +v('hp').value, atk: +v('atk').value, def: +v('def').value, ldr: +v('ldr').value,
+    buy: { spd: +v('spd').value, act: +v('act').value },
+    skills: [v('s1').value, v('s2')?.value].filter(Boolean),
+  });
   const preview = () => {
     const nb = read();
     const cs = commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, nb, slots);
+    const share = clampShares({ hp: nb.hp, atk: nb.atk, def: nb.def });
     const tmp = new Unit('player', g.rank, COMMANDER_TYPE, '', 0, 0, nb);
     unitSeq--;
-    box.querySelector('[data-g="ldrv"]').textContent = nb.ldr;
+    for (const k of ['hp', 'atk', 'def']) box.querySelector(`[data-v="${k}"]`).textContent = `${Math.round(share[k] * 100)}%`;
+    box.querySelector('[data-v="ldr"]').textContent = nb.ldr;
+    out('hp', tmp.maxHp);
+    out('atk', tmp.atk);
+    out('def', tmp.def);
+    out('ldr', `兵士の駒 ${cs.ldr}つまで`);
+    out('spd', `移動 ${tmp.move}`);
+    out('act', `攻撃 ${(tmp.actRate / ACT_PER_ATTACK).toFixed(1)}回`);
+    out('s1', SKILLS[v('s1').value]?.desc || '');
+    if (v('s2')) out('s2', SKILLS[v('s2').value]?.desc || '');
     box.querySelector('[data-g="preview"]').innerHTML =
-      `コスト ${RANKS[g.rank].cost} − 固定枠 ${cs.fixedCost} − 強化 ${cs.upgradeCost} − スキル ${cs.skillCost} − 統率 ${cs.ldrCost} = <b>自由枠 ${cs.free}</b><br>
-       → 実HP <b>${tmp.maxHp}</b> / ATK <b>${tmp.atk}</b> / DEF <b>${tmp.def}</b> / 移動 ${tmp.move} / 統率 <b>${cs.ldr}</b>（兵士の駒 ${cs.ldr}つまで）/ スキル ${cs.skills.join('・')}
+      `コスト ${RANKS[g.rank].cost} − 固定枠 ${cs.fixedCost} − 強化 ${cs.upgradeCost} − スキル ${cs.skillCost} − 統率 ${cs.ldrCost} = <b>自由枠 ${cs.free}</b>
+       <span class="sub">（HP / ATK / DEF はそれぞれ自由枠の ${ALLOC_MIN * 100}〜${ALLOC_MAX * 100}%）</span>
        ${cs.free > 0 ? '' : '<br><span class="warn">自由枠が足りません</span>'}`;
     box.querySelector('[data-act="edok"]').disabled = cs.free <= 0;
   };
@@ -2409,16 +2421,23 @@ function renderGeneralEditor() {
     g.build = read();
     g.buildName = 'カスタム';
     campaign.editing = null;
+    closeModal();
     saveCampaign();
     renderCampaign();
   };
-  box.querySelector('[data-act="edcancel"]').onclick = () => { campaign.editing = null; renderCampaign(); };
+  box.querySelector('[data-act="edcancel"]').onclick = () => { campaign.editing = null; closeModal(); };
+  $('modal').classList.remove('hidden');
   preview();
+}
+
+function closeModal() {
+  $('modal').classList.add('hidden');
+  $('modal-body').innerHTML = '';
 }
 
 function onCampaignClick(e) {
   const el = e.target.closest('[data-act]');
-  if (!el || el.closest('#gen-editor')) return;
+  if (!el || el.closest('#modal')) return;
   const A = campaign.armies;
   const P = A && A.player;
   const q = P && P.squads.find(x => x.id === el.dataset.q);

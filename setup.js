@@ -48,19 +48,23 @@ function renderSetup() {
   if (su.step === 1) {
     const rows = setupRows();
     const done = rows.filter(r => su.rolls[r.key]).length;
-    let group = '';
-    const body = rows.map(r => {
-      const head = r.group !== group ? `<tr class="grp"><td colspan="4">${(group = r.group)}</td></tr>` : '';
-      const res = su.rolls[r.key];
-      return head + `<tr data-row="${r.key}">
-        <td>${r.label}</td><td class="sub">${r.note}</td>
-        <td class="roll">${res ? `${diceText(res)} <b>→ ${r.show(res)}</b>` : ''}</td>
-        <td>${res ? '' : `<button class="small" data-su="roll" data-key="${r.key}">🎲 振る</button>`}</td></tr>`;
-    }).join('');
+    // 2列: 左 = 兵士・将、右 = 兵長・特殊
+    const table = list => {
+      let group = '';
+      return `<table class="setup-dice"><tbody>${list.map(r => {
+        const head = r.group !== group ? `<tr class="grp"><td colspan="4">${(group = r.group)}</td></tr>` : '';
+        const res = su.rolls[r.key];
+        return head + `<tr data-row="${r.key}">
+          <td>${r.label}</td><td class="sub">${r.note}</td>
+          <td class="roll">${res ? `${diceText(res)} <b>→ ${r.show(res)}</b>` : ''}</td>
+          <td>${res ? '' : `<button class="small" data-su="roll" data-key="${r.key}">🎲 振る</button>`}</td></tr>`;
+      }).join('')}</tbody></table>`;
+    };
+    const body = `<div class="setup-cols">${table(rows.filter(r => ['兵士', '将'].includes(r.group)))}${table(rows.filter(r => !['兵士', '将'].includes(r.group)))}</div>`;
     box.innerHTML = `${setupSteps(1)}
       <div class="cp-head"><button data-su="rollall" ${done === rows.length ? 'disabled' : ''}>🎲 まとめて振る</button>
         <span class="sub">1つずつ振るときは各行の「🎲 振る」。振ったダイスはやり直せません（${done}/${rows.length}）</span></div>
-      <table class="setup-dice"><tbody>${body}</tbody></table>
+      ${body}
       <div class="cp-head"><button class="go" data-su="next1" ${done === rows.length ? '' : 'disabled'}>次へ：将の設定 ▶</button></div>`;
     return;
   }
@@ -87,7 +91,6 @@ function renderSetup() {
       <span class="sub">${GEN_MODES[mode].desc}</span></div>
     ${mode === 'random' ? `<div class="cp-head"><button data-su="rollgenall">🎲 まだの将をまとめて振る</button></div>` : ''}
     ${mode === 'preset' ? `<div class="cp-head">全員に: <select data-su-preset="__all"><option value="">型を選ぶ…</option>${presetOpts('')}</select></div>` : ''}
-    <div id="gen-editor"></div>
     <div class="gen-cards">${cards}</div>
     <div class="cp-head"><button class="go" data-su="next2">次へ：初期編成 ▶</button></div>`;
   if (campaign.editing) renderGeneralEditor();
@@ -195,4 +198,6 @@ function initSetup() {
   $('btn-new').addEventListener('click', startNewGame);
   $('btn-continue').addEventListener('click', () => showView(campaign.smap ? 'map' : 'form'));
   $('btn-title').addEventListener('click', () => showView('title'));
+  // ポップアップの外側をタップしたら閉じる
+  $('modal').addEventListener('click', e => { if (e.target.id === 'modal') { campaign.editing = null; closeModal(); } });
 }

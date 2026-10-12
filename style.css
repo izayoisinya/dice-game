@@ -294,3 +294,33 @@ button.big { font-size: 1.2rem; padding: 12px 40px; min-width: 260px; }
 button.off { background: #2c3038; color: #bbb; }
 .gen-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin: 8px 0; }
 .gen-card { background: #2c3038; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+
+/* 編成画面の2列 */
+.setup-cols { display: grid; grid-template-columns: 1fr; gap: 0 24px; }
+.setup-cols .setup-dice { max-width: none; }
+.squad-grid { display: grid; grid-template-columns: 1fr; gap: 0 12px; }
+@media (min-width: 900px) {
+  .setup-cols, .squad-grid { grid-template-columns: 1fr 1fr; }
+  .cp-cols { grid-template-columns: 1fr 1fr 0.8fr; }
+}
+
+/* ポップアップ */
+.modal { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.6); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 12px; overflow-y: auto; }
+.modal.hidden { display: none; }
+.modal-box { background: #262930; border: 1px solid #4a6fa5; border-radius: 10px; padding: 14px 18px; width: min(640px, 100%); box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+.modal-box h3 { margin: 0 0 10px; }
+.ge-row { display: grid; grid-template-columns: 80px 90px 1fr 140px; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #333; }
+.ge-head .ge-row { color: #999; font-size: 0.8rem; padding-top: 0; }
+.ge-label { font-weight: bold; }
+.ge-alloc { color: #ffd76f; }
+.ge-alloc select { width: 100%; }
+.ge-bar input[type=range] { width: 100%; }
+.ge-real { text-align: right; }
+.ge-real b { font-size: 1.1rem; }
+@media (max-width: 600px) {
+  .ge-row { grid-template-columns: 64px 70px 1fr; }
+  .ge-real { grid-column: 1 / -1; text-align: left; padding-left: 64px; }
+}
+.ge-alloc.wide { grid-column: span 2; }
+.ge-alloc.wide select { width: auto; max-width: 100%; }
+@media (max-width: 600px) { .ge-alloc.wide { grid-column: span 2; } }
