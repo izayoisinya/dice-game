@@ -200,6 +200,7 @@ const UPGRADE_MULT = 1.0;
 // 統率力（総大将・副将は振り分けで買う）: 基本値は無料、1上げるごとに LDR_COST ポイント。隊に入れられる兵士の駒の上限になる
 const LDR_BASE = 3;
 const LDR_COST = 40;
+const LDR_COST_COMMANDER = 20;   // 総大将は統率力が安い（統率力あってこその総大将）
 const LDR_MAX = 15;
 const UPGRADE_CAP = { spd: 50, act: 50 };
 const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
@@ -239,6 +240,7 @@ const COMMAND_RANGE = 3;      // 一斉指揮の範囲
 // 士気: 総大将の周囲 MORALE_RANGE マス以内の味方は、スキルとは別に常に ATK / DEF が少し上がる
 const MORALE_RANGE = 3;
 const MORALE_BONUS = 0.05;
+const MORALE_PER_LDR = 0.005;   // 総大将の器: 総大将の統率力が基本値より1高いごとに、士気の効果 +0.5%（統率12なら 5% → 9.5%）
 
 /**
  * HP / ATK / DEF の振り分け比を、合計1・各 ALLOC_MIN〜ALLOC_MAX に収める。
@@ -278,7 +280,7 @@ function commanderStats(type, cost, build, slots = SKILL_SLOTS['総大将']) {
   const skills = [...new Set(b.skills || [])].slice(0, slots);
   const skillCost = skills.slice(1).reduce((s, k) => s + SKILLS[k].cost, 0);   // 1つ目は無料
   const ldr = Math.max(LDR_BASE, Math.min(LDR_MAX, b.ldr ?? LDR_BASE));
-  const ldrCost = (ldr - LDR_BASE) * LDR_COST;
+  const ldrCost = (ldr - LDR_BASE) * (cost === RANKS['総大将'].cost ? LDR_COST_COMMANDER : LDR_COST);
   const free = cost - fixedCost - upgradeCost - skillCost - ldrCost;
   const share = clampShares({ hp: b.hp, atk: b.atk, def: b.def });
   const atk = Math.round(free * share.atk);
@@ -549,6 +551,12 @@ function isHolding(unit) {
 }
 
 /** その戦局の大将の士気範囲内にいるか（大将自身は対象外） */
+/** 士気の効果の大きさ（大将が総大将なら、統率力が高いほど大きい） */
+function moraleBonus(side) {
+  const cmd = leaderOf(state[side]);
+  return MORALE_BONUS + (cmd?.isCommander && cmd.ldr ? Math.max(0, cmd.ldr - LDR_BASE) * MORALE_PER_LDR : 0);
+}
+
 function inMorale(u) {
   if (isLeader(u)) return false;
   const cmd = leaderOf(state[u.side]);
@@ -559,7 +567,7 @@ function inMorale(u) {
 /** バフと士気を合わせた能力の倍率 */
 function statMult(u, stat) {
   const buff = u.buffs.filter(b => b.stat === stat).reduce((s, b) => s + b.value, 0);
-  return 1 + buff + (inMorale(u) ? MORALE_BONUS : 0) + (hasSergeant(u) ? SERGEANT_BUFF : 0)
+  return 1 + buff + (inMorale(u) ? moraleBonus(u.side) : 0) + (hasSergeant(u) ? SERGEANT_BUFF : 0)
     + (stat === 'def' && state.campaignBattle?.fortBonus?.[u.side] ? FORT_DEF : 0);
 }
 
@@ -2383,6 +2391,7 @@ function renderGeneralEditor() {
     ${row('統率力', '<span data-v="ldr"></span>', `<input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}">`, '<span data-r="ldr"></span>')}
     ${row('SPD 強化', `<select data-g="spd">${upOpts(b.buy?.spd || 0)}</select>`, '', '<span data-r="spd"></span>')}
     ${row('ACT 強化', `<select data-g="act">${upOpts(b.buy?.act || 0)}</select>`, '', '<span data-r="act"></span>')}
+    ${row('射程 強化', `<select data-g="rng">${Array.from({ length: maxRng(COMMANDER_TYPE) - TYPES[COMMANDER_TYPE].rng + 1 }, (_, i) => `<option value="${i}" ${(b.buy?.rng || 0) === i ? 'selected' : ''}>+${i}</option>`).join('')}</select>`, '', '<span data-r="rng"></span>')}
     ${row('スキル1', `<select data-g="s1">${skillOpts(b.skills[0])}</select>`, '', '<span class="sub" data-r="s1"></span>')}
     ${slots > 1 ? row('スキル2', `<select data-g="s2"><option value="">なし</option>${skillOpts(b.skills[1])}</select>`, '', '<span class="sub" data-r="s2"></span>') : ''}
     <div class="ed-preview" data-g="preview"></div>
@@ -2391,7 +2400,7 @@ function renderGeneralEditor() {
   const out = (k, html) => { const el = box.querySelector(`[data-r="${k}"]`); if (el) el.innerHTML = html; };
   const read = () => ({
     hp: +v('hp').value, atk: +v('atk').value, def: +v('def').value, ldr: +v('ldr').value,
-    buy: { spd: +v('spd').value, act: +v('act').value },
+    buy: { spd: +v('spd').value, act: +v('act').value, rng: +v('rng').value },
     skills: [v('s1').value, v('s2')?.value].filter(Boolean),
   });
   const preview = () => {
@@ -2405,7 +2414,8 @@ function renderGeneralEditor() {
     out('hp', tmp.maxHp);
     out('atk', tmp.atk);
     out('def', tmp.def);
-    out('ldr', `兵士の駒 ${cs.ldr}つまで`);
+    out('ldr', `兵士の駒 ${cs.ldr}つまで${g.rank === '総大将' ? `／士気 +${Math.round((MORALE_BONUS + (cs.ldr - LDR_BASE) * MORALE_PER_LDR) * 1000) / 10}%` : ''}`);
+    out('rng', `射程 ${tmp.rng}`);
     out('spd', `移動 ${tmp.move}`);
     out('act', `攻撃 ${(tmp.actRate / ACT_PER_ATTACK).toFixed(1)}回`);
     out('s1', SKILLS[v('s1').value]?.desc || '');
