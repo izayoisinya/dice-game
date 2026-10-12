@@ -17,7 +17,7 @@
     <h1>ダイス戦記</h1>
     <nav class="tabs">
       <button class="tab" data-view="form">📋 編成</button>
-      <button class="tab" data-view="map">🗺 戦略マップ</button>
+      <button class="tab" data-view="map">🗺 戦域図</button>
     </nav>
     <div class="controls">
       <button id="btn-muster">🎲 戦力集結</button>
@@ -70,13 +70,14 @@
       </div>
     </section>
 
-    <!-- 戦略マップの画面 -->
+    <!-- 戦域図の画面 -->
     <section id="view-map" class="view hidden">
-      <div id="strat-empty" class="panel sub">まだ出陣していません。「📋 編成」で隊を組んで「🗺 出陣（戦略マップへ）」を押してください。</div>
+      <div id="strat-empty" class="panel sub">まだ出陣していません。「📋 編成」で隊を組んで「🗺 出陣（戦域図へ）」を押してください。</div>
       <div id="strat-box" class="panel hidden">
-        <h2>戦略マップ <small id="strat-label"></small></h2>
+        <h2>戦域図 <small id="strat-label"></small>
+          <span class="zoom" data-zoom-for="smap"><button data-zoom="-" title="縮小">−</button><button data-zoom="0" title="全体を表示">全体</button><button data-zoom="+" title="拡大">＋</button></span></h2>
         <div class="strat-wrap">
-          <div id="smap" class="smap"></div>
+          <div class="zoom-wrap" id="smap-wrap"><div id="smap" class="smap"></div></div>
           <div id="strat-info" class="strat-info"></div>
         </div>
         <div class="sub">★本=本隊 ☆=分隊 ◆=小隊 斥=斥候 暗=暗殺者 守=砦の守備隊 / 🏯砦 陣=本陣 / 地形: 平地1 森2 山3 浅瀬2 川×（数字は移動コスト）</div>
@@ -84,46 +85,53 @@
     </section>
   </main>
 
-  <!-- 戦闘の画面（戦略マップの上に重ねて開く） -->
+  <!-- 局地戦の画面（戦域図の上に重ねて開く。PC・タブレットでは 戦場｜操作・ログ の2列） -->
   <div id="battle" class="battle hidden">
     <div class="battle-bar">
-      <b id="battle-title">⚔ 戦闘</b>
+      <b id="battle-title">⚔ 局地戦</b>
       <small id="turn-label"></small>
       <span class="spacer"></span>
+      <span class="zoom" data-zoom-for="field">
+        <button data-zoom="-" title="縮小">−</button><button data-zoom="0" title="全体を表示">全体</button><button data-zoom="+" title="拡大">＋</button>
+      </span>
       <button id="btn-start" disabled>⚔ 戦闘開始</button>
-      <button id="btn-battle-close" class="hidden">🗺 戦略マップに戻る</button>
+      <button id="btn-battle-close" class="hidden">🗺 戦域図に戻る</button>
     </div>
     <div class="battle-body">
-      <div id="result" class="result hidden"></div>
-      <section id="cmd-editor" class="panel hidden"></section>
-      <div id="field" class="field"></div>
-      <details class="battle-more">
-        <summary>部隊の一覧</summary>
-        <section class="armies">
-          <div class="army player">
-            <h2>プレイヤー軍 <span id="player-dice" class="dice"></span></h2>
-            <div id="player-summary" class="summary"></div>
-            <table>
-              <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
-              <tbody id="player-units"></tbody>
-            </table>
-          </div>
-          <div class="army cpu">
-            <h2>CPU軍 <span id="cpu-dice" class="dice"></span></h2>
-            <div id="cpu-summary" class="summary"></div>
-            <table>
-              <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
-              <tbody id="cpu-units"></tbody>
-            </table>
-          </div>
-        </section>
-      </details>
-      <details class="battle-more" open>
-        <summary>バトルログ</summary>
-        <div id="log" class="log"></div>
-      </details>
+      <div class="battle-main">
+        <div id="result" class="result hidden"></div>
+        <section id="cmd-editor" class="panel hidden"></section>
+        <div class="zoom-wrap" id="field-wrap"><div id="field" class="field"></div></div>
+      </div>
+      <div class="battle-side">
+        <div id="action-panel" class="panel action-panel hidden"></div>
+        <details class="battle-more" open>
+          <summary>バトルログ</summary>
+          <div id="log" class="log"></div>
+        </details>
+        <details class="battle-more">
+          <summary>部隊の一覧</summary>
+          <section class="armies">
+            <div class="army player">
+              <h2>プレイヤー軍 <span id="player-dice" class="dice"></span></h2>
+              <div id="player-summary" class="summary"></div>
+              <table>
+                <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
+                <tbody id="player-units"></tbody>
+              </table>
+            </div>
+            <div class="army cpu">
+              <h2>CPU軍 <span id="cpu-dice" class="dice"></span></h2>
+              <div id="cpu-summary" class="summary"></div>
+              <table>
+                <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
+                <tbody id="cpu-units"></tbody>
+              </table>
+            </div>
+          </section>
+        </details>
+      </div>
     </div>
-    <div id="action-panel" class="panel action-panel hidden"></div>
   </div>
 
   <script src="strategy.js"></script>

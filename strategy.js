@@ -1,7 +1,7 @@
 // ============================================================
-// ダイス戦記 - 戦略マップ（戦略レイヤー）
-//   軍の編成のあと「出陣」で戦略マップへ。プレイヤーとCPUが交互に、すべての隊を動かす（SRPG方式）。
-//   敵の隊に隣接して「攻撃」すると戦術戦闘（main.js の戦闘画面）になり、結果をマップに持ち帰る。
+// ダイス戦記 - 戦域図（戦略レイヤー）
+//   軍の編成のあと「出陣」で戦域図へ。プレイヤーとCPUが交互に、すべての隊を動かす（SRPG方式）。
+//   敵の隊に隣接して「攻撃」すると局地戦（main.js の局地戦の画面）になり、結果をマップに持ち帰る。
 //   main.js より先に読み込む（関数と定数の定義だけ。画面のイベントは initStrategy で登録する）
 // ============================================================
 
@@ -15,13 +15,14 @@ const TERRAIN = {
   '浅瀬': { cost: 2 },
   '川':   { cost: Infinity },             // 通れない（浅瀬から渡る）
 };
-const SQUAD_VISION_MAP = 3;               // 隊の視界（戦略マップ）
+const SQUAD_VISION_MAP = 3;               // 隊の視界（戦域図）
 const SCOUT_VISION_MAP = 6;               // 単独の斥候の視界
 const ASSASSIN_VISION_MAP = 2;            // 単独の暗殺者の視界
 const FORT_VISION = 3;                    // 守備隊のいる砦の視界
 const SCOUT_MOVE_MAP = 6;
 const ASSASSIN_MOVE_MAP = 4;
 const CPU_ATTACK_RATIO = 0.7;             // CPU は相手を囲む自軍の戦力の合計が相手の 0.7 倍以上なら攻撃する
+const HUB_RANGE = 2;                      // 砦・本陣から何マス以内の隊が再編成できるか
 const FORT_NAMES = ['東砦', '西砦', '南砦', '北砦', '中砦', '旧砦'];
 // 罠（落とし穴）: 斥候が仕掛ける。仕掛けたマスに乗るまで相手には分からない
 const TRAPS_PER_SCOUT = 2;                // 斥候1人につき仕掛けられる数
@@ -71,7 +72,7 @@ function costMap(m, from) {
   return dist;
 }
 
-/** 戦略マップを作る: 広さはダイス。森・山・川（浅瀬）と砦を置く。両軍の本陣がつながるまで作り直す */
+/** 戦域図を作る: 広さはダイス。森・山・川（浅瀬）と砦を置く。両軍の本陣がつながるまで作り直す */
 function genStrategicMap() {
   for (;;) {
     const wd = roll(SMAP_DICE.n, SMAP_DICE.sides), hd = roll(SMAP_DICE.n, SMAP_DICE.sides);
@@ -389,14 +390,14 @@ function station(t, gid) {
 function hubOf(t) {
   const m = smap();
   const base = m.bases[t.side];
-  if (distance(t, base) <= 1) return { kind: 'base', x: base.x, y: base.y, name: '本陣' };
-  const f = m.forts.find(f => f.owner === t.side && distance(f, t) <= 1);
+  if (distance(t, base) <= HUB_RANGE) return { kind: 'base', x: base.x, y: base.y, name: '本陣' };
+  const f = m.forts.find(f => f.owner === t.side && distance(f, t) <= HUB_RANGE);
   return f ? { kind: 'fort', x: f.x, y: f.y, name: f.name, id: f.id } : null;
 }
 
 /** 拠点に集まっている自軍の隊 */
 function hubSquads(hub, side) {
-  return liveTokens().filter(o => o.side === side && distance(o, hub) <= 1).map(tokenSquad);
+  return liveTokens().filter(o => o.side === side && distance(o, hub) <= HUB_RANGE).map(tokenSquad);
 }
 
 /** 副将は総大将・副将が率いる隊にだけ入れる（兵長が率いる小隊には入れない） */
@@ -432,13 +433,13 @@ function reorg(op, a) {
     case 'split': {   // 配下の副将・兵長を隊長にして、新しい隊を作る
       const m = smap();
       const cell = [];
-      // 拠点にいちばん近い空きマス（3マス以内）に置く
-      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      // 拠点にいちばん近い空きマス（拠点の範囲内）に置く
+      for (let dy = -HUB_RANGE; dy <= HUB_RANGE; dy++) for (let dx = -HUB_RANGE; dx <= HUB_RANGE; dx++) {
         const x = hub.x + dx, y = hub.y + dy, ter = smapCell(m, x, y);
-        if (ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && distance({ x, y }, hub) <= 3) cell.push([x, y]);
+        if (ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && distance({ x, y }, hub) <= HUB_RANGE) cell.push([x, y]);
       }
       cell.sort((p1, p2) => distance({ x: p1[0], y: p1[1] }, hub) - distance({ x: p2[0], y: p2[1] }, hub));
-      if (!cell.length) return fail('拠点のまわり（3マス以内）に新しい隊を置く空きマスがありません。');
+      if (!cell.length) return fail(`拠点のまわり（${HUB_RANGE}マス以内）に新しい隊を置く空きマスがありません。`);
       from.members = from.members.filter(x => x !== a.id);
       const leader = memberById(army, a.id);
       const q = { id: `player-Q${army.seq++}`, name: `${leader.name}隊`, leader: a.id, members: [], pieces: [] };
@@ -503,13 +504,13 @@ function renderReorg() {
       <div>配下: ${members}</div><div>兵士の駒: ${pieces}</div>${add}</div>`;
   }).join('');
   return `<div class="reorg"><div class="ap-head"><b>🏯 ${hub.name}で再編成</b> <button class="small" id="sm-reorg-close">閉じる</button></div>
-    <div class="sub">拠点（${atBase ? '本陣' : '砦'}）の上か隣にいる隊どうしで、駒や将を受け渡し・分割・合流できます（行動は使いません）。${atBase ? '本陣では予備の兵・将も使えます。' : '予備の兵・将は本陣でしか使えません。'}</div>
+    <div class="sub">拠点（${atBase ? '本陣' : '砦'}）から${HUB_RANGE}マス以内にいる隊どうしで、駒や将を受け渡し・分割・合流できます（行動は使いません）。${atBase ? '本陣では予備の兵・将も使えます。' : '予備の兵・将は本陣でしか使えません。'}</div>
     ${atBase ? `<div class="sub">予備: ${TYPE_NAMES.map(t => `${t}${poolLeft(army, t)}`).join('・')}</div>` : ''}
     ${rows}</div>`;
 }
 
 // ------------------------------------------------------------
-// 出陣（戦略マップの開始）
+// 出陣（戦域図の開始）
 // ------------------------------------------------------------
 
 /** 本陣の近くの空いたマスへ、隊を順に置く */
@@ -537,7 +538,7 @@ function startMapStage() {
   deploy('player');
   deploy('cpu');
   ui.selected = null;
-  smapLog(`🗺 戦略マップ ${campaign.smap.w}×${campaign.smap.h}（幅 ${SMAP_MIN_W}+🎲[${campaign.smap.wd.dice.join('][')}] / 高さ ${SMAP_MIN_H}+🎲[${campaign.smap.hd.dice.join('][')}]）。砦 ${campaign.smap.forts.length}か所`, 'turn');
+  smapLog(`🗺 戦域図 ${campaign.smap.w}×${campaign.smap.h}（幅 ${SMAP_MIN_W}+🎲[${campaign.smap.wd.dice.join('][')}] / 高さ ${SMAP_MIN_H}+🎲[${campaign.smap.hd.dice.join('][')}]）。砦 ${campaign.smap.forts.length}か所`, 'turn');
   smapLog('--- ターン 1（自軍） ---', 'turn');
   saveCampaign();
   renderCampaign();
@@ -568,7 +569,7 @@ function attackToken(t, target) {
   renderStrat();
 }
 
-/** 戦術戦闘が終わったとき（main.js の applyBattleResult から呼ばれる） */
+/** 局地戦が終わったとき（main.js の applyBattleResult から呼ばれる） */
 function onMapBattleEnd(msg) {
   const m = smap();
   if (!m || !m.battle || m.pending) return;
@@ -578,7 +579,7 @@ function onMapBattleEnd(msg) {
   renderStrat();
 }
 
-/** 「戦略マップに戻る」: 戦闘の結果をマップに反映する（全滅した隊は消え、負けた隊は1マス下がり、砦は落ちる） */
+/** 「戦域図に戻る」: 戦闘の結果をマップに反映する（全滅した隊は消え、負けた隊は1マス下がり、砦は落ちる） */
 function resolvePending() {
   const m = smap(), p = m.pending, A = campaign.armies;
   if (!p) return;
@@ -780,6 +781,7 @@ function renderStrat() {
       (t ? `<span class="glyph">${tokenGlyph(t)}</span>` : '') + `</div>`;
   }
   grid.innerHTML = html;
+  applyZoom('smap');
   const forts = side => m.forts.filter(f => f.owner === side).length;
   $('strat-label').textContent = `${m.w}×${m.h}　ターン ${m.turn}（${m.phase === 'player' ? '自軍の番' : m.phase === 'cpu' ? 'CPU軍の番' : '決着'}）　砦 自軍${forts('player')} / CPU${forts('cpu')} / 中立${m.forts.length - forts('player') - forts('cpu')}`;
   // 操作パネル
@@ -790,7 +792,7 @@ function renderStrat() {
     info = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
   } else if (m.battle) {
     info = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}</div>
-      <button id="sm-open-battle">⚔ 戦闘画面を開く</button>`;
+      <button id="sm-open-battle">⚔ 局地戦の画面を開く</button>`;
   } else if (m.phase === 'cpu') {
     info = '<div>CPU軍が行動中…</div>';
   } else if (ui.reorg) {
@@ -807,7 +809,7 @@ function renderStrat() {
         ${!sel.acted && opts.length ? `<select id="sm-station"><option value="">副将を駐留させる…</option>${opts.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}</select>` : ''}
         ${hub ? `<button id="sm-reorg">🏯 ${hub.name}で再編成</button>` : ''}
       </div>
-      ${hub ? `<div class="sub">${hub.name}の上か隣にいるので、再編成できます${hub.kind === 'fort' ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
+      ${hub ? `<div class="sub">${hub.name}の近く（${HUB_RANGE}マス以内）にいるので、再編成できます${m.forts.some(f => f.owner === 'player' && distance(f, sel) <= 1) ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
   } else if (ui.info) {
     info = placeInfo(ui.info);
   } else {
@@ -855,14 +857,14 @@ function placeInfo(key) {
     return `<div><b>🏯 ${f.name}</b>（${owner}）${g && tokenVisibleTo('player', g) ? ` 守備隊: ${tokenSquad(g).name}` : ''}</div>
       <div class="sub">砦の効果（持ち主の軍に）:<br>
       ・守り: 砦の上か隣にいる隊・守備隊は、戦闘で DEF +${Math.round(FORT_DEF * 100)}%<br>
-      ・再編成: 砦の上か隣にいる隊どうしで、駒や将を受け渡し・分割・合流できる<br>
+      ・再編成: 砦から${HUB_RANGE}マス以内にいる隊どうしで、駒や将を受け渡し・分割・合流できる<br>
       ・見張り: 守備隊がいなくても、周囲${FORT_VISION}マスが見える<br>
       ・奪い方: 守備隊のいない砦は、隊が入ると自軍のものになる。守備隊がいれば戦って倒す<br>
       ・駐留: 砦の上にいる隊から、配下の副将を残して守備隊にできる</div>`;
   }
   const side = key === 'base-player' ? 'player' : 'cpu';
   return `<div><b>陣 ${side === 'player' ? '自軍' : 'CPU軍'}の本陣</b></div>
-    <div class="sub">本陣の上か隣にいる隊は再編成でき、予備の兵・将も使える。</div>`;
+    <div class="sub">本陣から${HUB_RANGE}マス以内にいる隊は再編成でき、予備の兵・将も使える。</div>`;
 }
 
 function onSmapClick(x, y) {

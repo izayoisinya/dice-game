@@ -137,7 +137,7 @@ button.small { padding: 3px 8px; font-size: 0.8rem; }
 .cell.fog { filter: brightness(0.55); }
 .cell.ghost { opacity: 0.45; }
 
-/* 戦略マップ */
+/* 戦域図 */
 button.go { background: #3f8a4f; }
 .strat-wrap { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 12px; align-items: start; }
 @media (max-width: 900px) { .strat-wrap { grid-template-columns: 1fr; } }
@@ -195,7 +195,7 @@ button.go:disabled { background: #555; }
 .ro-add input { width: 60px; }
 
 /* ============================================================
-   画面レイアウト: 上部バー（タブ・設定）、編成 / 戦略マップの画面、戦闘画面（重ねて開く）
+   画面レイアウト: 上部バー（タブ・設定）、編成 / 戦域図の画面、局地戦の画面（重ねて開く）
    ============================================================ */
 body { padding: 0; }
 body.battle-open { overflow: hidden; }
@@ -222,7 +222,7 @@ body.battle-open { overflow: hidden; }
 main { padding: 12px; }
 .view .panel h2 { margin-top: 0; }
 
-/* 戦闘画面 */
+/* 局地戦の画面 */
 .battle { position: fixed; inset: var(--topbar-h, 0px) 0 0 0; z-index: 15; background: #1d1f24; }   /* 上部バー（設定など）は戦闘中も使える */
 .battle:not(.hidden) { display: flex; flex-direction: column; }
 .battle-bar {
@@ -246,3 +246,26 @@ main { padding: 12px; }
   .tab, .topbar .controls > button, .settings > summary { padding: 5px 8px; font-size: 0.85rem; }
 }
 .ap-help > summary { cursor: pointer; color: #9fb7d9; }
+
+/* 拡大・縮小 */
+.zoom-wrap { overflow: auto; touch-action: pan-x pan-y; border-radius: 8px; }
+.zoom { display: inline-flex; gap: 2px; vertical-align: middle; }
+.zoom button { padding: 4px 10px; font-size: 0.9rem; background: #2c3038; }
+.cell, .scell { font-size: calc(var(--cell, 24px) * 0.32); }
+#smap-wrap { max-height: calc(100dvh - var(--topbar-h, 60px) - 110px); }
+.field, .smap { max-width: none; }
+
+/* 局地戦の画面: スマホは縦に積む（操作パネルは下に貼り付け）、PC・タブレットは 戦場｜操作・ログ の2列 */
+.battle-body { display: flex; flex-direction: column; }
+#field-wrap { height: 58dvh; }
+.battle-side .action-panel { position: sticky; bottom: 0; z-index: 2; }
+.battle-side .log { height: 220px; }
+@media (min-width: 900px) {
+  .battle-body { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 12px; overflow: hidden; padding-bottom: 8px; }
+  .battle-main { display: flex; flex-direction: column; min-height: 0; }
+  #field-wrap { flex: 1; height: auto; min-height: 0; }
+  .battle-side { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+  .battle-side .action-panel { position: static; max-height: none; border: 1px solid #4a6fa5; border-radius: 8px; }
+  .battle-side .log { height: 40dvh; }
+  .battle-side .armies { grid-template-columns: 1fr; }
+}

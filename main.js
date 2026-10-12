@@ -59,7 +59,7 @@ const BASE_TROOPS = 50;
 const MIN_TROOPS = 10;
 const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
-const FORT_DEF = 0.2;          // 戦略マップの砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
+const FORT_DEF = 0.2;          // 戦域図の砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
 const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
@@ -1601,8 +1601,7 @@ function renderField(acting) {
   const field = $('field');
   field.innerHTML = '';
   field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
-  // 画面の高さに収まる幅にする（縦長の戦場でもスクロールせずに全体が見えるように）
-  field.style.maxWidth = `min(100%, calc((100dvh - 210px) * ${w / h}))`;
+  applyZoom('field');
   const short = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '') + u.type[0];
   // 突撃になる移動先（騎兵など）と、一斉指揮の範囲
   const curU = currentUnit();
@@ -1730,22 +1729,86 @@ function render(acting = null) {
 }
 
 // ------------------------------------------------------------
-// 画面の切り替え: 編成 / 戦略マップ（タブ）、戦闘（戦略マップの上に重ねて開く）
+// 画面の切り替え: 編成 / 戦域図（タブ）、戦闘（戦域図の上に重ねて開く）
 // ------------------------------------------------------------
+
+// ------------------------------------------------------------
+// 拡大・縮小（戦場と戦域図）: 1 = 全体が収まる大きさ。ボタン・Ctrl+ホイール・2本指のピンチで変える
+// ------------------------------------------------------------
+
+const zoom = { field: 1, smap: 1 };
+const ZOOM_MIN = 1, ZOOM_MAX = 4;
+
+function applyZoom(kind) {
+  const el = $(kind), wrap = $(`${kind}-wrap`);
+  const map = kind === 'field' ? state.map : campaign.smap;
+  if (!el || !wrap || !map || !wrap.clientWidth) return;
+  const availH = Math.max(160, wrap.clientHeight || window.innerHeight * 0.6);
+  const fit = Math.min((wrap.clientWidth - 12) / map.w, (availH - 12) / map.h);   // 全体が収まるマスの大きさ
+  const cell = Math.max(8, fit * zoom[kind]);
+  el.style.width = `${Math.floor(cell * map.w)}px`;
+  el.style.maxWidth = 'none';
+  el.style.setProperty('--cell', `${cell}px`);
+}
+
+/** 拡大率を変える。(cx, cy) = 拡大の中心（画面上の座標）。省略すると表示の中央 */
+function setZoom(kind, z, cx, cy) {
+  const wrap = $(`${kind}-wrap`);
+  if (!wrap) return;
+  const r = wrap.getBoundingClientRect();
+  const px = (cx ?? r.left + r.width / 2) - r.left, py = (cy ?? r.top + r.height / 2) - r.top;
+  const fx = (wrap.scrollLeft + px) / (wrap.scrollWidth || 1), fy = (wrap.scrollTop + py) / (wrap.scrollHeight || 1);
+  zoom[kind] = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+  applyZoom(kind);
+  wrap.scrollLeft = fx * wrap.scrollWidth - px;
+  wrap.scrollTop = fy * wrap.scrollHeight - py;
+}
+
+function initZoom(kind) {
+  const wrap = $(`${kind}-wrap`);
+  if (!wrap) return;
+  wrap.addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;   // Ctrl（トラックパッドのピンチ）+ ホイール
+    e.preventDefault();
+    setZoom(kind, zoom[kind] * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
+  }, { passive: false });
+  // 2本指のピンチ（タッチ）
+  const pts = new Map();
+  let start = null;
+  wrap.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') pts.set(e.pointerId, e); });
+  wrap.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, e);
+    if (pts.size !== 2) return;
+    const [a, b] = [...pts.values()];
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    if (!start) start = { dist, z: zoom[kind] };
+    else setZoom(kind, start.z * dist / start.dist, (a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+  });
+  const end = e => { pts.delete(e.pointerId); if (pts.size < 2) start = null; };
+  wrap.addEventListener('pointerup', end);
+  wrap.addEventListener('pointercancel', end);
+  document.querySelectorAll(`[data-zoom-for="${kind}"] button`).forEach(b => b.addEventListener('click', () => {
+    const d = b.dataset.zoom;
+    setZoom(kind, d === '0' ? 1 : zoom[kind] * (d === '+' ? 1.5 : 1 / 1.5));
+  }));
+}
 
 function showView(v) {
   for (const id of ['form', 'map']) $(`view-${id}`).classList.toggle('hidden', id !== v);
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   window.scrollTo(0, 0);
+  if (v === 'map') requestAnimationFrame(() => applyZoom('smap'));
 }
 
 function setBattleOpen(open) {
   $('battle').classList.toggle('hidden', !open);
   document.body.classList.toggle('battle-open', open);
   updateButtons();
+  if (open) requestAnimationFrame(() => applyZoom('field'));
 }
 
-/** 戦闘画面の「戻る」ボタン: 決着後は結果を戦略マップに反映して閉じる。戦闘中はマップを見るだけ */
+/** 局地戦の画面の「戻る」ボタン: 決着後は結果を戦域図に反映して閉じる。戦闘中はマップを見るだけ */
 function onBattleClose() {
   if (campaign.smap?.pending) resolvePending();
   setBattleOpen(false);
@@ -1756,7 +1819,7 @@ function onBattleClose() {
 function updateButtons() {
   const close = $('btn-battle-close');
   close.classList.toggle('hidden', !state.player);
-  close.textContent = state.over ? '🗺 戦略マップに戻る' : '🗺 マップを見る';
+  close.textContent = state.over ? '🗺 戦域図に戻る' : '🗺 マップを見る';
   $('btn-muster').disabled = state.running;
   $('btn-start').disabled = !state.player || state.running || state.over || (state.mode === 'manual' && !state.cmdReady);
   $('mode').disabled = state.running;
@@ -1851,7 +1914,7 @@ function confirmEditor() {
 // ============================================================
 // 軍の編成（戦略レイヤーの第一歩）
 //   ダイスで兵種ごとの総数・副将・兵長を決め、本隊と分隊（小隊）に将と兵士を割り振る。
-//   編成した隊どうしを戦術戦闘で戦わせ、損害（兵の人数・倒れた将）を持ち帰る。
+//   編成した隊どうしを局地戦で戦わせ、損害（兵の人数・倒れた将）を持ち帰る。
 // ============================================================
 
 const TROOP_DICE = { sides: 10, unit: 100 };            // 各兵種の総数 = 1d10 × 100（100〜1000人）
@@ -1864,7 +1927,7 @@ const PIECE_DEFAULT = 100;                               // 兵士の駒を追�
 const AUTO_PIECE = 100;                                  // おまかせ編成の1駒の目安の人数
 const CAMPAIGN_KEY = 'dice-senki-campaign-v1';
 
-const campaign = { armies: null, editing: null, smap: null };   // smap = 戦略マップ（strategy.js）
+const campaign = { armies: null, editing: null, smap: null };   // smap = 戦域図（strategy.js）
 
 function rollExpr(e) {
   const r = roll(e.n, e.sides);
@@ -1931,7 +1994,7 @@ function poolLeft(army, type) {
 
 /**
  * 隊に入れられる兵士の駒の上限 = 隊長の統率力（配下の将の統率力は足さない）。
- * 隊長が倒れて統率力の低い将が継ぐと上限を超えることがある（統率オーバー。戦略マップでは移動が遅くなる予定）
+ * 隊長が倒れて統率力の低い将が継ぐと上限を超えることがある（統率オーバー。戦域図では移動が遅くなる予定）
  */
 function squadCap(army, q) {
   return memberLdr(memberById(army, q.leader));
@@ -2062,7 +2125,7 @@ function removeMember(army, id) {
 }
 
 // ------------------------------------------------------------
-// 隊 → 戦術戦闘の駒
+// 隊 → 局地戦の駒
 // ------------------------------------------------------------
 
 function buildBattleArmy(side, army, q, map) {
@@ -2213,7 +2276,7 @@ function renderCampaign() {
   const A = campaign.armies;
   if (!A) {
     box.innerHTML = `<div class="cp-head"><span class="sub">上の「🎲 戦力集結」で、兵種ごとの総数・副将・兵長・斥候・暗殺者をダイスで決めます。
-      そのあと本隊と分隊に割り振り（おまかせ編成も可）、「出陣」で戦略マップに出ます。</span></div>`;
+      そのあと本隊と分隊に割り振り（おまかせ編成も可）、「出陣」で戦域図に出ます。</span></div>`;
     return;
   }
   const P = A.player;
@@ -2257,7 +2320,7 @@ function renderCampaign() {
     <div class="cp-head">
       <button data-act="auto">おまかせ編成</button>
       <button data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置（隊はそのまま）</button>
-      <button data-act="sortie" class="go" ${over ? 'disabled' : ''} title="この編成で戦略マップへ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣（戦略マップへ）</button>
+      <button data-act="sortie" class="go" ${over ? 'disabled' : ''} title="この編成で戦域図へ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣（戦域図へ）</button>
     </div>
     ${over ? `<div class="cp-over">${P.defeated ? '<b class="warn">💀 自軍は敗北しました。</b>' : '<b>🏆 CPU軍に勝利しました！</b>'}
       この軍での戦いは終わりです。上の「🎲 戦力集結」で新しい軍を作るか、「↺ リセット」で最初に戻してください。</div>` : ''}
@@ -2280,12 +2343,12 @@ function renderCampaign() {
   if (campaign.editing) renderGeneralEditor();
 }
 
-/** 戦略マップに出たあとの編成（見るだけ） */
+/** 戦域図に出たあとの編成（見るだけ） */
 function renderCampaignLocked() {
   const A = campaign.armies, P = A.player;
   const desc = m => m ? (m.kind ? m.name : `${m.name}（${m.rank || m.type + '長'}）`) : '?';
   $('campaign').innerHTML = `
-    <div class="cp-head"><span class="sub">出陣中はここでは編成を変えられません。戦略マップで自軍の砦・本陣の上か隣にいる隊を選ぶと「再編成」できます。</span>
+    <div class="cp-head"><span class="sub">出陣中はここでは編成を変えられません。戦域図で自軍の砦・本陣の上か隣にいる隊を選ぶと「再編成」できます。</span>
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}</div>
     <div class="cp-pool">兵力（残り）: ${TYPE_NAMES.map(t => `<span class="chip">${t} ${P.totals[t]}人</span>`).join('')}</div>
     ${P.squads.map(q => `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${desc(memberById(P, q.leader))} ／ 兵 ${squadTroops(q)}人</div>
@@ -2414,7 +2477,7 @@ $('btn-muster').addEventListener('click', () => {
   reset();
   const P = campaign.armies.player;
   log(`🎲 戦力集結: ${TYPE_NAMES.map(t => `${t}${P.totals[t]}`).join('・')} / 副将${P.generalRoll.total} / 兵長${P.sergeants.length} / 斥候・暗殺者${P.specials.length}`, 'player');
-  log('本隊と分隊に割り振って（おまかせ編成も可）、「🗺 出陣（戦略マップへ）」で戦略マップに出ます。');
+  log('本隊と分隊に割り振って（おまかせ編成も可）、「🗺 出陣（戦域図へ）」で戦域図に出ます。');
   renderCampaign();
   renderStrat();
   showView('form');
@@ -2429,19 +2492,21 @@ $('btn-start').addEventListener('click', () => {
   step();
 });
 
-// リセット: 戦闘も軍（編成・戦略マップ）も消して、最初の状態に戻す
+// リセット: 戦闘も軍（編成・戦域図）も消して、最初の状態に戻す
 $('btn-battle-close').addEventListener('click', onBattleClose);
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
-  if (!$('battle').classList.contains('hidden')) setBattleOpen(false);   // 戦闘中にタブを押したら、戦闘画面を下げて見る
+  if (!$('battle').classList.contains('hidden')) setBattleOpen(false);   // 戦闘中にタブを押したら、局地戦の画面を下げて見る
   showView(b.dataset.view);
 }));
-// 戦闘画面は上部バーの下に重ねる（上部バーの高さは画面幅で変わる）
+// 局地戦の画面は上部バーの下に重ねる（上部バーの高さは画面幅で変わる）
 const fitTopbar = () => document.documentElement.style.setProperty('--topbar-h', `${document.querySelector('.topbar').offsetHeight}px`);
-window.addEventListener('resize', fitTopbar);
+window.addEventListener('resize', () => { fitTopbar(); applyZoom('field'); applyZoom('smap'); });
 fitTopbar();
+initZoom('field');
+initZoom('smap');
 
 $('btn-reset').addEventListener('click', () => {
-  if (campaign.armies && !confirm('戦闘も軍（編成・戦略マップ）もすべて消して、最初からやり直しますか？')) return;
+  if (campaign.armies && !confirm('戦闘も軍（編成・戦域図）もすべて消して、最初からやり直しますか？')) return;
   clearSave();
   Object.assign(campaign, { armies: null, editing: null, smap: null });
   try { localStorage.removeItem(CAMPAIGN_KEY); } catch (e) { /* 保存できない環境では何もしない */ }
@@ -2484,7 +2549,7 @@ function reset() {
   $('action-panel').classList.add('hidden');
   $('cmd-editor').classList.add('hidden');
   if ($('battle')) setBattleOpen(false);
-  log(campaign.smap ? '戦略マップで敵の隊に攻撃すると、ここで戦闘になります。' : campaign.armies ? '編成して「🗺 出陣（戦略マップへ）」で戦略マップに出ます。' : '「🎲 戦力集結」でダイスを振り、軍を作ってください。');
+  log(campaign.smap ? '戦域図で敵の隊に攻撃すると、ここで戦闘になります。' : campaign.armies ? '編成して「🗺 出陣（戦域図へ）」で戦域図に出ます。' : '「🎲 戦力集結」でダイスを振り、軍を作ってください。');
   updateButtons();
 }
 
@@ -2498,7 +2563,7 @@ if (loadGame()) {
   render();
   renderEditor();
   updateButtons();
-  // 戦闘中か、結果をまだ戦略マップに反映していなければ戦闘画面を開く
+  // 戦闘中か、結果をまだ戦域図に反映していなければ局地戦の画面を開く
   if (!state.over || campaign.smap?.pending) setBattleOpen(true);
   // 戦闘中なら自動で再開する（プレイヤーの入力待ちならそのまま待つ）
   if (state.running && !state.over && state.current == null) schedule(500);
