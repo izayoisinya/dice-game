@@ -13,93 +13,118 @@
   <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
-  <header>
-    <h1>ダイス戦記 <small>プロトタイプ</small></h1>
+  <header class="topbar">
+    <h1>ダイス戦記</h1>
+    <nav class="tabs">
+      <button class="tab" data-view="form">📋 編成</button>
+      <button class="tab" data-view="map">🗺 戦略マップ</button>
+    </nav>
     <div class="controls">
       <button id="btn-muster">🎲 戦力集結</button>
-      <button id="btn-start" disabled>⚔ 戦闘開始</button>
       <button id="btn-reset">↺ リセット</button>
-      <label>モード
-        <select id="mode">
-          <option value="manual" selected>手動プレイ</option>
-          <option value="auto">オート観戦</option>
-        </select>
-      </label>
-      <label title="味方の視界に入っている敵だけが見え、狙える"><input type="checkbox" id="fog" checked> 視界（霧）</label>
-      <label>速度
-        <select id="speed">
-          <option value="600">遅い</option>
-          <option value="250" selected>普通</option>
-          <option value="60">速い</option>
-          <option value="0">一瞬</option>
-        </select>
-      </label>
-      <label>総大将の出撃 P
-        <select id="advance-player">
-          <option value="hold" selected>全滅まで待機</option>
-          <option value="r30">残り30%</option>
-          <option value="r50">残り50%</option>
-          <option value="now">最初から</option>
-        </select>
-      </label>
-      <label>CPU
-        <select id="advance-cpu">
-          <option value="hold" selected>全滅まで待機</option>
-          <option value="r30">残り30%</option>
-          <option value="r50">残り50%</option>
-          <option value="now">最初から</option>
-        </select>
-      </label>
+      <details class="settings">
+        <summary>⚙ 設定</summary>
+        <div class="settings-body">
+          <label>戦闘のモード
+            <select id="mode">
+              <option value="manual" selected>手動プレイ</option>
+              <option value="auto">オート観戦</option>
+            </select>
+          </label>
+          <label title="味方の視界に入っている敵だけが見え、狙える"><input type="checkbox" id="fog" checked> 視界（霧）</label>
+          <label>速度
+            <select id="speed">
+              <option value="600">遅い</option>
+              <option value="250" selected>普通</option>
+              <option value="60">速い</option>
+              <option value="0">一瞬</option>
+            </select>
+          </label>
+          <label>大将の出撃（自軍）
+            <select id="advance-player">
+              <option value="hold" selected>全滅まで待機</option>
+              <option value="r30">残り30%</option>
+              <option value="r50">残り50%</option>
+              <option value="now">最初から</option>
+            </select>
+          </label>
+          <label>大将の出撃（CPU）
+            <select id="advance-cpu">
+              <option value="hold" selected>全滅まで待機</option>
+              <option value="r30">残り30%</option>
+              <option value="r50">残り50%</option>
+              <option value="now">最初から</option>
+            </select>
+          </label>
+        </div>
+      </details>
     </div>
   </header>
 
-  <div id="result" class="result hidden"></div>
+  <main>
+    <!-- 編成の画面 -->
+    <section id="view-form" class="view">
+      <div id="campaign-box" class="panel">
+        <h2>軍の編成 <small>ダイスで兵力を決め、隊を組んで出陣</small></h2>
+        <div id="campaign"></div>
+      </div>
+    </section>
 
-  <details id="campaign-box" class="panel" open>
-    <summary><h2>軍の編成 <small>ダイスで兵力を決め、隊を組んで出陣（戦略レイヤー試作）</small></h2></summary>
-    <div id="campaign"></div>
-  </details>
+    <!-- 戦略マップの画面 -->
+    <section id="view-map" class="view hidden">
+      <div id="strat-empty" class="panel sub">まだ出陣していません。「📋 編成」で隊を組んで「🗺 出陣（戦略マップへ）」を押してください。</div>
+      <div id="strat-box" class="panel hidden">
+        <h2>戦略マップ <small id="strat-label"></small></h2>
+        <div class="strat-wrap">
+          <div id="smap" class="smap"></div>
+          <div id="strat-info" class="strat-info"></div>
+        </div>
+        <div class="sub">★本=本隊 ☆=分隊 ◆=小隊 斥=斥候 暗=暗殺者 守=砦の守備隊 / 🏯砦 陣=本陣 / 地形: 平地1 森2 山3 浅瀬2 川×（数字は移動コスト）</div>
+      </div>
+    </section>
+  </main>
 
-  <section id="strat-box" class="panel hidden">
-    <h2>戦略マップ <small id="strat-label"></small></h2>
-    <div class="strat-wrap">
-      <div id="smap" class="smap"></div>
-      <div id="strat-info" class="strat-info"></div>
+  <!-- 戦闘の画面（戦略マップの上に重ねて開く） -->
+  <div id="battle" class="battle hidden">
+    <div class="battle-bar">
+      <b id="battle-title">⚔ 戦闘</b>
+      <small id="turn-label"></small>
+      <span class="spacer"></span>
+      <button id="btn-start" disabled>⚔ 戦闘開始</button>
+      <button id="btn-battle-close" class="hidden">🗺 戦略マップに戻る</button>
     </div>
-    <div class="sub">★本=本隊 ☆=分隊 ◆=小隊 斥=斥候 暗=暗殺者 守=砦の守備隊 / 🏯砦 陣=本陣 / 地形: 平地1 森2 山3 浅瀬2 川×（数字は移動コスト）</div>
-  </section>
-
-  <section id="cmd-editor" class="panel hidden"></section>
-
-  <section class="armies">
-    <div class="army player">
-      <h2>プレイヤー軍 <span id="player-dice" class="dice"></span></h2>
-      <div id="player-summary" class="summary"></div>
-      <table>
-        <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
-        <tbody id="player-units"></tbody>
-      </table>
+    <div class="battle-body">
+      <div id="result" class="result hidden"></div>
+      <section id="cmd-editor" class="panel hidden"></section>
+      <div id="field" class="field"></div>
+      <details class="battle-more">
+        <summary>部隊の一覧</summary>
+        <section class="armies">
+          <div class="army player">
+            <h2>プレイヤー軍 <span id="player-dice" class="dice"></span></h2>
+            <div id="player-summary" class="summary"></div>
+            <table>
+              <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
+              <tbody id="player-units"></tbody>
+            </table>
+          </div>
+          <div class="army cpu">
+            <h2>CPU軍 <span id="cpu-dice" class="dice"></span></h2>
+            <div id="cpu-summary" class="summary"></div>
+            <table>
+              <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
+              <tbody id="cpu-units"></tbody>
+            </table>
+          </div>
+        </section>
+      </details>
+      <details class="battle-more" open>
+        <summary>バトルログ</summary>
+        <div id="log" class="log"></div>
+      </details>
     </div>
-    <div class="army cpu">
-      <h2>CPU軍 <span id="cpu-dice" class="dice"></span></h2>
-      <div id="cpu-summary" class="summary"></div>
-      <table>
-        <thead><tr><th>名前</th><th>階級</th><th>兵種</th><th>HP</th><th>ATK</th><th>DEF</th><th>SPD</th><th>RNG</th><th>ACT</th><th>HIT</th><th>位置</th></tr></thead>
-        <tbody id="cpu-units"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section>
-    <h2>戦場 <small id="turn-label"></small></h2>
     <div id="action-panel" class="panel action-panel hidden"></div>
-    <div id="field" class="field"></div>
-  </section>
-
-  <section>
-    <h2>バトルログ</h2>
-    <div id="log" class="log"></div>
-  </section>
+  </div>
 
   <script src="strategy.js"></script>
   <script src="main.js"></script>

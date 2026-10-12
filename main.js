@@ -1550,7 +1550,7 @@ function renderArmy(army, side, acting) {
     : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
 
-const ui2 = { preview: null, deploySel: null };   // preview = 範囲を表示するスキル、deploySel = 布陣で選んだ駒
+const ui2 = { preview: null, deploySel: null, helpOpen: false };   // preview = 範囲を表示するスキル、deploySel = 布陣で選んだ駒
 
 /** その駒にかかっているバフの説明（例: ATK+30%・残2回） */
 function buffText(u) {
@@ -1601,6 +1601,8 @@ function renderField(acting) {
   const field = $('field');
   field.innerHTML = '';
   field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
+  // 画面の高さに収まる幅にする（縦長の戦場でもスクロールせずに全体が見えるように）
+  field.style.maxWidth = `min(100%, calc((100dvh - 210px) * ${w / h}))`;
   const short = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '') + u.type[0];
   // 突撃になる移動先（騎兵など）と、一斉指揮の範囲
   const curU = currentUnit();
@@ -1694,7 +1696,7 @@ function renderActionPanel() {
       ${state.manual.smash ? ' ／ 強撃 準備中' : ''}${unit.hitAndRun ? ' ／ 一撃離脱中（反撃なし・攻撃後に移動可）' : ''}${state.manual.charge ? ` ／ 突撃 ${state.manual.charge.run}マス` : ''}</div>
     <div class="ap-hint">${hint}</div>
     ${nowBuff ? `<div class="ap-buff">効果中: ${nowBuff}</div>` : ''}
-    ${skillHelp || traitHelp ? `<div class="ap-help">${skillHelp}${traitHelp}</div>` : ''}
+    ${skillHelp || traitHelp ? `<details class="ap-help" ${ui2.helpOpen ? 'open' : ''}><summary>スキル・能力の説明</summary>${skillHelp}${traitHelp}</details>` : ''}
     <div class="ap-buttons">
       ${state.phase === 'move' ? '<button id="ap-stay">移動しない</button>' : ''}
       ${spearBtns}
@@ -1712,6 +1714,8 @@ function renderActionPanel() {
   if (wd) wd.onclick = () => onWithdraw(unit);
   for (const b of panel.querySelectorAll('button.skill')) b.onclick = () => onSkill(b.dataset.skill);
   for (const b of panel.querySelectorAll('[data-spear]')) b.onclick = () => manualSpear(unit, spOpts[+b.dataset.spear]);
+  const help = panel.querySelector('.ap-help');
+  if (help) help.ontoggle = () => { ui2.helpOpen = help.open; };
   for (const b of panel.querySelectorAll('[data-preview]')) b.onclick = () => { ui2.preview = ui2.preview ? null : b.dataset.preview; render(unit); };
 }
 
@@ -1725,7 +1729,34 @@ function render(acting = null) {
   renderActionPanel();
 }
 
+// ------------------------------------------------------------
+// 画面の切り替え: 編成 / 戦略マップ（タブ）、戦闘（戦略マップの上に重ねて開く）
+// ------------------------------------------------------------
+
+function showView(v) {
+  for (const id of ['form', 'map']) $(`view-${id}`).classList.toggle('hidden', id !== v);
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  window.scrollTo(0, 0);
+}
+
+function setBattleOpen(open) {
+  $('battle').classList.toggle('hidden', !open);
+  document.body.classList.toggle('battle-open', open);
+  updateButtons();
+}
+
+/** 戦闘画面の「戻る」ボタン: 決着後は結果を戦略マップに反映して閉じる。戦闘中はマップを見るだけ */
+function onBattleClose() {
+  if (campaign.smap?.pending) resolvePending();
+  setBattleOpen(false);
+  showView(campaign.smap ? 'map' : 'form');
+  renderStrat();
+}
+
 function updateButtons() {
+  const close = $('btn-battle-close');
+  close.classList.toggle('hidden', !state.player);
+  close.textContent = state.over ? '🗺 戦略マップに戻る' : '🗺 マップを見る';
   $('btn-muster').disabled = state.running;
   $('btn-start').disabled = !state.player || state.running || state.over || (state.mode === 'manual' && !state.cmdReady);
   $('mode').disabled = state.running;
@@ -2108,7 +2139,8 @@ function startCampaignBattle(pid, cid) {
   renderEditor();
   updateButtons();
   saveGame();
-  $('field').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('battle-title').textContent = `⚔ ${pq.name} vs CPU ${cq.name}`;
+  setBattleOpen(true);
 }
 
 /** 戦闘の結果を軍に持ち帰る: 兵士の駒は残った人数、倒れた将は軍から外れる */
@@ -2385,7 +2417,7 @@ $('btn-muster').addEventListener('click', () => {
   log('本隊と分隊に割り振って（おまかせ編成も可）、「🗺 出陣（戦略マップへ）」で戦略マップに出ます。');
   renderCampaign();
   renderStrat();
-  $('campaign-box').open = true;
+  showView('form');
 });
 
 $('btn-start').addEventListener('click', () => {
@@ -2398,6 +2430,16 @@ $('btn-start').addEventListener('click', () => {
 });
 
 // リセット: 戦闘も軍（編成・戦略マップ）も消して、最初の状態に戻す
+$('btn-battle-close').addEventListener('click', onBattleClose);
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
+  if (!$('battle').classList.contains('hidden')) setBattleOpen(false);   // 戦闘中にタブを押したら、戦闘画面を下げて見る
+  showView(b.dataset.view);
+}));
+// 戦闘画面は上部バーの下に重ねる（上部バーの高さは画面幅で変わる）
+const fitTopbar = () => document.documentElement.style.setProperty('--topbar-h', `${document.querySelector('.topbar').offsetHeight}px`);
+window.addEventListener('resize', fitTopbar);
+fitTopbar();
+
 $('btn-reset').addEventListener('click', () => {
   if (campaign.armies && !confirm('戦闘も軍（編成・戦略マップ）もすべて消して、最初からやり直しますか？')) return;
   clearSave();
@@ -2406,6 +2448,7 @@ $('btn-reset').addEventListener('click', () => {
   reset();
   renderCampaign();
   renderStrat();
+  showView('form');
 });
 
 $('field').addEventListener('click', e => {
@@ -2440,6 +2483,7 @@ function reset() {
   $('turn-label').textContent = '';
   $('action-panel').classList.add('hidden');
   $('cmd-editor').classList.add('hidden');
+  if ($('battle')) setBattleOpen(false);
   log(campaign.smap ? '戦略マップで敵の隊に攻撃すると、ここで戦闘になります。' : campaign.armies ? '編成して「🗺 出陣（戦略マップへ）」で戦略マップに出ます。' : '「🎲 戦力集結」でダイスを振り、軍を作ってください。');
   updateButtons();
 }
@@ -2448,11 +2492,14 @@ function reset() {
 loadCampaign();
 renderCampaign();
 if (typeof initStrategy === 'function') initStrategy();
+showView(campaign.smap ? 'map' : 'form');
 if (loadGame()) {
   showResult();
   render();
   renderEditor();
   updateButtons();
+  // 戦闘中か、結果をまだ戦略マップに反映していなければ戦闘画面を開く
+  if (!state.over || campaign.smap?.pending) setBattleOpen(true);
   // 戦闘中なら自動で再開する（プレイヤーの入力待ちならそのまま待つ）
   if (state.running && !state.over && state.current == null) schedule(500);
 } else {

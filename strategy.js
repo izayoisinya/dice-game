@@ -542,8 +542,7 @@ function startMapStage() {
   saveCampaign();
   renderCampaign();
   renderStrat();
-  $('campaign-box').open = false;   // 編成パネルは畳む
-  $('strat-box').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showView('map');
 }
 
 // ------------------------------------------------------------
@@ -612,6 +611,7 @@ function resolvePending() {
   m.tokens = m.tokens.filter(t => tokenSquad(t));
   m.battle = null;
   m.pending = null;
+  setBattleOpen(false);
   if (A.player.defeated || A.cpu.defeated) {
     m.phase = 'over';
     smapLog(A.cpu.defeated ? '🏆 CPU軍の総大将を討ち取った！ 自軍の勝利！' : '💀 総大将を失い、自軍は敗北した。', 'turn');
@@ -742,6 +742,7 @@ function tokenGlyph(t) {
 function renderStrat() {
   const box = $('strat-box'), m = smap();
   box.classList.toggle('hidden', !m);
+  $('strat-empty').classList.toggle('hidden', !!m);
   if (!m) return;
   const A = campaign.armies;
   const sight = state.fog ? smapSight('player') : null;
@@ -786,9 +787,10 @@ function renderStrat() {
   if (m.phase === 'over') {
     info = `<div class="result">${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'}</div>`;
   } else if (m.pending) {
-    info = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">🗺 戦略マップに戻る</button>`;
+    info = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
   } else if (m.battle) {
-    info = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}。下の戦場で決着をつけてください。</div>`;
+    info = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}</div>
+      <button id="sm-open-battle">⚔ 戦闘画面を開く</button>`;
   } else if (m.phase === 'cpu') {
     info = '<div>CPU軍が行動中…</div>';
   } else if (ui.reorg) {
@@ -816,6 +818,7 @@ function renderStrat() {
   $('strat-info').innerHTML = info;
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
+  on('sm-open-battle', 'onclick', () => setBattleOpen(true));
   on('sm-reorg', 'onclick', () => { ui.reorg = hubOf(sel); ui.mode = null; renderStrat(); });
   on('sm-reorg-close', 'onclick', () => { ui.reorg = null; renderStrat(); });
   const box2 = $('strat-info');
