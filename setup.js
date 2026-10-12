@@ -133,6 +133,7 @@ function randomBuild(rank) {
       buy: { spd: (d(3) - 1) * 10, act: (d(3) - 1) * 10 },
       skills: shuffled(Object.keys(SKILLS)).slice(0, slots > 1 && d(3) === 1 ? 2 : 1),
       ldr: baseLdr + d(5) - 3,   // 標準 ±2
+      weapon: d(4) === 1 ? '弓' : '刀',   // 4人に1人くらいは弓
     };
     if (commanderStats(COMMANDER_TYPE, cost, b, slots).free >= std * 0.8) return b;
   }
@@ -141,7 +142,7 @@ function randomBuild(rank) {
 
 function presetBuild(rank, name) {
   const b = COMMANDER_BUILDS[name];
-  return { hp: b.hp, atk: b.atk, def: b.def, buy: { ...(b.buy || {}) }, skills: b.skills.slice(0, SKILL_SLOTS[rank]), ldr: LDR_BASE + (rank === '総大将' ? 4 : 2) };
+  return { hp: b.hp, atk: b.atk, def: b.def, buy: { ...(b.buy || {}) }, weapon: b.weapon || '刀', skills: b.skills.slice(0, SKILL_SLOTS[rank]), ldr: LDR_BASE + (rank === '総大将' ? 4 : 2) };
 }
 
 function onSetupClick(e) {

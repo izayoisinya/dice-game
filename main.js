@@ -164,6 +164,11 @@ const TYPES = {
   // stats は固定枠（SPD / ACT）の基準値として使う。HP / ATK / DEF は振り分けで上書きされる
   '将':   { stats: { hp: 120, atk: 110, def: 100, spd: 90, act: 70 }, rng: 1, hit: 85, best: 1, commanderOnly: true,
             falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
+  // 弓を持った将（総大将・副将の武器で選ぶ）。射程が長い分、固定枠が高く（自由枠が減り）脆い。後衛として前衛の後ろから撃つ
+  '弓将': { stats: { hp: 70, atk: 100, def: 70, spd: 90, act: 70 }, rng: 4, hit: 85, best: 3, rear: true, commanderOnly: true, traits: ['aim'],
+            weaponDiscount: 55,   // 射程4の分のコストを軽く（全額だと刀の副将に勝率2〜10%。45で32〜42%、60で65%）
+            falloff: { 1: { hit: 0.6, pow: 1.0 }, 2: { hit: 1.0, pow: 1.0 }, 3: { hit: 1.0, pow: 1.0 },
+                       4: { hit: 0.9, pow: 0.9 }, 5: { hit: 0.75, pow: 0.75 }, 6: { hit: 0.6, pow: 0.6 } } },
 };
 
 /** 兵種の固有能力のコスト合計 */
@@ -217,7 +222,8 @@ const COMMANDER_BUILDS = {
   'バランス型': { hp: 4, atk: 3, def: 3, skills: ['一斉指揮'] },
   '攻撃型':     { hp: 3.5, atk: 3.5, def: 3, skills: ['強撃'] },
   '防御型':     { hp: 3.5, atk: 2.5, def: 4, skills: ['鉄壁の構え'] },
-  '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 40 }, skills: ['一撃離脱'] },  // 騎乗して足を買う（移動力 3→4）分、他が薄い
+  '騎乗型':     { hp: 4, atk: 3, def: 3, buy: { spd: 40 }, skills: ['一撃離脱'] },
+  '弓将型':     { hp: 4, atk: 3.5, def: 2.5, weapon: '弓', skills: ['遠隔狙撃'] },   // 弓を持って後ろから撃つ（射程4）  // 騎乗して足を買う（移動力 3→4）分、他が薄い
 };
 
 // ------------------------------------------------------------
@@ -267,15 +273,23 @@ function clampShares(w) {
 }
 
 /** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
+/** 将の兵種: 武器が弓なら「弓将」、それ以外は「将」 */
+function generalType(build, type = COMMANDER_TYPE) {
+  const b = typeof build === 'string' ? COMMANDER_BUILDS[build] : build;
+  return b && b.weapon === '弓' && TYPES[type]?.commanderOnly ? '弓将' : type;
+}
+
 function commanderStats(type, cost, build, slots = SKILL_SLOTS['総大将']) {
-  const t = TYPES[type];
   // 型の名前、または { hp, atk, def, buy, skills } の振り分け（手動プレイで使う）
   const b = typeof build === 'string' ? COMMANDER_BUILDS[build] : build;
+  type = generalType(b, type);
+  const t = TYPES[type];
   const f = cost / BASE_COST;
   const buy = { spd: 0, act: 0, rng: 0, ...b.buy };
   for (const k of Object.keys(UPGRADE_CAP)) buy[k] = Math.min(buy[k], UPGRADE_CAP[k]);
   const rng = Math.min(t.rng + buy.rng, maxRng(type));
-  const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) + traitCost(t)) * f;
+  // weaponDiscount: 武器（弓など）の射程の分のコストを軽くする（将の武器は単体の殴り合いより用途の違いなので）
+  const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) - (t.weaponDiscount || 0) + traitCost(t)) * f;
   const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
   const skills = [...new Set(b.skills || [])].slice(0, slots);
   const skillCost = skills.slice(1).reduce((s, k) => s + SKILLS[k].cost, 0);   // 1つ目は無料
@@ -327,6 +341,7 @@ let unitSeq = 0;
 class Unit {
   constructor(side, rank, type, name, x, y, build = 'バランス型', troops = BASE_TROOPS) {
     const r = RANKS[rank];
+    if (rank === '総大将' || rank === '副将') type = generalType(build, type);   // 弓を持った将は「弓将」
     const t = TYPES[type];
     // 総大将・副将は固定枠 + 自由振り分け、それ以外は雑兵プリセットの拡大
     const isGeneral = rank === '総大将' || rank === '副将';
@@ -2391,7 +2406,8 @@ function renderGeneralEditor() {
     ${row('統率力', '<span data-v="ldr"></span>', `<input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}">`, '<span data-r="ldr"></span>')}
     ${row('SPD 強化', `<select data-g="spd">${upOpts(b.buy?.spd || 0)}</select>`, '', '<span data-r="spd"></span>')}
     ${row('ACT 強化', `<select data-g="act">${upOpts(b.buy?.act || 0)}</select>`, '', '<span data-r="act"></span>')}
-    ${row('射程 強化', `<select data-g="rng">${Array.from({ length: maxRng(COMMANDER_TYPE) - TYPES[COMMANDER_TYPE].rng + 1 }, (_, i) => `<option value="${i}" ${(b.buy?.rng || 0) === i ? 'selected' : ''}>+${i}</option>`).join('')}</select>`, '', '<span data-r="rng"></span>')}
+    ${row('武器', `<select data-g="weapon"><option value="刀" ${b.weapon !== '弓' ? 'selected' : ''}>刀（近接・射程1）</option><option value="弓" ${b.weapon === '弓' ? 'selected' : ''}>弓（遠距離・射程4・後衛）</option></select>`, '', '<span class="sub" data-r="weapon"></span>')}
+    ${row('射程 強化', `<select data-g="rng"></select>`, '', '<span data-r="rng"></span>')}
     ${row('スキル1', `<select data-g="s1">${skillOpts(b.skills[0])}</select>`, '', '<span class="sub" data-r="s1"></span>')}
     ${slots > 1 ? row('スキル2', `<select data-g="s2"><option value="">なし</option>${skillOpts(b.skills[1])}</select>`, '', '<span class="sub" data-r="s2"></span>') : ''}
     <div class="ed-preview" data-g="preview"></div>
@@ -2400,9 +2416,18 @@ function renderGeneralEditor() {
   const out = (k, html) => { const el = box.querySelector(`[data-r="${k}"]`); if (el) el.innerHTML = html; };
   const read = () => ({
     hp: +v('hp').value, atk: +v('atk').value, def: +v('def').value, ldr: +v('ldr').value,
-    buy: { spd: +v('spd').value, act: +v('act').value, rng: +v('rng').value },
+    buy: { spd: +v('spd').value, act: +v('act').value, rng: +v('rng').value || 0 },
+    weapon: v('weapon').value,
     skills: [v('s1').value, v('s2')?.value].filter(Boolean),
   });
+  // 射程強化の選択肢は武器で変わる（兵種の基本値の1.5倍まで）
+  const fillRng = (keep) => {
+    const ty = generalType({ weapon: v('weapon').value });
+    const n = maxRng(ty) - TYPES[ty].rng;
+    v('rng').innerHTML = Array.from({ length: n + 1 }, (_, i) => `<option value="${i}" ${Math.min(keep, n) === i ? 'selected' : ''}>+${i}</option>`).join('');
+  };
+  fillRng(b.buy?.rng || 0);
+  v('weapon').addEventListener('change', () => fillRng(+v('rng').value || 0));
   const preview = () => {
     const nb = read();
     const cs = commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, nb, slots);
@@ -2416,6 +2441,7 @@ function renderGeneralEditor() {
     out('def', tmp.def);
     out('ldr', `兵士の駒 ${cs.ldr}つまで${g.rank === '総大将' ? `／士気 +${Math.round((MORALE_BONUS + (cs.ldr - LDR_BASE) * MORALE_PER_LDR) * 1000) / 10}%` : ''}`);
     out('rng', `射程 ${tmp.rng}`);
+    out('weapon', nb.weapon === '弓' ? `固定枠 +${cs.fixedCost - commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, { ...nb, weapon: '刀' }, slots).fixedCost}（遠くから撃てる分、脆い）` : '');
     out('spd', `移動 ${tmp.move}`);
     out('act', `攻撃 ${(tmp.actRate / ACT_PER_ATTACK).toFixed(1)}回`);
     out('s1', SKILLS[v('s1').value]?.desc || '');
