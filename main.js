@@ -542,7 +542,7 @@ function updateIntel(side) {
   const sees = p => eyes.some(o => distance(o, p) <= (o.vision ?? VISION_DEFAULT));
   for (const e of state[side === 'player' ? 'cpu' : 'player'].units) {
     if (!e.alive) delete intel.seen[e.id];
-    else if (visibleTo(side, e)) intel.seen[e.id] = { x: e.x, y: e.y, leader: isLeader(e) };
+    else if (visibleTo(side, e)) intel.seen[e.id] = { x: e.x, y: e.y, leader: isLeader(e), gen: e.rank === '副将' || e.rank === '総大将' };
     else if (intel.seen[e.id] && sees(intel.seen[e.id])) delete intel.seen[e.id];   // 来てみたが、もういない
   }
   for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
@@ -1180,27 +1180,31 @@ function scoutAct(unit) {
 
 /** 暗殺者（オート）: 見えている将（大将を優先）に忍び寄って攻撃する。将が見えなければ敵の本陣の方へ */
 function assassinAct(unit) {
+  const isGeneral = e => e.rank === '副将' || e.rank === '総大将';
   const prey = () => {
-    const gs = seenEnemies(unit).filter(e => e.rank !== '雑兵');
+    const gs = seenEnemies(unit).filter(isGeneral);
     return gs.find(isLeader) || gs.sort((a, b) => distance(unit, a) - distance(unit, b))[0] || null;
   };
+  // 兵長以下には近づかない（見つかりにくい間合い = 斥候なら3マス、ほかは2マス以上を保つ）
+  const exposure = p => seenEnemies(unit).filter(e => !isGeneral(e))
+    .reduce((sum, e) => sum + Math.max(0, (e.traits.includes('scout') ? 3 : 2) - distance(p, e)), 0);
   let target = prey();
   if (!target || distance(unit, target) > effRng(unit)) {
-    const goal = target || searchPoint(unit);
+    // 将が見えなければ、最後に将を見た場所 → ふつうの索敵の地点
+    const lastGen = !target && Object.values(updateIntel(unit.side).seen).filter(s => s.gen)
+      .sort((a, b) => (b.leader - a.leader) || distance(unit, a) - distance(unit, b))[0];
+    const goal = target || lastGen || searchPoint(unit);
     const before = unit.posText;
-    if (moveUnit(unit, unit.move, p => distance(p, goal) + Math.random() * 0.1)) {
+    if (moveUnit(unit, unit.move, p => distance(p, goal) + exposure(p) * 3 + Math.random() * 0.1)) {
       log(`${unit.name} は忍び寄った。${before} → ${unit.posText}`, unit.side);
     }
     target = prey();
   }
   unit.gauge = Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
-  while (unit.gauge >= ACT_PER_ATTACK) {
-    // 将に届かなければ、隣の兵を斬る（威力は弱い）
-    const t = target && target.alive && distance(unit, target) <= effRng(unit) ? target
-      : seenEnemies(unit).find(e => distance(unit, e) <= effRng(unit));
-    if (!t) break;
+  // 狙うのは副将以上だけ（兵長以下は相手にしない）
+  while (unit.gauge >= ACT_PER_ATTACK && target && target.alive && distance(unit, target) <= effRng(unit)) {
     unit.gauge -= ACT_PER_ATTACK;
-    if (performAttack(unit, t)) return;
+    if (performAttack(unit, target)) return;
     if (!unit.alive) return;
   }
 }
@@ -1790,10 +1794,14 @@ function render(acting = null) {
   if (!state.player) return;
   const cur = currentUnit();
   if (cur) acting = cur;
+  // 描き直しの途中で中身が一瞬空になり、スクロール位置が先頭に戻されるので、覚えておいて戻す
+  const scrollers = [...document.querySelectorAll('#battle .battle-body, #battle .battle-side, #field-wrap')];
+  const pos = scrollers.map(el => [el.scrollTop, el.scrollLeft]);
   renderArmy(state.player, 'player', acting);
   renderArmy(state.cpu, 'cpu', acting);
   renderField(acting);
   renderActionPanel();
+  scrollers.forEach((el, i) => { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; });
 }
 
 // ------------------------------------------------------------
@@ -1865,10 +1873,11 @@ function initZoom(kind) {
 }
 
 function showView(v) {
+  const same = !$(`view-${v}`).classList.contains('hidden');   // 同じ画面のまま（局地戦から戻ったときなど）ならスクロール位置はそのまま
   for (const id of ['title', 'form', 'map']) $(`view-${id}`).classList.toggle('hidden', id !== v);
   if (v === 'title') $('btn-continue').classList.toggle('hidden', !campaign.armies && !campaign.setup);
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
-  window.scrollTo(0, 0);
+  if (!same) window.scrollTo(0, 0);
   if (v === 'map') requestAnimationFrame(() => applyZoom('smap'));
 }
 
@@ -2589,7 +2598,16 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
 function fitTopbar() {
   document.documentElement.style.setProperty('--topbar-h', `${document.querySelector('.topbar').offsetHeight}px`);
 }
-window.addEventListener('resize', () => { fitTopbar(); applyZoom('field'); applyZoom('smap'); });
+// スマホ・タブレットではスクロールのたびにアドレスバーが出入りして高さだけが変わる。
+// そのたびにマップの大きさを変えると表示がずれて上に戻されるので、幅が変わったとき（回転など）だけ合わせ直す
+let lastW = window.innerWidth;
+window.addEventListener('resize', () => {
+  fitTopbar();
+  if (window.innerWidth === lastW) return;
+  lastW = window.innerWidth;
+  applyZoom('field');
+  applyZoom('smap');
+});
 if (typeof ResizeObserver === 'function') new ResizeObserver(fitTopbar).observe(document.querySelector('.topbar'));
 fitTopbar();
 initZoom('field');

@@ -741,7 +741,15 @@ function tokenGlyph(t) {
   return { '本隊': '★本', '分隊': '☆', '小隊': '◆', '斥候': '斥', '暗殺者': '暗', '守備隊': '守' }[kind] || '?';
 }
 
+/** 描き直しでスクロール位置が先頭に戻されないよう、覚えておいて描き直した後に戻す */
 function renderStrat() {
+  const wrap = $('smap-wrap'), keep = [wrap.scrollTop, wrap.scrollLeft, window.scrollY];
+  renderStratBody();
+  [wrap.scrollTop, wrap.scrollLeft] = keep;
+  if (window.scrollY !== keep[2]) window.scrollTo(window.scrollX, keep[2]);
+}
+
+function renderStratBody() {
   const box = $('strat-box'), m = smap();
   box.classList.toggle('hidden', !m);
   $('strat-empty').classList.toggle('hidden', !!m);

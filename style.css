@@ -252,12 +252,12 @@ main { padding: 12px; }
 .zoom { display: inline-flex; gap: 2px; vertical-align: middle; }
 .zoom button { padding: 4px 10px; font-size: 0.9rem; background: #2c3038; }
 .cell, .scell { font-size: calc(var(--cell, 24px) * 0.32); }
-#smap-wrap { max-height: calc(100dvh - var(--topbar-h, 60px) - 110px); }
+#smap-wrap { max-height: calc(100svh - var(--topbar-h, 60px) - 110px); }
 .field, .smap { max-width: none; }
 
 /* 局地戦の画面: スマホは縦に積む（操作パネルは下に貼り付け）、PC・タブレットは 戦場｜操作・ログ の2列 */
 .battle-body { display: flex; flex-direction: column; }
-#field-wrap { height: 58dvh; }
+#field-wrap { height: 58svh; }
 .battle-side .action-panel { position: sticky; bottom: 0; z-index: 2; }
 .battle-side .log { height: 220px; }
 @media (min-width: 900px) {
