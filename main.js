@@ -487,6 +487,7 @@ const state = {
   campaignBattle: null, // 軍の編成から出陣した戦闘なら { player: 隊id, cpu: 隊id, before: {...} }
   fog: true,         // 視界（戦場の霧）を使うか
   logBuffer: null,   // 見えない敵の行動ログを一時的にためる
+  intel: null,       // 索敵の記憶（updateIntel）
 };
 
 function allUnits() {
@@ -528,9 +529,50 @@ function seenEnemies(unit) {
   return enemiesOf(unit).filter(e => visibleTo(unit.side, e));
 }
 
-/** 敵が見えないときに向かう地点（敵の本陣のあたり） */
+const SWEEP_STALE = 6;   // 見回ったマスを「もう見た」とみなすターン数（過ぎたらまた探しに行く）
+
+/**
+ * 陣営ごとの索敵の記憶: 最後に敵を見た場所（seen）と、見回ったマスとそのターン（swept）。
+ * 見えている敵の位置を覚え、その場所が見えるところまで来て敵がいなければ忘れる
+ */
+function updateIntel(side) {
+  state.intel ||= {};
+  const intel = (state.intel[side] ||= { seen: {}, swept: {} });
+  const eyes = state[side].units.filter(o => o.alive);
+  const sees = p => eyes.some(o => distance(o, p) <= (o.vision ?? VISION_DEFAULT));
+  for (const e of state[side === 'player' ? 'cpu' : 'player'].units) {
+    if (!e.alive) delete intel.seen[e.id];
+    else if (visibleTo(side, e)) intel.seen[e.id] = { x: e.x, y: e.y, leader: isLeader(e) };
+    else if (intel.seen[e.id] && sees(intel.seen[e.id])) delete intel.seen[e.id];   // 来てみたが、もういない
+  }
+  for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
+    if (sees({ x, y })) intel.swept[`${x},${y}`] = state.turn;
+  }
+  return intel;
+}
+
+/**
+ * 敵が見えないときに向かう地点。
+ * ① 最後に敵を見た場所（大将を優先）→ ② まだ見回っていないマス（敵の本陣寄り・隊ごとに少しずつばらける）→ ③ 敵の本陣
+ */
 function searchPoint(unit) {
-  return { x: Math.floor(state.map.w / 2), y: unit.side === 'player' ? 0 : state.map.h - 1 };
+  const home = { x: Math.floor(state.map.w / 2), y: unit.side === 'player' ? 0 : state.map.h - 1 };
+  if (!state.fog) return home;
+  const intel = updateIntel(unit.side);
+  const seen = Object.values(intel.seen);
+  if (seen.length) {
+    const score = p => distance(unit, p) - (p.leader ? 4 : 0);
+    return seen.reduce((a, b) => (score(b) < score(a) ? b : a));
+  }
+  let best = null, bestScore = Infinity;
+  const jitter = unit.id % 5;
+  for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
+    const t = intel.swept[`${x},${y}`];
+    if (t !== undefined && state.turn - t < SWEEP_STALE) continue;
+    const sc = distance(unit, { x, y }) + distance({ x, y }, home) * 0.5 + ((x * 3 + y * 5 + jitter) % 5) * 0.4;
+    if (sc < bestScore) { bestScore = sc; best = { x, y }; }
+  }
+  return best || home;
 }
 
 /** マンハッタン距離（4方向移動なので斜めは距離2） */
@@ -1495,7 +1537,7 @@ function loadGame() {
     mode: data.mode, map: data.map, player: revive(data.player), cpu: revive(data.cpu),
     turn: data.turn, queue: data.queue, running: data.running, over: data.over, result: data.result,
     logs: [], cmdReady: data.cmdReady, current: data.current, phase: data.phase, manual: data.manual, timer: null,
-    campaignBattle: data.campaignBattle || null, fog: data.fog ?? false,
+    campaignBattle: data.campaignBattle || null, fog: data.fog ?? false, intel: null,
   });
   $('fog').checked = state.fog;
   unitSeq = data.unitSeq;
@@ -1766,7 +1808,9 @@ function applyZoom(kind) {
   const el = $(kind), wrap = $(`${kind}-wrap`);
   const map = kind === 'field' ? state.map : campaign.smap;
   if (!el || !wrap || !map || !wrap.clientWidth) return;
-  const availH = Math.max(160, wrap.clientHeight || window.innerHeight * 0.6);
+  // 戦域図の枠は中身に合わせて伸びる（max-height だけ決まっている）ので、今の高さではなく上限の高さに合わせる
+  const maxH = parseFloat(getComputedStyle(wrap).maxHeight);
+  const availH = Math.max(160, Number.isFinite(maxH) ? maxH : (wrap.clientHeight || window.innerHeight * 0.6));
   const fit = Math.min((wrap.clientWidth - 12) / map.w, (availH - 12) / map.h);   // 全体が収まるマスの大きさ
   const cell = Math.max(8, fit * zoom[kind]);
   el.style.width = `${Math.floor(cell * map.w)}px`;
@@ -2566,7 +2610,7 @@ function reset() {
   Object.assign(state, {
     map: null, player: null, cpu: null, turn: 0, queue: [], running: false, over: false, result: null, timer: null,
     logs: [], cmdReady: false, current: null, phase: null, manual: null, campaignBattle: null,
-    fog: $('fog').checked, logBuffer: null,
+    fog: $('fog').checked, logBuffer: null, intel: null,
   });
   unitSeq = 0;
   $('log').innerHTML = '';
