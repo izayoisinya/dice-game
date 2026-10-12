@@ -568,8 +568,9 @@ function searchPoint(unit) {
   const jitter = unit.id % 5;
   for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
     const t = intel.swept[`${x},${y}`];
-    if (t !== undefined && state.turn - t < SWEEP_STALE) continue;
-    const sc = distance(unit, { x, y }) + distance({ x, y }, home) * 0.5 + ((x * 3 + y * 5 + jitter) % 5) * 0.4;
+    const age = t === undefined ? SWEEP_STALE * 3 : state.turn - t;   // 長く見ていないマスほど優先
+    if (age < SWEEP_STALE) continue;
+    const sc = distance(unit, { x, y }) + distance({ x, y }, home) * 0.8 - Math.min(age, SWEEP_STALE * 3) * 1.5 + ((x * 3 + y * 5 + jitter) % 5) * 0.4;
     if (sc < bestScore) { bestScore = sc; best = { x, y }; }
   }
   return best || home;
@@ -1141,10 +1142,12 @@ function actUnit(unit) {
     return;
   }
 
-  // 一撃離脱（移動 → 攻撃 → 移動）: 攻撃の後に移動力いっぱい離れる
+  // 一撃離脱（移動 → 攻撃 → 移動）: 攻撃の後に離れる。ただし視界の外まで逃げ去らず、
+  // 敵が見える間合い（視界 − 1 マス）に留まって次の攻撃を狙う（逃げ回って戦いが終わらないのを防ぐ）
   if (unit.hitAndRun && attacked > 0 && seenEnemies(unit).length) {
     const before = unit.posText;
-    if (moveUnit(unit, unit.move, p => -nearestEnemyDist(unit, p))) {
+    const keep = Math.max(2, (unit.vision ?? VISION_DEFAULT) - 1);
+    if (moveUnit(unit, unit.move, p => { const d = nearestEnemyDist(unit, p); return (d < keep ? (keep - d) * 10 : (d - keep) * 3) + Math.random() * 0.1; })) {
       log(`${unit.name} は離脱した。${before} → ${unit.posText}`, unit.side);
     }
   }
