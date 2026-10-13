@@ -79,7 +79,7 @@ const TRAITS = {
   zoc:    { name: '足止め', cost: 40 },  // 隣接したマスに入った敵はそこで移動が止まる
   cover:  { name: '庇う',   cost: 0 },
   spear:  { name: '突き・薙ぎ払い', cost: 0 },   // 槍兵の範囲攻撃
-  guard:  { name: '堅守',   cost: 0 },   // 盾兵: 受けるダメージを減らす
+  guard:  { name: '受け流し',   cost: 0 },   // 盾兵: 受けるダメージを減らす
   aim:    { name: '狙い撃ち', cost: 0 }, // 弓兵: 動かずに撃つと命中が上がる
   pursuit: { name: '追撃',  cost: 0 },   // 剣兵: 敵を倒すと行動ゲージがたまる   // 敵と味方の間（同じ縦・横の直線上）にいると、その攻撃を代わりに受ける
   charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
@@ -97,11 +97,15 @@ const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と
 // 兵種の固有能力の強さ。[兵士の駒, 兵長] の順（兵長の方が少し強い）
 const DEFLECT_CUT = [0.3, 0.4];                // 矢払い（剣兵）: 3マス以上離れたところからの攻撃のダメージを減らす（兵士の駒 / 兵長）
 const VOLLEY_TAKEN = 0.3;                        // 長柄の弱み（槍兵）: 3マス以上離れたところからの攻撃（矢）のダメージ +30%
+const BRACE_TARGETS = ['剣兵', '騎兵', '将', '騎将'];   // 迎え突きが効く相手（剣・騎兵と、刀・馬の将。盾兵は盾で受けるので効かない）
 const BRACE_MULT = [0.35, 0.45];                  // 迎え突き（槍兵）: 隣に踏み込んできた敵への一撃の威力（兵士の駒 / 兵長）
 const THRUST_MULT = [[0.8, 0.5], [0.9, 0.6]];   // 突き: 縦に並んだ敵2体（手前 / 奥）
 const SWEEP_MULT = { 2: [0.55, 0.6], 3: [0.4, 0.5] };   // 薙ぎ払い: 周り3マスの弧の中の敵（2体ならそれぞれ55%、3体なら40%。兵長は 60% / 50%）
 const CHARGE_BONUS_LV = [0.3, 0.4];             // 突撃: 直進1マスあたりの威力上昇（初撃のみ）
-const GUARD_CUT = [0.15, 0.25];                 // 堅守: 受けるダメージの軽減
+const PARRY_CHANCE = [35, 45];                   // 受け流し（盾兵）: 攻撃が当たったとき、盾で受け流す確率（%）
+const PARRY_CUT = 0.6;                           // 受け流し: 受け流したときのダメージの軽減
+const PARRY_EXPOSE = 5;                          // 受け流し: 盾で受ける分、避けはしない（狙われると当たりやすい +%）
+const CHARGE_HIT = 10;                           // 突撃: 奇襲の一撃は当たりやすい（命中 +%、相手の回避を無視）
 const AIM_HIT = [5, 10];                        // 狙い撃ち: 移動しなかった行動の命中 +%
 const PURSUIT_GAUGE = [25, 50];                 // 追撃: 敵を倒したときに行動ゲージがたまる量（攻撃1回 = 50）
 /** 固有能力の段階: 兵長なら 1、兵士の駒なら 0 */
@@ -109,12 +113,12 @@ function lv(u) { return u.rank === '兵長' ? 1 : 0; }
 const pct = v => Math.round(v * 100);
 const TRAIT_HELP = {
   zoc: '上下左右に隣接したマスに入った敵は、そこで移動が止まる',
-  spear: `長柄の弱み: 3マス以上離れたところからの攻撃（矢）のダメージ +${pct(VOLLEY_TAKEN)}%。迎え突き: 隣のマスに踏み込んできた敵に先に一撃（威力${pct(BRACE_MULT[0])}%／兵長 ${pct(BRACE_MULT[1])}%、反撃なし）。突き: 自分から見て一直線に並んだ敵2体（隣と、その奥）を同時に攻撃（手前${pct(THRUST_MULT[0][0])}%・奥${pct(THRUST_MULT[0][1])}%／兵長 ${pct(THRUST_MULT[1][0])}%・${pct(THRUST_MULT[1][1])}%）。薙ぎ払い: 周りの8マスのうち、ひと続きの3マス（例: 左・左斜め前・前）に敵が2体以上いれば、まとめて攻撃（2体ならそれぞれ${pct(SWEEP_MULT[2][0])}%・3体なら${pct(SWEEP_MULT[3][0])}%／兵長 ${pct(SWEEP_MULT[2][1])}%・${pct(SWEEP_MULT[3][1])}%）。どちらも攻撃1回分`,
-  guard: `受けるダメージ −${pct(GUARD_CUT[0])}%（兵長 −${pct(GUARD_CUT[1])}%）`,
+  spear: `長柄の弱み: 3マス以上離れたところからの攻撃（矢）のダメージ +${pct(VOLLEY_TAKEN)}%。迎え突き: 隣のマスに踏み込んできた剣兵・騎兵（刀・馬の将も）に先に一撃（威力${pct(BRACE_MULT[0])}%／兵長 ${pct(BRACE_MULT[1])}%、反撃なし）。突き: 自分から見て一直線に並んだ敵2体（隣と、その奥）を同時に攻撃（手前${pct(THRUST_MULT[0][0])}%・奥${pct(THRUST_MULT[0][1])}%／兵長 ${pct(THRUST_MULT[1][0])}%・${pct(THRUST_MULT[1][1])}%）。薙ぎ払い: 周りの8マスのうち、ひと続きの3マス（例: 左・左斜め前・前）に敵が2体以上いれば、まとめて攻撃（2体ならそれぞれ${pct(SWEEP_MULT[2][0])}%・3体なら${pct(SWEEP_MULT[3][0])}%／兵長 ${pct(SWEEP_MULT[2][1])}%・${pct(SWEEP_MULT[3][1])}%）。どちらも攻撃1回分`,
+  guard: `攻撃が当たったとき ${PARRY_CHANCE[0]}%（兵長 ${PARRY_CHANCE[1]}%）の確率で盾で受け流し、ダメージ −${pct(PARRY_CUT)}%。その分、避けはせず当たりやすい（命中 +${PARRY_EXPOSE}%）`,
   aim: `その行動で移動しなかったら命中 +${AIM_HIT[0]}%（兵長 +${AIM_HIT[1]}%）。動かずに構えて撃つほど当たる（反撃にも効く）`,
   pursuit: `矢払い: 3マス以上離れたところからの攻撃のダメージ −${pct(DEFLECT_CUT[0])}%（兵長 −${pct(DEFLECT_CUT[1])}%）。追撃: 敵を倒すと行動ゲージが ${PURSUIT_GAUGE[0]}（兵長 ${PURSUIT_GAUGE[1]}）たまり（攻撃1回分 = ${ACT_PER_ATTACK}）、移動力の半分だけ次の敵へ踏み込める。弱った敵を続けて仕留める`,
   cover: '敵と味方の間（同じ縦・横の直線上）にいると、その味方への攻撃を代わりに受ける',
-  charge: `上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×${pct(CHARGE_BONUS_LV[0])}%（兵長 ×${pct(CHARGE_BONUS_LV[1])}%）だけ初撃の威力が上がる（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示`,
+  charge: `上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×${pct(CHARGE_BONUS_LV[0])}%（兵長 ×${pct(CHARGE_BONUS_LV[1])}%）だけ初撃の威力が上がる。奇襲の一撃なので相手の回避を無視し、命中 +${CHARGE_HIT}%（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示`,
   scout: '視界が広い。隠密の敵も2マスまで見つけられる',
   stealth: '敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで見える）',
   assassin: '将（兵長以上）への攻撃 ×1.6、兵士の駒への攻撃 ×0.5',
@@ -345,7 +349,8 @@ const EVADE_CAP = 10;
 const EXPOSE_CAP = 5;
 /** 回避による命中率の増減（マイナス = 避けられやすい） */
 function evadeMod(defender) {
-  return Math.max(-EVADE_CAP, Math.min(EXPOSE_CAP, Math.round((EVADE_BASE_SPD - defender.spd) * EVADE_PER_SPD)));
+  return Math.max(-EVADE_CAP, Math.min(EXPOSE_CAP, Math.round((EVADE_BASE_SPD - defender.spd) * EVADE_PER_SPD)))
+    + (defender.traits.includes('guard') ? PARRY_EXPOSE : 0);   // 盾は避けずに受ける
 }
 // 兵として編成される兵種（総大将専用の「将」は除く）
 const TYPE_NAMES = Object.keys(TYPES).filter(k => !TYPES[k].commanderOnly && !TYPES[k].special);
@@ -772,8 +777,10 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   const dist = distance(attacker, defender);
   const f = attacker.falloff[dist] ?? attacker.falloff[Math.max(...Object.keys(attacker.falloff).map(Number))];
   const aim = attacker.traits.includes('aim') && !attacker.moved ? AIM_HIT[lv(attacker)] : 0;
-  const evade = evadeMod(defender);
-  const hitRate = Math.max(5, Math.min(99, Math.round(attacker.hit * f.hit) + aim + evade));
+  // 突撃（bonus > 1）は奇襲の一撃: 相手の回避を無視し、命中も上がる
+  const charging = bonus > 1;
+  const evade = charging ? Math.max(0, evadeMod(defender)) : evadeMod(defender);
+  const hitRate = Math.max(5, Math.min(99, Math.round(attacker.hit * f.hit) + aim + evade + (charging ? CHARGE_HIT : 0)));
   const hitRoll = d(100);
   if (hitRoll > hitRate) return { hit: false, hitRate, hitRoll, evade };
   const die = d(6);
@@ -784,12 +791,13 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   const mult = f.pow * (MATCHUP[attacker.type]?.[defender.type] ?? 1) * bonus * (1 + SURROUND_BONUS * surround)
     * Math.sqrt(sizeRatio(attacker))    // 人数が多い駒ほど1回の威力も大きい
     * (attacker.traits.includes('assassin') ? (defender.rank === '雑兵' ? ASSASSIN_VS_TROOPS : ASSASSIN_VS_GENERAL) : 1)
-    * (defender.traits.includes('guard') ? 1 - GUARD_CUT[lv(defender)] : 1)
     * (defender.traits.includes('pursuit') && dist >= 3 ? 1 - DEFLECT_CUT[lv(defender)] : 1)   // 剣兵の矢払い
     * (defender.traits.includes('spear') && dist >= 3 ? 1 + VOLLEY_TAKEN : 1);                 // 槍兵は矢に弱い
   const base = Math.max(atk * MIN_DAMAGE_RATE, atk - effDef(defender) * 0.5 + die * DAMAGE_DIE_SCALE);
-  const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult));
-  return { hit: true, hitRate, hitRoll, evade, dmg, die, crit, surround };
+  // 受け流し（盾）: 一定の確率でダメージを大きく減らす
+  const parry = defender.traits.includes('guard') && d(100) <= PARRY_CHANCE[lv(defender)];
+  const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult * (parry ? 1 - PARRY_CUT : 1)));
+  return { hit: true, hitRate, hitRoll, evade, dmg, die, crit, surround, parry };
 }
 
 /** ログ用: 回避で命中率が変わっていれば添える */
@@ -987,11 +995,11 @@ function spearSpot(unit) {
 function braceStrike(unit, fromX, fromY) {
   for (const e of enemiesOf(unit)) {
     if (!unit.alive) break;
-    if (!e.traits.includes('spear') || distance(e, unit) !== 1 || distance(e, { x: fromX, y: fromY }) <= 1) continue;
+    if (!e.traits.includes('spear') || !BRACE_TARGETS.includes(unit.type) || distance(e, unit) !== 1 || distance(e, { x: fromX, y: fromY }) <= 1) continue;
     const r = calcAttack(e, unit, BRACE_MULT[lv(e)]);
     if (!r.hit) { log(`🔱 ${e.name} の迎え突き！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] ${unit.name} にかわされた！`, e.side); continue; }
     unit.hp = Math.max(0, unit.hp - r.dmg);
-    log(`🔱 ${e.name} の迎え突き！ ${unit.name} に ${r.dmg} のダメージ！ (残HP ${unit.hp}/${unit.maxHp})`, e.side);
+    log(`🔱 ${e.name} の迎え突き！ ${unit.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！ (残HP ${unit.hp}/${unit.maxHp})`, e.side);
     if (!unit.alive) { log(`☠ ${unit.name} は倒れた！`, 'death'); checkVictory(); return true; }
   }
   return !unit.alive;
@@ -1016,7 +1024,7 @@ function performSpear(unit, opt, atkMult = 1) {
     const r = calcAttack(unit, h.u, h.mult, atkMult);
     if (!r.hit) { log(`　${h.u.name} にかわされた！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}]`, unit.side); continue; }
     h.u.hp = Math.max(0, h.u.hp - r.dmg);
-    log(`　${h.u.name} に ${r.dmg} のダメージ！${r.crit ? ' 会心！' : ''} (残HP ${h.u.hp}/${h.u.maxHp})`, unit.side);
+    log(`　${h.u.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！${r.crit ? ' 会心！' : ''} (残HP ${h.u.hp}/${h.u.maxHp})`, unit.side);
     if (!h.u.alive) {
       log(`☠ ${h.u.name} は倒れた！`, 'death');
       if (checkVictory()) return true;
@@ -1056,7 +1064,7 @@ function performAttack(unit, target, bonus = 1, atkMult = 1) {
     return false;
   }
   target.hp = Math.max(0, target.hp - r.dmg);
-  log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${atkMult > 1 ? ` 強撃×${atkMult}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
+  log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${atkMult > 1 ? ` 強撃×${atkMult}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
   if (!target.alive) {
     log(`☠ ${target.name} は倒れた！`, 'death');
     if (checkVictory()) return true;
@@ -1097,7 +1105,7 @@ function counterAttack(defender, attacker) {
     return false;
   }
   attacker.hp = Math.max(0, attacker.hp - r.dmg);
-  log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${attacker.name} に ${r.dmg} のダメージ！ (残HP ${attacker.hp}/${attacker.maxHp})`, defender.side);
+  log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${attacker.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！ (残HP ${attacker.hp}/${attacker.maxHp})`, defender.side);
   if (!attacker.alive) {
     log(`☠ ${attacker.name} は倒れた！`, 'death');
     return checkVictory();
