@@ -60,6 +60,7 @@ const MIN_TROOPS = 10;
 const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
 const FORT_DEF = 0.2;          // 戦域図の砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
+const SERGEANT_SPARE_ATK = 0.3;   // 兵長の配り直しで ATK に回す重み（HP / DEF は 1）
 const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
@@ -384,11 +385,13 @@ class Unit {
     // テンポ系（移動・攻撃頻度）は階級で伸びすぎないよう、雑兵基準に割り戻して使う
     // （総大将の SPD / ACT は最初から雑兵基準の固定値なので割り戻さない）
     const tempoDiv = cs ? 1 : r.cost / BASE_COST;
-    // 割り戻して使わなくなった SPD / ACT の分（兵長なら半分）は、HP / ATK / DEF に元の比率で配り直す（コストの合計は変えない）
+    // 割り戻して使わなくなった SPD / ACT の分（兵長なら半分）は、HP / DEF 寄りに配り直す（コストの合計は変えない）。
+    // 兵長は「堅い隊の柱」。ATK にも少し回すが、攻撃に偏った強化にはしない
     if (tempoDiv > 1) {
       const spare = (st.spd + st.act) * (1 - 1 / tempoDiv);
-      const body = st.hp + st.atk + st.def;
-      for (const k of ['hp', 'atk', 'def']) st[k] = Math.round(st[k] + spare * st[k] / body);
+      const w = { hp: st.hp, def: st.def, atk: st.atk * SERGEANT_SPARE_ATK };
+      const W = w.hp + w.def + w.atk;
+      for (const k of ['hp', 'atk', 'def']) st[k] = Math.round(st[k] + spare * w[k] / W);
     }
     this.id = ++unitSeq;
     this.side = side;           // 'player' | 'cpu'
