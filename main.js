@@ -95,7 +95,7 @@ const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と
 // 槍兵の範囲攻撃（攻撃1回分を使う）
 // 兵種の固有能力の強さ。[兵士の駒, 兵長] の順（兵長の方が少し強い）
 const THRUST_MULT = [[0.8, 0.5], [0.9, 0.6]];   // 突き: 縦に並んだ敵2体（手前 / 奥）
-const SWEEP_MULT = [0.4, 0.5];                  // 薙ぎ払い: 横に並んだ敵3体（それぞれ）
+const SWEEP_MULT = { 2: [0.55, 0.6], 3: [0.4, 0.5] };   // 薙ぎ払い: 周り3マスの弧の中の敵（2体ならそれぞれ55%、3体なら40%。兵長は 60% / 50%）
 const CHARGE_BONUS_LV = [0.3, 0.4];             // 突撃: 直進1マスあたりの威力上昇（初撃のみ）
 const GUARD_CUT = [0.15, 0.25];                 // 堅守: 受けるダメージの軽減
 const AIM_HIT = [5, 10];                        // 狙い撃ち: 移動しなかった行動の命中 +%
@@ -105,7 +105,7 @@ function lv(u) { return u.rank === '兵長' ? 1 : 0; }
 const pct = v => Math.round(v * 100);
 const TRAIT_HELP = {
   zoc: '上下左右に隣接したマスに入った敵は、そこで移動が止まる',
-  spear: `突き: 自分から見て一直線に並んだ敵2体（隣と、その奥）を同時に攻撃（手前${pct(THRUST_MULT[0][0])}%・奥${pct(THRUST_MULT[0][1])}%／兵長 ${pct(THRUST_MULT[1][0])}%・${pct(THRUST_MULT[1][1])}%）。薙ぎ払い: 隣の敵と、その左右に並んだ敵の3体を同時に攻撃（それぞれ${pct(SWEEP_MULT[0])}%／兵長 ${pct(SWEEP_MULT[1])}%）。どちらも攻撃1回分`,
+  spear: `突き: 自分から見て一直線に並んだ敵2体（隣と、その奥）を同時に攻撃（手前${pct(THRUST_MULT[0][0])}%・奥${pct(THRUST_MULT[0][1])}%／兵長 ${pct(THRUST_MULT[1][0])}%・${pct(THRUST_MULT[1][1])}%）。薙ぎ払い: 周りの8マスのうち、ひと続きの3マス（例: 左・左斜め前・前）に敵が2体以上いれば、まとめて攻撃（2体ならそれぞれ${pct(SWEEP_MULT[2][0])}%・3体なら${pct(SWEEP_MULT[3][0])}%／兵長 ${pct(SWEEP_MULT[2][1])}%・${pct(SWEEP_MULT[3][1])}%）。どちらも攻撃1回分`,
   guard: `受けるダメージ −${pct(GUARD_CUT[0])}%（兵長 −${pct(GUARD_CUT[1])}%）`,
   aim: `その行動で移動しなかったら命中 +${AIM_HIT[0]}%（兵長 +${AIM_HIT[1]}%）。動かずに構えて撃つほど当たる（反撃にも効く）`,
   pursuit: `敵を倒すと行動ゲージが ${PURSUIT_GAUGE[0]}（兵長 ${PURSUIT_GAUGE[1]}）たまる（攻撃1回分 = ${ACT_PER_ATTACK}）。弱った敵を続けて仕留める`,
@@ -854,37 +854,52 @@ function findCharge(unit) {
 }
 
 /**
- * 槍兵の範囲攻撃の候補。上下左右それぞれの向きで、
- *   突き = 隣の敵とその奥の敵（2体とも見えている）
- *   薙ぎ払い = 隣の敵と、その左右の敵（3体とも見えている）
- * を探す。{ kind, name, hits: [{ u, mult }] } の配列
+ * 槍兵の範囲攻撃の候補。
+ *   突き = 上下左右の向きで、隣の敵とその奥の敵（2体とも見えている）
+ *   薙ぎ払い = 周りの8マスのうち、ひと続きの3マス（例: 左・左斜め前・前）の弧に敵が2体以上（見えている）
+ * を探す。{ kind, name, hits: [{ u, mult }], dir } の配列
  */
+const RING = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];   // 周りの8マス（時計回り）
 function spearOptions(unit) {
   if (!unit.traits.includes('spear')) return [];
   const foe = (x, y) => { const o = unitAt(x, y); return o && o.side !== unit.side && visibleTo(unit.side, o) ? o : null; };
   const opts = [];
   for (const [dx, dy] of DIRS) {
     const front = foe(unit.x + dx, unit.y + dy);
-    if (!front) continue;
-    const back = foe(unit.x + 2 * dx, unit.y + 2 * dy);
+    const back = front && foe(unit.x + 2 * dx, unit.y + 2 * dy);
     if (back && effRng(unit) >= 2) {
       const m = THRUST_MULT[lv(unit)];
-      opts.push({ kind: 'thrust', name: '突き', hits: [{ u: front, mult: m[0] }, { u: back, mult: m[1] }] });
+      opts.push({ kind: 'thrust', name: '突き', dir: [dx, dy], hits: [{ u: front, mult: m[0] }, { u: back, mult: m[1] }] });
     }
-    const l = foe(unit.x + dx - dy, unit.y + dy - dx), r = foe(unit.x + dx + dy, unit.y + dy + dx);
-    if (l && r) opts.push({ kind: 'sweep', name: '薙ぎ払い', hits: [l, front, r].map(u => ({ u, mult: SWEEP_MULT[lv(unit)] })) });
+  }
+  const seen = new Set();
+  for (let i = 0; i < RING.length; i++) {
+    const arc = [RING[(i + 7) % 8], RING[i], RING[(i + 1) % 8]];
+    const us = arc.map(([dx, dy]) => foe(unit.x + dx, unit.y + dy)).filter(Boolean);
+    if (us.length < 2) continue;
+    const key = us.map(u => u.id).sort().join(',');
+    if (seen.has(key)) continue;   // 同じ顔ぶれになる弧は1つだけ
+    seen.add(key);
+    // 反撃してくるのは弧の真ん中（いなければ上下左右で隣の敵）
+    const mid = foe(unit.x + RING[i][0], unit.y + RING[i][1]);
+    const main = mid || us.find(u => distance(unit, u) === 1) || us[0];
+    const mult = SWEEP_MULT[us.length][lv(unit)];
+    opts.push({ kind: 'sweep', name: '薙ぎ払い', dir: RING[i], main, hits: us.map(u => ({ u, mult })) });
   }
   return opts;
 }
 
-const SPEAR_SPOT_MIN = 1.2;   // オートの槍兵が回り込むのは、技の見込みがこれ以上のとき（ふつうの攻撃 = 1）
+const SPEAR_SPOT_MIN = 1.2;   // オートの槍兵が回り込むのは、技の見込みがふつうの攻撃の 1.2 倍以上のとき
 
 /** オートの槍兵が突き・薙ぎ払いを使える、移動できる範囲でいちばん見込みの大きいマス（今の位置で使えるなら null） */
 function spearSpot(unit) {
   const value = () => Math.max(0, ...spearOptions(unit).map(o => spearValue(unit, o)));
   const [ox, oy] = [unit.x, unit.y];
   const here = value();
-  let best = null, bestV = Math.max(SPEAR_SPOT_MIN, here + 0.01);
+  // ふつうの攻撃（いちばん近い敵への相性）よりはっきり得なときだけ回り込む（敵の隣に出て反撃を受けるので）
+  const t = nearestEnemy(unit);
+  const normal = t ? (MATCHUP[unit.type]?.[t.type] ?? 1) : 1;
+  let best = null, bestV = Math.max(SPEAR_SPOT_MIN * normal, here + 0.01);
   for (const [x, y] of reachableCells(unit, unit.move)) {
     [unit.x, unit.y] = [x, y];
     const v = value();
@@ -896,9 +911,8 @@ function spearSpot(unit) {
 
 /** 技の向き（ボタンの表示用） */
 function dirName(unit, opt) {
-  const c = opt.kind === 'sweep' ? opt.hits[1].u : opt.hits[0].u;
-  const dx = c.x - unit.x, dy = c.y - unit.y;
-  return dx > 0 ? '→' : dx < 0 ? '←' : dy > 0 ? '↓' : '↑';
+  const [dx, dy] = opt.dir;
+  return { '0,-1': '↑', '1,-1': '↗', '1,0': '→', '1,1': '↘', '0,1': '↓', '-1,1': '↙', '-1,0': '←', '-1,-1': '↖' }[`${dx},${dy}`] || '';
 }
 
 /** 範囲攻撃の見込み（倍率 × 相性の合計）。オートで普通の攻撃と比べる */
@@ -920,7 +934,7 @@ function performSpear(unit, opt, atkMult = 1) {
       if (checkVictory()) return true;
     }
   }
-  const main = opt.kind === 'sweep' ? opt.hits[1].u : opt.hits[0].u;
+  const main = opt.kind === 'sweep' ? opt.main : opt.hits[0].u;
   return counterAttack(main, unit);
 }
 
@@ -1829,7 +1843,7 @@ function renderActionPanel() {
   if (ui2.spear != null && !spOpts[ui2.spear]) ui2.spear = null;
   const spearBtns = spOpts.map((o, i) => `<button class="skill ${ui2.spear === i ? 'armed' : ''}" data-spear="${i}">🔱${o.name}${dirName(unit, o)}${ui2.spear === i ? ' ▶ 実行' : ''}（${o.hits.map(h => `${h.u.name} ${Math.round(h.mult * 100)}%`).join('・')}）</button>`).join('');
   const spearHint = unit.traits.includes('spear') && canHit
-    ? `<div class="ap-hint">🔱 ${spOpts.length ? '技のボタンを押すと当たる敵が黄色で光ります。もう一度押すと実行。' : ''}ふつうの攻撃は射程${effRng(unit)}の敵1体。<b>突き</b>は隣の敵の真後ろにも敵がいるとき（2体）、<b>薙ぎ払い</b>は隣の敵の左右にも敵がいるとき（3体）に使えます。</div>` : '';
+    ? `<div class="ap-hint">🔱 ${spOpts.length ? '技のボタンを押すと当たる敵が黄色で光ります。もう一度押すと実行。' : ''}ふつうの攻撃は射程${effRng(unit)}の敵1体。<b>突き</b>は隣の敵の真後ろにも敵がいるとき（2体）、<b>薙ぎ払い</b>は周りのひと続きの3マス（角を含む）に敵が2体以上いるときに使えます。</div>` : '';
   panel.innerHTML = `
     <div class="ap-head"><b>${unit.name}</b>（${unit.rank}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
       ／ 移動 ${unit.rooted ? '不可' : unit.move} ／ 射程 ${effRng(unit)} ／ 攻撃できる回数 ${Math.floor(gauge / ACT_PER_ATTACK)}
