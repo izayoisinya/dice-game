@@ -384,6 +384,12 @@ class Unit {
     // テンポ系（移動・攻撃頻度）は階級で伸びすぎないよう、雑兵基準に割り戻して使う
     // （総大将の SPD / ACT は最初から雑兵基準の固定値なので割り戻さない）
     const tempoDiv = cs ? 1 : r.cost / BASE_COST;
+    // 割り戻して使わなくなった SPD / ACT の分（兵長なら半分）は、HP / ATK / DEF に元の比率で配り直す（コストの合計は変えない）
+    if (tempoDiv > 1) {
+      const spare = (st.spd + st.act) * (1 - 1 / tempoDiv);
+      const body = st.hp + st.atk + st.def;
+      for (const k of ['hp', 'atk', 'def']) st[k] = Math.round(st[k] + spare * st[k] / body);
+    }
     this.id = ++unitSeq;
     this.side = side;           // 'player' | 'cpu'
     this.name = name;
