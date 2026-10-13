@@ -328,3 +328,6 @@ button.off { background: #2c3038; color: #bbb; }
 .gen-weapon.bow { background: #2f5a3a; color: #bfe8c8; }
 /* iPhone・iPad でタップがダブルタップ（拡大）待ちにならないように */
 html { touch-action: manipulation; }
+/* 槍の技（突き・薙ぎ払い）の当たる敵 */
+.cell.spearhit { box-shadow: inset 0 0 0 3px #ffd84a, 0 0 8px #ffd84a; }
+button.skill.armed { background: #b8860b; }

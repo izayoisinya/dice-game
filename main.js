@@ -877,6 +877,30 @@ function spearOptions(unit) {
   return opts;
 }
 
+const SPEAR_SPOT_MIN = 1.2;   // オートの槍兵が回り込むのは、技の見込みがこれ以上のとき（ふつうの攻撃 = 1）
+
+/** オートの槍兵が突き・薙ぎ払いを使える、移動できる範囲でいちばん見込みの大きいマス（今の位置で使えるなら null） */
+function spearSpot(unit) {
+  const value = () => Math.max(0, ...spearOptions(unit).map(o => spearValue(unit, o)));
+  const [ox, oy] = [unit.x, unit.y];
+  const here = value();
+  let best = null, bestV = Math.max(SPEAR_SPOT_MIN, here + 0.01);
+  for (const [x, y] of reachableCells(unit, unit.move)) {
+    [unit.x, unit.y] = [x, y];
+    const v = value();
+    if (v >= bestV) { bestV = v; best = [x, y]; }
+  }
+  [unit.x, unit.y] = [ox, oy];
+  return best;
+}
+
+/** 技の向き（ボタンの表示用） */
+function dirName(unit, opt) {
+  const c = opt.kind === 'sweep' ? opt.hits[1].u : opt.hits[0].u;
+  const dx = c.x - unit.x, dy = c.y - unit.y;
+  return dx > 0 ? '→' : dx < 0 ? '←' : dy > 0 ? '↓' : '↑';
+}
+
 /** 範囲攻撃の見込み（倍率 × 相性の合計）。オートで普通の攻撃と比べる */
 function spearValue(unit, opt) {
   return opt.hits.reduce((a, h) => a + h.mult * (MATCHUP[unit.type]?.[h.u.type] ?? 1), 0);
@@ -1084,7 +1108,19 @@ function actUnit(unit) {
       target = charge.target;
     }
   }
-  if (!charge && !holding && !unit.rooted && distance(unit, target) > unit.best) {
+  // 槍兵: 突き・薙ぎ払いで複数の敵をまとめて狙える位置があれば、そこへ回り込む
+  if (!charge && !holding && !unit.rooted && unit.traits.includes('spear')) {
+    const spot = spearSpot(unit);
+    if (spot) {
+      const before = unit.posText;
+      [unit.x, unit.y] = spot;
+      movedBefore = true;
+      unit.moved = true;
+      log(`🔱 ${unit.name} は敵の並びを狙える位置へ回り込んだ。${before} → ${unit.posText}`, unit.side);
+      target = nearestEnemy(unit);
+    }
+  }
+  if (!charge && !movedBefore && !holding && !unit.rooted && distance(unit, target) > unit.best) {
     const before = unit.posText;
     // 「敵を最適距離で攻撃できる空きマス」（側面・背後を含む）に近づく。後衛は前衛より前に出ない
     const moved = moveUnit(unit, unit.move, advanceScorer(unit, target));
@@ -1105,7 +1141,7 @@ function actUnit(unit) {
   }
 
   // 射程で勝っていて敵が最適距離より近い → 最適距離に向けて後退（引き撃ち、移動力の半分まで）
-  if (!unit.rooted && unit.rng > target.rng && distance(unit, target) < unit.best) {
+  if (!unit.rooted && unit.rng > target.rng && distance(unit, target) < unit.best && !spearOptions(unit).length) {
     const before = unit.posText;
     if (moveUnit(unit, unit.retreat, p =>
           withinFrontLine(unit, p) ? Math.abs(nearestEnemyDist(unit, p) - unit.best) : Infinity)) {
@@ -1403,6 +1439,7 @@ function onCellClick(x, y) {
   if (deployMode()) return onDeployClick(x, y);
   const unit = currentUnit();
   if (!unit || state.over) return;
+  ui2.spear = null;   // マスを押したら槍の技の表示はやめる
   const other = unitAt(x, y);
 
   // 敵をクリック → 攻撃
@@ -1442,6 +1479,7 @@ function onCellClick(x, y) {
 }
 
 function manualSpear(unit, opt) {
+  ui2.spear = null;
   if (state.phase === 'move') enterAttack(unit);
   if (unit.gauge < ACT_PER_ATTACK) return;
   unit.gauge -= ACT_PER_ATTACK;
@@ -1521,6 +1559,7 @@ function onWithdraw(unit) {
 
 function endManual() {
   const unit = currentUnit();
+  ui2.spear = null;
   state.current = null;
   state.phase = null;
   state.manual = null;
@@ -1643,7 +1682,7 @@ function renderArmy(army, side, acting) {
     : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
 
-const ui2 = { preview: null, deploySel: null, helpOpen: false };   // preview = 範囲を表示するスキル、deploySel = 布陣で選んだ駒
+const ui2 = { preview: null, deploySel: null, helpOpen: false, spear: null };   // spear = 範囲を表示中の槍の技（spearOptions の番号）   // preview = 範囲を表示するスキル、deploySel = 布陣で選んだ駒
 
 /** その駒にかかっているバフの説明（例: ATK+30%・残2回） */
 function buffText(u) {
@@ -1700,6 +1739,8 @@ function renderField(acting) {
   const curU = currentUnit();
   const chargeSet = new Set(curU && state.phase === 'move' && curU.traits.includes('charge')
     ? manualReach(curU).filter(([x, y]) => chargeFrom(curU, x, y)).map(([x, y]) => `${x},${y}`) : []);
+  const spOpt = curU && ui2.spear != null ? spearOptions(curU)[ui2.spear] : null;
+  const spearCells = new Set(spOpt ? spOpt.hits.map(h => `${h.u.x},${h.u.y}`) : []);
   const cmdRange = curU && skillReady(curU, '一斉指揮') && canUseSkill(curU, '一斉指揮') && ui2.preview === '一斉指揮';
   const deploy = deployMode();
   const cur = currentUnit();
@@ -1721,6 +1762,7 @@ function renderField(acting) {
         (inSight(x, y) ? '' : ' fog') + (u && ghost ? ' ghost' : '') +
         (chargeSet.has(`${x},${y}`) ? ' charge' : '') +
         (cmdRange && Math.abs(curU.x - x) + Math.abs(curU.y - y) <= COMMAND_RANGE ? ' skillrange' : '') +
+        (spearCells.has(`${x},${y}`) ? ' spearhit' : '') +
         (deploy && inDeployZone(x, y) ? ' deployzone' : '') + (deploy && u && u.id === ui2.deploySel ? ' acting' : '') +
         (u && u.buffs.length ? ' buffed' : '');
       cell.dataset.x = x;
@@ -1783,12 +1825,17 @@ function renderActionPanel() {
   // 槍兵の範囲攻撃（攻撃できる回数が残っていれば）
   const canHit = (state.phase === 'move' || state.phase === 'attack') && gauge >= ACT_PER_ATTACK;
   const spOpts = canHit ? spearOptions(unit) : [];
-  const spearBtns = spOpts.map((o, i) => `<button class="skill" data-spear="${i}">🔱${o.name}（${o.hits.map(h => `${h.u.name} ${Math.round(h.mult * 100)}%`).join('・')}）</button>`).join('');
+  // 1回目のタップで盤面に当たる敵を表示、2回目（「実行」）で攻撃する
+  if (ui2.spear != null && !spOpts[ui2.spear]) ui2.spear = null;
+  const spearBtns = spOpts.map((o, i) => `<button class="skill ${ui2.spear === i ? 'armed' : ''}" data-spear="${i}">🔱${o.name}${dirName(unit, o)}${ui2.spear === i ? ' ▶ 実行' : ''}（${o.hits.map(h => `${h.u.name} ${Math.round(h.mult * 100)}%`).join('・')}）</button>`).join('');
+  const spearHint = unit.traits.includes('spear') && canHit
+    ? `<div class="ap-hint">🔱 ${spOpts.length ? '技のボタンを押すと当たる敵が黄色で光ります。もう一度押すと実行。' : ''}ふつうの攻撃は射程${effRng(unit)}の敵1体。<b>突き</b>は隣の敵の真後ろにも敵がいるとき（2体）、<b>薙ぎ払い</b>は隣の敵の左右にも敵がいるとき（3体）に使えます。</div>` : '';
   panel.innerHTML = `
     <div class="ap-head"><b>${unit.name}</b>（${unit.rank}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
       ／ 移動 ${unit.rooted ? '不可' : unit.move} ／ 射程 ${effRng(unit)} ／ 攻撃できる回数 ${Math.floor(gauge / ACT_PER_ATTACK)}
       ${state.manual.smash ? ' ／ 強撃 準備中' : ''}${unit.hitAndRun ? ' ／ 一撃離脱中（反撃なし・攻撃後に移動可）' : ''}${state.manual.charge ? ` ／ 突撃 ${state.manual.charge.run}マス` : ''}</div>
     <div class="ap-hint">${hint}</div>
+    ${spearHint}
     ${nowBuff ? `<div class="ap-buff">効果中: ${nowBuff}</div>` : ''}
     ${skillHelp || traitHelp ? `<details class="ap-help" ${ui2.helpOpen ? 'open' : ''}><summary>スキル・能力の説明</summary>${skillHelp}${traitHelp}</details>` : ''}
     <div class="ap-buttons">
@@ -1807,7 +1854,11 @@ function renderActionPanel() {
   const wd = $('ap-withdraw');
   if (wd) wd.onclick = () => onWithdraw(unit);
   for (const b of panel.querySelectorAll('button.skill')) b.onclick = () => onSkill(b.dataset.skill);
-  for (const b of panel.querySelectorAll('[data-spear]')) b.onclick = () => manualSpear(unit, spOpts[+b.dataset.spear]);
+  for (const b of panel.querySelectorAll('[data-spear]')) b.onclick = () => {
+    const i = +b.dataset.spear;
+    if (ui2.spear === i) manualSpear(unit, spOpts[i]);
+    else { ui2.spear = i; render(unit); }
+  };
   const help = panel.querySelector('.ap-help');
   if (help) help.ontoggle = () => { ui2.helpOpen = help.open; };
   for (const b of panel.querySelectorAll('[data-preview]')) b.onclick = () => { ui2.preview = ui2.preview ? null : b.dataset.preview; render(unit); };
