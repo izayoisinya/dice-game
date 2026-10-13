@@ -717,7 +717,8 @@ function cpuAct(t) {
     placeTrap(t, tc[0][0], tc[0][1]);
     return false;
   }
-  target = cpuTarget(t);
+  // 見えている敵を目指して隣まで来たなら、戦力で劣っていても攻めかかる（隣で睨み合ったまま動かなくなるのを防ぐ）
+  target = cpuTarget(t) || (goal && goal.side === 'player' && tokenTargets(t).includes(goal) ? goal : null);
   if (target) { attackToken(t, target); return true; }
   t.acted = true;
   return false;

@@ -664,6 +664,11 @@ function actGain(u) {
   return u.actRate * Math.sqrt(sizeRatio(u));
 }
 
+/** 自分の行動の始めにたまる行動ゲージ。手数が少ない駒・兵が減った駒でも、毎ターン最低1回は攻撃できる */
+function chargedGauge(u) {
+  return Math.max(ACT_PER_ATTACK, Math.min(gaugeCap(u), u.gauge + actGain(u)));
+}
+
 /** 行動ゲージの上限（手数が多い駒はため込める量も多い） */
 function gaugeCap(u) {
   return ACT_GAUGE_MAX * Math.max(1, Math.sqrt(sizeRatio(u)));
@@ -1112,7 +1117,7 @@ function actUnit(unit) {
   }
 
   // 射程内 → 行動ゲージが ACT_PER_ATTACK たまっている分だけ攻撃
-  unit.gauge = Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
+  unit.gauge = chargedGauge(unit);
   // 一撃離脱: 攻撃できるなら攻撃の前に使う（反撃を受けず、攻撃後に離脱する）
   if (!unit.rooted && skillReady(unit, '一撃離脱') && unit.gauge >= ACT_PER_ATTACK &&
       target && distance(unit, target) <= effRng(unit)) {
@@ -1216,7 +1221,7 @@ function assassinAct(unit) {
     }
     target = prey();
   }
-  unit.gauge = Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
+  unit.gauge = chargedGauge(unit);
   // 狙うのは副将以上だけ（兵長以下は相手にしない）
   while (unit.gauge >= ACT_PER_ATTACK && target && target.alive && distance(unit, target) <= effRng(unit)) {
     unit.gauge -= ACT_PER_ATTACK;
@@ -1348,7 +1353,7 @@ function beginManual(unit) {
 /** 攻撃フェーズへ。行動ゲージはこの行動で1回だけたまる */
 function enterAttack(unit) {
   if (!state.manual.gaugeAdded) {
-    unit.gauge = Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
+    unit.gauge = chargedGauge(unit);
     state.manual.gaugeAdded = true;
   }
   state.phase = 'attack';
@@ -1370,7 +1375,7 @@ function manualReach(unit) {
 /** 今攻撃できる敵 */
 function manualTargets(unit) {
   if (state.phase !== 'move' && state.phase !== 'attack') return [];
-  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
+  const gauge = state.manual.gaugeAdded ? unit.gauge : chargedGauge(unit);
   if (gauge < ACT_PER_ATTACK) return [];
   return seenEnemies(unit).filter(e => distance(unit, e) <= effRng(unit));
 }
@@ -1754,7 +1759,7 @@ function renderActionPanel() {
     return;
   }
   panel.classList.remove('hidden');
-  const gauge = state.manual.gaugeAdded ? unit.gauge : Math.min(gaugeCap(unit), unit.gauge + actGain(unit));
+  const gauge = state.manual.gaugeAdded ? unit.gauge : chargedGauge(unit);
   const hint = {
     move: '青いマスをクリックで移動（移動しないで攻撃も可）。赤枠の敵をクリックで攻撃。',
     attack: state.manual && unit.hitAndRun && state.manual.attacked > 0
