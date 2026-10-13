@@ -48,7 +48,9 @@ const MOVE_DIV = 40;          // 移動力 = 階級補正後SPD ÷ 40（切り�
 const MOVE_BONUS = 1;         // テンポのため全員 +1（盾 3 / 槍・弓・将 3〜4 / 剣 4 / 騎 5）
 const ACT_PER_ATTACK = 50;    // 行動ゲージがこの値たまるごとに1回攻撃できる
 const ACT_GAUGE_MAX = 100;    // ゲージの上限（ため込みすぎ防止）
-const DAMAGE_DIE_SCALE = 10;  // ダメージのダイス = 1d6 × 10（ステータスの桁に合わせる）
+const DAMAGE_DIE_SCALE = 10;  // （旧方式の名残。今は使わない）
+const DEF_K = 100;            // ダメージ = ATK × DEF_K ÷ (DEF_K + DEF) × …（比率型。DEF が高くても 0 にはならず、割合で減る）
+const DMG_SCALE = 1.3;        // ダメージの全体の大きさ（兵士どうしで旧方式と同じくらいの値になるように）
 const MIN_DAMAGE = 10;        // 最低ダメージ（固定値）
 const MIN_DAMAGE_RATE = 0.15; // 最低でも ATK のこの割合は通る（DEF が高すぎて削れない状態を防ぐ）
 // 駒の人数（雑兵の駒だけ。将は人数で数えない個人の駒）
@@ -60,7 +62,6 @@ const MIN_TROOPS = 10;
 const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
 const FORT_DEF = 0.2;          // 戦域図の砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
-const SERGEANT_SPARE_ATK = 0.3;   // 兵長の配り直しで ATK に回す重み（HP / DEF は 1）
 const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
@@ -95,10 +96,10 @@ const VISION_DEFAULT = 4;
 const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と保つ距離
 // 槍兵の範囲攻撃（攻撃1回分を使う）
 // 兵種の固有能力の強さ。[兵士の駒, 兵長] の順（兵長の方が少し強い）
-const DEFLECT_CUT = [0.3, 0.4];                // 矢払い（剣兵）: 3マス以上離れたところからの攻撃のダメージを減らす（兵士の駒 / 兵長）
+const DEFLECT_CUT = [0.2, 0.3];                // 矢払い（剣兵）: 3マス以上離れたところからの攻撃のダメージを減らす（兵士の駒 / 兵長）
 const VOLLEY_TAKEN = 0.3;                        // 長柄の弱み（槍兵）: 3マス以上離れたところからの攻撃（矢）のダメージ +30%
 const BRACE_TARGETS = ['剣兵', '騎兵', '将', '騎将'];   // 迎え突きが効く相手（剣・騎兵と、刀・馬の将。盾兵は盾で受けるので効かない）
-const BRACE_MULT = [0.35, 0.45];                  // 迎え突き（槍兵）: 隣に踏み込んできた敵への一撃の威力（兵士の駒 / 兵長）
+const BRACE_MULT = [0.3, 0.4];                  // 迎え突き（槍兵）: 隣に踏み込んできた敵への一撃の威力（兵士の駒 / 兵長）
 const THRUST_MULT = [[0.8, 0.5], [0.9, 0.6]];   // 突き: 縦に並んだ敵2体（手前 / 奥）
 const SWEEP_MULT = { 2: [0.55, 0.6], 3: [0.4, 0.5] };   // 薙ぎ払い: 周り3マスの弧の中の敵（2体ならそれぞれ55%、3体なら40%。兵長は 60% / 50%）
 const CHARGE_BONUS_LV = [0.3, 0.4];             // 突撃: 直進1マスあたりの威力上昇（初撃のみ）
@@ -392,14 +393,8 @@ class Unit {
     // テンポ系（移動・攻撃頻度）は階級で伸びすぎないよう、雑兵基準に割り戻して使う
     // （総大将の SPD / ACT は最初から雑兵基準の固定値なので割り戻さない）
     const tempoDiv = cs ? 1 : r.cost / BASE_COST;
-    // 割り戻して使わなくなった SPD / ACT の分（兵長なら半分）は、HP / DEF 寄りに配り直す（コストの合計は変えない）。
-    // 兵長は「堅い隊の柱」。ATK にも少し回すが、攻撃に偏った強化にはしない
-    if (tempoDiv > 1) {
-      const spare = (st.spd + st.act) * (1 - 1 / tempoDiv);
-      const w = { hp: st.hp, def: st.def, atk: st.atk * SERGEANT_SPARE_ATK };
-      const W = w.hp + w.def + w.atk;
-      for (const k of ['hp', 'atk', 'def']) st[k] = Math.round(st[k] + spare * w[k] / W);
-    }
+    // （以前は割り戻した SPD / ACT の分を HP / DEF に配り直していたが、比率型のダメージと DEF の物差しの統一で
+    //   兵長は配り直さなくても兵士 約135人分の強さになったのでやめた）
     this.id = ++unitSeq;
     this.side = side;           // 'player' | 'cpu'
     this.name = name;
@@ -414,7 +409,9 @@ class Unit {
     this.maxHp = this.troops ? Math.round(st.hp * HP_SCALE * this.troops / BASE_TROOPS) : st.hp * HP_SCALE;
     this.hp = this.maxHp;
     this.atk = st.atk;
-    this.def = st.def;
+    // DEF は階級の倍率を掛けない（兵士の駒と同じ物差し）。HP と ATK だけが階級で伸びる。
+    // DEF まで伸ばすと「HP × ATK × DEF」で強さが階級の3乗になり、同じコストの兵士の駒が太刀打ちできなくなるため
+    this.def = Math.round(st.def / (r.cost / BASE_COST));
     // SPD・ACT は兵士の駒と同じ物差し（階級の倍率を割り戻した値）で持つ。行動順・回避・表示はこの値
     this.spd = Math.round(st.spd / tempoDiv) + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
     this.rng = cs ? cs.rng : t.rng;
@@ -767,8 +764,8 @@ function surroundCount(attacker, defender) {
 /**
  * 攻撃判定:
  *   命中率 = HIT × 距離の命中倍率 ＋ 回避（相手の SPD で ±10%）。1d100 が命中率以下なら命中
- *   基本値   = max(ATK × 0.25, ATK − DEF × 0.5 + 1d6×10)
- *   ダメージ = max(10, 基本値 × 距離の威力倍率 × 相性 × 突撃 × 包囲)  ※四捨五入
+ *   基本値   = ATK × 100 ÷ (100 + DEF) × (0.7 + 1d6×0.1) × DMG_SCALE（比率型。DEF は割合で効く）
+ *   ダメージ = max(10, 基本値 × 距離の威力倍率 × 人数 × 突撃 × 包囲 × 能力)  ※四捨五入
  *   包囲     = 1 + 0.1 × 攻撃対象に隣接する味方の数
  *   1d6 の出目6はクリティカルで ATK × 1.5 として計算
  */
@@ -793,7 +790,8 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
     * (attacker.traits.includes('assassin') ? (defender.rank === '雑兵' ? ASSASSIN_VS_TROOPS : ASSASSIN_VS_GENERAL) : 1)
     * (defender.traits.includes('pursuit') && dist >= 3 ? 1 - DEFLECT_CUT[lv(defender)] : 1)   // 剣兵の矢払い
     * (defender.traits.includes('spear') && dist >= 3 ? 1 + VOLLEY_TAKEN : 1);                 // 槍兵は矢に弱い
-  const base = Math.max(atk * MIN_DAMAGE_RATE, atk - effDef(defender) * 0.5 + die * DAMAGE_DIE_SCALE);
+  // 比率型: DEF は割合で効く。ダイスは ×0.8〜1.2（6 はクリティカルで ATK ×1.5）
+  const base = atk * DEF_K / (DEF_K + effDef(defender)) * (0.7 + die * 0.1) * DMG_SCALE;
   // 受け流し（盾）: 一定の確率でダメージを大きく減らす
   const parry = defender.traits.includes('guard') && d(100) <= PARRY_CHANCE[lv(defender)];
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult * (parry ? 1 - PARRY_CUT : 1)));
