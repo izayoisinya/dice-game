@@ -336,3 +336,18 @@ button.skill.armed { background: #b8860b; }
 .steps button.small { font-size: 0.85rem; padding: 3px 10px; border-radius: 14px; white-space: nowrap; }
 /* 兵力（予備 / 総数）はスクロールしても上部バーの下に貼り付ける */
 .cp-pool { position: sticky; top: var(--topbar-h, 60px); z-index: 5; background: #262930; margin: 8px -8px; padding: 6px 8px; border-radius: 6px; box-shadow: 0 4px 8px rgba(0,0,0,0.35); }
+/* 編成画面: 将・兵長・斥候の一覧を左のサイドメニューに（兵力の欄の下に貼り付き、中だけスクロール） */
+@media (min-width: 900px) {
+  .cp-main { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .cp-side { position: sticky; top: calc(var(--topbar-h, 60px) + var(--pool-h, 80px));
+    max-height: calc(100dvh - var(--topbar-h, 60px) - var(--pool-h, 80px) - 12px); overflow-y: auto;
+    background: #22252c; border-radius: 8px; padding: 0 8px 8px; }
+  .cp-side .cp-cols { grid-template-columns: 1fr; gap: 4px; }
+  .cp-side .cp-cols > div { max-height: none; overflow: visible; }
+  .cp-side table { font-size: 0.85rem; }
+  .cp-side table button.small { padding: 2px 6px; font-size: 0.75rem; }
+  .cp-body .squad-grid { grid-template-columns: 1fr; }
+}
+@media (min-width: 1400px) {
+  .cp-body .squad-grid { grid-template-columns: 1fr 1fr; }
+}

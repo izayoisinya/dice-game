@@ -2609,11 +2609,15 @@ function renderCampaign() {
       <span class="sub">副将 🎲[${P.generalRoll.dice.join('][')}]+${GENERAL_DICE.plus} = ${P.generalRoll.total}人 ／ 兵長 ${P.sergeants.length}人
         ／ 斥候 🎲[${P.scoutRoll?.dice.join('][') ?? ''}] = ${P.specials.filter(x => x.kind === '斥候').length}人
         ／ 暗殺者 🎲[${P.assassinRoll?.dice.join('][') ?? ''}]−1 = ${P.specials.filter(x => x.kind === '暗殺者').length}人</span></div>
+    <div class="cp-main">
+    <aside class="cp-side">
     <div class="cp-cols">
       <div><h3>将</h3><table><thead><tr><th>名前</th><th>階級</th><th>統率</th><th>所属</th><th></th></tr></thead><tbody>${generals}</tbody></table></div>
       <div><h3>兵長</h3><table><thead><tr><th>名前</th><th>兵種</th><th>統率</th><th>所属</th></tr></thead><tbody>${sergeants}</tbody></table></div>
       <div><h3>斥候・暗殺者</h3><table><thead><tr><th>名前</th><th>役職</th><th>所属</th></tr></thead><tbody>${specials}</tbody></table></div>
     </div>
+    </aside>
+    <div class="cp-body">
     <h3>隊</h3>
     <div class="squad-grid">${squads}</div>
     <div class="sq-new">${leaderOpts ? `新しい隊（副将 → 分隊 / 兵長 → 小隊）: <select data-role="newleader"><option value="">隊長を選ぶ…</option>${leaderOpts}</select>` : '<span class="sub">隊長にできる将が残っていません</span>'}</div>
@@ -2622,8 +2626,16 @@ function renderCampaign() {
       ? '<div class="sub">CPU軍の編成は分かりません（戦域図で敵の隊を見つけると、隊の兵数が分かります）。設定で視界をオフにすると表示されます</div>'
       : `<details class="cp-cpu"><summary>CPU軍の編成（視界オフ）</summary>
       ${A.cpu.squads.map(q => `<div>${q.name}（${squadKind(A.cpu, q)}）: 配下の将${q.members.length} / ${q.pieces.map(p => `${p.type}${p.size}`).join('・')}</div>`).join('')}
-    </details>`}`;
+    </details>`}
+    </div></div>`;
+  fitPool();
   if (campaign.editing) renderGeneralEditor();
+}
+
+/** 上部に貼り付く兵力の欄の高さ（サイドメニューをその下に貼り付けるため） */
+function fitPool() {
+  const pool = document.querySelector('#campaign .cp-pool');
+  if (pool) document.documentElement.style.setProperty('--pool-h', `${pool.offsetHeight + 16}px`);
 }
 
 /** 戦域図に出たあとの編成（見るだけ） */
@@ -2819,6 +2831,7 @@ window.addEventListener('resize', () => {
   fitTopbar();
   if (window.innerWidth === lastW) return;
   lastW = window.innerWidth;
+  fitPool();
   applyZoom('field');
   applyZoom('smap');
 });
