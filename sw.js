@@ -1,7 +1,7 @@
 // ダイス戦記 Service Worker
 //   ホーム画面へのインストール（PWA）とオフライン起動のため。
 //   更新がすぐ届くように「まずネットから取り、つながらなければ保存済みのものを使う」方式。
-const CACHE = 'dice-senki-v18';
+const CACHE = 'dice-senki-v19';
 const FILES = ['./', './index.html', './style.css', './main.js', './setup.js', './strategy.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 

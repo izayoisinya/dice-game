@@ -2673,7 +2673,7 @@ function renderGeneralEditor() {
     out('hp', tmp.maxHp);
     out('atk', tmp.atk);
     out('def', tmp.def);
-    out('ldr', `兵士の駒 ${cs.ldr}つまで${g.rank === '総大将' ? `／士気 +${Math.round((MORALE_BONUS + (cs.ldr - LDR_BASE) * MORALE_PER_LDR) * 1000) / 10}%` : ''}`);
+    out('ldr', `率いる人数 ${cs.ldr * LDR_MEN}人分・駒 ${cs.ldr}つまで${g.rank === '総大将' ? `／士気 +${Math.round((MORALE_BONUS + (cs.ldr - LDR_BASE) * MORALE_PER_LDR) * 1000) / 10}%` : ''}`);
     out('rng', `射程 ${tmp.rng}`);
     const wDiff = cs.fixedCost - commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, { ...nb, weapon: '刀' }, slots).fixedCost;
     const wTraits = (TYPES[generalType(nb)].traits || []).map(k => TRAITS[k].name).join('・');
@@ -2681,7 +2681,13 @@ function renderGeneralEditor() {
     // 強化なしの場合と並べて、強化で何が変わるかを見せる
     const base = k => { const u = new Unit('player', g.rank, COMMANDER_TYPE, '', 0, 0, { ...nb, buy: { ...nb.buy, [k]: 0 } }); unitSeq--; return u; };
     const b0 = base('spd'), a0 = base('act'), per = u => (u.actRate / ACT_PER_ATTACK).toFixed(1);
-    out('spd', `SPD ${b0.spd} → <b>${tmp.spd}</b>／移動 ${b0.move} → <b>${tmp.move}</b><div class="sub">SPD が高いほどターン内で先に動ける</div>`);
+    // SPD は個体差（戦闘で +0〜20）を入れない基本値で見せる。移動力は SPD ${MOVE_DIV} ごとに +1
+    const spdOf = b => commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, b, slots).stats.spd;
+    const s0 = spdOf({ ...nb, buy: { ...nb.buy, spd: 0 } }), s1 = spdOf(nb);
+    const mv = sp => Math.max(1, Math.ceil(sp / MOVE_DIV)) + MOVE_BONUS;
+    const nextMove = Math.ceil(s1 / MOVE_DIV) * MOVE_DIV + 1 - s1;   // あといくつで移動 +1
+    out('spd', `SPD ${s0} → <b>${s1}</b>／移動 ${mv(s0)} → <b>${mv(s1)}</b>
+      <div class="sub">移動は SPD ${MOVE_DIV} ごとに +1（あと SPD ${nextMove} で移動 ${mv(s1) + 1}）。SPD が高いほど先に動け、攻撃を避けやすい。戦闘では個体差 +0〜20</div>`);
     out('act', `攻撃 ${per(a0)} → <b>${per(tmp)}</b> 回/ターン<div class="sub">ACT ${a0.act} → ${tmp.act}</div>`);
     out('s1', SKILLS[v('s1').value]?.desc || '');
     if (v('s2')) out('s2', SKILLS[v('s2').value]?.desc || '');
