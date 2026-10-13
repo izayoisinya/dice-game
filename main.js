@@ -169,7 +169,31 @@ const TYPES = {
             weaponDiscount: 55,   // 射程4の分のコストを軽く（全額だと刀の副将に勝率2〜10%。45で32〜42%、60で65%）
             falloff: { 1: { hit: 0.6, pow: 1.0 }, 2: { hit: 1.0, pow: 1.0 }, 3: { hit: 1.0, pow: 1.0 },
                        4: { hit: 0.9, pow: 0.9 }, 5: { hit: 0.75, pow: 0.75 }, 6: { hit: 0.6, pow: 0.6 } } },
+  // 槍を持った将: 射程2、突き・薙ぎ払いが使える
+  '槍将': { stats: { hp: 110, atk: 100, def: 90, spd: 90, act: 70 }, rng: 2, hit: 85, best: 2, commanderOnly: true, traits: ['spear'],
+            weaponDiscount: -10,   // 範囲攻撃の分、少し高く（副将どうしの勝負で 刀 48% / 槍 49%）
+            falloff: { 1: { hit: 1.0, pow: 0.9 }, 2: { hit: 0.9, pow: 1.0 }, 3: { hit: 0.8, pow: 0.8 } } },
+  // 盾を持った将: 受けるダメージを減らす（堅守）。庇うは持たない（将が味方の身代わりになって倒れると負けるので）
+  '盾将': { stats: { hp: 120, atk: 110, def: 100, spd: 90, act: 70 }, rng: 1, hit: 85, best: 1, commanderOnly: true, traits: ['guard'],
+            weaponDiscount: -10,   // 堅守の分、少し高く（割引なしだと勝率 63〜71%、−10 で 57%）
+            falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
+  // 馬に乗った将: 足が速く（SPD が高い分、固定枠も高い）、一直線に走り込んで突撃できる
+  '騎将': { stats: { hp: 100, atk: 90, def: 80, spd: 130, act: 70 }, rng: 1, hit: 85, best: 1, commanderOnly: true, traits: ['charge'],
+            weaponDiscount: 45,    // 足の分を軽く（割引なしだと勝率 5%、+40 で 35%、+45 で 43%、+80 で 88%）
+            falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
 };
+
+/** 将の武器。三すくみの相性は持たない（将の兵種はどれも相性 ×1.0） */
+const WEAPONS = {
+  '刀': { type: '将', icon: '⚔', label: '刀（近接・射程1）' },
+  '槍': { type: '槍将', icon: '🔱', label: '槍（射程2・突き/薙ぎ払い）' },
+  '弓': { type: '弓将', icon: '🏹', label: '弓（遠距離・射程4・後衛）' },
+  '盾': { type: '盾将', icon: '🛡', label: '盾（堅守: 受けるダメージ減）' },
+  '馬': { type: '騎将', icon: '🐎', label: '馬（騎乗・突撃・足が速い）' },
+};
+function weaponOf(build) {
+  return WEAPONS[build?.weapon] ? build.weapon : '刀';
+}
 
 /** 兵種の固有能力のコスト合計 */
 function traitCost(t) {
@@ -235,7 +259,7 @@ const COMMANDER_BUILDS = {
 const SKILL_SLOTS = { '総大将': 2, '副将': 1 };
 const SKILLS = {
   '強撃':       { cost: 250, cooldown: 3, desc: '次の一撃の ATK ×1.15' },
-  '鉄壁の構え': { cost: 200, cooldown: 3, desc: '次の自分の行動まで DEF +100%。その行動では移動しない' },
+  '鉄壁の構え': { cost: 200, cooldown: 3, desc: '次の自分の行動まで DEF +100%。その行動では移動しない。周り2マス以内の味方も、それぞれ次の行動まで DEF +40%（守りの陣を敷く）' },
   '一斉指揮':   { cost: 300, cooldown: 4, desc: '自分と周囲3マスの味方の ATK +30% / DEF +15%（各自の行動2回分）' },
   '一撃離脱':   { cost: 250, cooldown: 2, desc: '攻撃の前に使う。この行動の攻撃は反撃を受けず、攻撃の後に移動力いっぱい動ける（移動 → 攻撃 → 移動）' },
   '遠隔狙撃':   { cost: 250, cooldown: 3, desc: 'この行動だけ射程 +1' },
@@ -273,10 +297,10 @@ function clampShares(w) {
 }
 
 /** 総大将のステータスを、兵種の固定枠 + 型の振り分けで作る */
-/** 将の兵種: 武器が弓なら「弓将」、それ以外は「将」 */
+/** 将の兵種: 武器で決まる（刀 = 将 / 槍 = 槍将 / 弓 = 弓将 / 盾 = 盾将 / 馬 = 騎将） */
 function generalType(build, type = COMMANDER_TYPE) {
   const b = typeof build === 'string' ? COMMANDER_BUILDS[build] : build;
-  return b && b.weapon === '弓' && TYPES[type]?.commanderOnly ? '弓将' : type;
+  return b && TYPES[type]?.commanderOnly ? WEAPONS[weaponOf(b)].type : type;
 }
 
 function commanderStats(type, cost, build, slots = SKILL_SLOTS['総大将']) {
@@ -662,6 +686,18 @@ function sizeDefBonus(u) {
 /** 1回の行動でたまる行動ゲージ（人数が多いほど手数が増える） */
 function actGain(u) {
   return u.actRate * Math.sqrt(sizeRatio(u));
+}
+
+const IRON_WALL_RANGE = 2;     // 鉄壁の構え: 味方にも効く範囲（マス）
+const IRON_WALL_ALLY = 0.4;    // 鉄壁の構え: 味方の DEF +40%
+
+/** 鉄壁の構え: 自分は DEF +100%・移動しない。周りの味方は DEF +40%（それぞれ次の行動まで） */
+function ironWall(unit) {
+  unit.buffs.push({ stat: 'def', value: 1.0, turns: 1 });
+  unit.rooted = true;
+  const near = alliesOf(unit).filter(a => distance(a, unit) <= IRON_WALL_RANGE);
+  for (const a of near) a.buffs.push({ stat: 'def', value: IRON_WALL_ALLY, turns: 1 });
+  if (near.length) log(`🛡 ${unit.name} の鉄壁の構え！ 周りの ${near.length}体（${near.map(a => a.name).join('・')}）も DEF +${IRON_WALL_ALLY * 100}%`, unit.side);
 }
 
 /** 自分の行動の始めにたまる行動ゲージ。手数が少ない駒・兵が減った駒でも、毎ターン最低1回は攻撃できる */
@@ -1102,10 +1138,10 @@ function actUnit(unit) {
   // 鉄壁の構え: 敵2体以上に迫られているか、弱っていて敵が近いときに守りを固める
   if (skillReady(unit, '鉄壁の構え')) {
     const close = seenEnemies(unit).filter(e => distance(e, unit) <= 2).length;
-    if (close >= 2 || (unit.hp < unit.maxHp * 0.5 && distance(unit, target) <= 3)) {
+    const guarded = alliesOf(unit).filter(a => distance(a, unit) <= IRON_WALL_RANGE).length;
+    if (close >= 2 || (close >= 1 && guarded >= 2) || (unit.hp < unit.maxHp * 0.5 && distance(unit, target) <= 3)) {
       useSkill(unit, '鉄壁の構え');
-      unit.buffs.push({ stat: 'def', value: 1.0, turns: 1 });
-      unit.rooted = true;
+      ironWall(unit);
     }
   }
   // 突撃（騎兵など）: 一直線に走り込める敵がいれば優先する
@@ -1526,8 +1562,7 @@ function onSkill(name) {
   if (!unit || !skillReady(unit, name) || !canUseSkill(unit, name)) return;
   useSkill(unit, name);
   if (name === '鉄壁の構え') {
-    unit.buffs.push({ stat: 'def', value: 1.0, turns: 1 });
-    unit.rooted = true;
+    ironWall(unit);
     enterAttack(unit);
   } else if (name === '一斉指揮') {
     const near = alliesOf(unit).filter(a => distance(a, unit) <= COMMAND_RANGE);
@@ -2161,7 +2196,24 @@ function poolLeft(army, type) {
 }
 
 /**
- * 隊に入れられる兵士の駒の上限 = 隊長の統率力（配下の将の統率力は足さない）。
+ * 指揮枠: 隊長の統率力の分だけ、兵士の駒と配下の将を入れられる。
+ * 使う枠 = 兵士の駒 1 / 兵長 1 / 副将 2（斥候・暗殺者は単独で動く者なので 0）
+ */
+const LDR_USE = { piece: 1, '兵長': 1, '副将': 2 };
+function memberUse(m) {
+  if (!m || m.kind) return 0;
+  return m.rank ? LDR_USE[m.rank] ?? 2 : LDR_USE['兵長'];
+}
+function squadUsed(army, q) {
+  return q.pieces.length * LDR_USE.piece + q.members.reduce((a, id) => a + memberUse(memberById(army, id)), 0);
+}
+/** 隊にあと入れられる指揮枠 */
+function squadRoom(army, q) {
+  return squadCap(army, q) - squadUsed(army, q);
+}
+
+/**
+ * 隊の指揮枠 = 隊長の統率力（配下の将の統率力は足さない）。
  * 隊長が倒れて統率力の低い将が継ぐと上限を超えることがある（統率オーバー。戦域図では移動が遅くなる予定）
  */
 function squadCap(army, q) {
@@ -2206,40 +2258,37 @@ function splitPieces(type, n, target) {
 function autoForm(army) {
   const main = army.squads.find(q => q.name === '本隊');
   army.squads = [main];
+  // 本隊に残す副将は、兵士の駒（兵種の数）を入れても指揮枠が余る分だけ。ほかの副将はそれぞれ分隊を率いる
   const subs = shuffled(army.generals.filter(g => g.rank === '副将'));
-  for (const g of subs.slice(0, Math.floor(subs.length / 2))) {
+  const types = TYPE_NAMES.filter(t => army.totals[t] > 0).length;
+  const keep = Math.max(0, Math.min(1, Math.floor((squadCap(army, main) - types) / LDR_USE['副将'])));
+  for (const g of subs.slice(keep)) {
     army.squads.push({ id: `${army.side}-Q${army.seq++}`, name: `${g.name}隊`, leader: g.id, members: [], pieces: [] });
   }
   autoFill(army);
 }
-
-/**
- * 自動配置: 今ある隊（隊の数と隊長）はそのままに、配下の将・斥候・暗殺者・兵士を配り直す。
- *   - 隊長でない副将は本隊に残る
- *   - 分隊は得意な兵種を2〜4つ、小隊（兵長が隊長）は隊長の兵種＋0〜1つ。本隊は全兵種
- *   - 兵長は各隊の兵種に1人ずつ（本隊から）。余った兵長は予備
- *   - 斥候は本隊から1人ずつ、暗殺者は本隊以外の隊（なければ本隊）に1人ずつ。余りは予備
- *   - 兵士は 本隊 2 : 分隊 1 : 小隊 0.5 の割合で配り、100人前後の駒にする（統率力に収まらなければ駒を大きくする）
- */
 function autoFill(army) {
   const main = army.squads.find(q => q.name === '本隊');
   for (const q of army.squads) { q.members = []; q.pieces = []; }
   const leaders = new Set(army.squads.map(q => q.leader));
-  for (const g of army.generals) if (g.rank === '副将' && !leaders.has(g.id)) main.members.push(g.id);
   const focus = new Map();
   for (const q of army.squads) {
     const lead = memberById(army, q.leader);
     if (q === main) focus.set(q, TYPE_NAMES);
-    else if (lead.rank) focus.set(q, shuffled(TYPE_NAMES).slice(0, 1 + d(3)));
-    else focus.set(q, [lead.type, ...shuffled(TYPE_NAMES.filter(t => t !== lead.type)).slice(0, d(2) - 1)]);
+    else if (lead.rank) focus.set(q, shuffled(TYPE_NAMES).slice(0, Math.min(1 + d(3), squadCap(army, q))));
+    else focus.set(q, [lead.type, ...shuffled(TYPE_NAMES.filter(t => t !== lead.type)).slice(0, Math.min(d(2), squadCap(army, q)) - 1)]);
   }
+  // 指揮枠のうち、兵士の駒（兵種ごとに最低1つ）の分は空けておく
+  const pieceNeed = q => Math.max(1, focus.get(q).filter(t => army.totals[t] > 0).length);
+  const fits = (q, m) => squadRoom(army, q) - memberUse(m) >= pieceNeed(q);
+  for (const g of army.generals) if (g.rank === '副将' && !leaders.has(g.id) && fits(main, g)) main.members.push(g.id);
   const freeSergeants = army.sergeants.filter(sg => !leaders.has(sg.id));
   for (const q of army.squads) {
     const lead = memberById(army, q.leader);
     for (const t of focus.get(q)) {
       if (!lead.rank && lead.type === t) continue;   // 小隊の隊長がすでにその兵種の兵長
       const i = freeSergeants.findIndex(sg => sg.type === t);
-      if (i >= 0) q.members.push(freeSergeants.splice(i, 1)[0].id);
+      if (i >= 0 && fits(q, freeSergeants[i])) q.members.push(freeSergeants.splice(i, 1)[0].id);
     }
   }
   army.specials.filter(x => x.kind === '斥候').forEach((x, i) => { if (i < army.squads.length) army.squads[i].members.push(x.id); });
@@ -2259,10 +2308,10 @@ function autoFill(army) {
     if (main) share.get(main)[t] = rest;
   }
   for (const q of army.squads) {
-    const cap = squadCap(army, q);
+    const cap = Math.max(1, squadRoom(army, q));   // 配下の将を入れた残りの指揮枠
     for (let target = AUTO_PIECE; ; target += 50) {
       q.pieces = Object.entries(share.get(q)).flatMap(([t, n]) => splitPieces(t, n, target));
-      if (q.pieces.length <= cap) break;
+      if (q.pieces.length <= cap || target > 5000) break;
     }
   }
 }
@@ -2454,7 +2503,7 @@ function renderCampaign() {
   if (campaign.smap) return renderCampaignLocked();
   const usedBy = id => squadOf(P, id)?.name || '予備';
   const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
-  const generals = P.generals.map(g => `<tr><td>${g.name}${g.build?.weapon === '弓' ? ' <span class="gen-weapon bow">🏹弓</span>' : ''}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
+  const generals = P.generals.map(g => `<tr><td>${g.name}${weaponOf(g.build) !== '刀' ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
       <td><button class="small" data-act="edit" data-id="${g.id}">振り分け</button></td></tr>`).join('');
   const sergeants = P.sergeants.map(sg => `<tr><td>${sg.name}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
   const specials = P.specials.map(x => `<tr><td>${x.name}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
@@ -2466,22 +2515,22 @@ function renderCampaign() {
     const lead = memberById(P, q.leader);
     const cap = squadCap(P, q);
     // 副将は、総大将か副将が率いる隊にだけ入れる（兵長が率いる小隊には兵長だけ）
-    const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）`;
-    const sgOpts = freeMembers(m => !m.rank || lead?.rank, true).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
+    const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}・枠${memberUse(m)}）`;
+    const sgOpts = freeMembers(m => (!m.rank || lead?.rank) && memberUse(m) <= cap - squadUsed(P, q), true).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
     const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type} ${p.size}人${P.sergeants.some(s => s.type === p.type && q.members.includes(s.id)) || (lead && !lead.rank && lead.type === p.type) ? '★' : ''}
         <button class="x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     const sgs = q.members.map(id => `<span class="chip">${desc(memberById(P, id))}
         <button class="x" data-act="rmsg" data-q="${q.id}" data-id="${id}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     return `<div class="squad">
-      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 駒 ${q.pieces.length}/${cap}${q.pieces.length > cap ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
+      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 指揮枠 ${squadUsed(P, q)}/${cap}${squadUsed(P, q) > cap ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
         ${q.name !== '本隊' ? `<button class="small" data-act="disband" data-q="${q.id}">解散</button>` : ''}</div>
       <div>配下の将: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">${lead?.rank ? '副将・兵長' : '兵長'}・斥候・暗殺者を追加…</option>${sgOpts}</select>` : ''}</div>
       <div>兵士の駒: ${pieces}</div>
       <div class="sq-add">
         <select data-role="ptype" data-q="${q.id}">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
         <input type="number" data-role="psize" data-q="${q.id}" min="${MIN_TROOPS}" step="10" value="${PIECE_DEFAULT}">人
-        <button class="small" data-act="addpiece" data-q="${q.id}" ${q.pieces.length >= cap ? 'disabled' : ''}>駒を追加</button>
-        <span class="sub">（★=兵長が隊長、ATK/DEF+${SERGEANT_BUFF * 100}%）</span>
+        <button class="small" data-act="addpiece" data-q="${q.id}" ${squadUsed(P, q) >= cap ? 'disabled' : ''}>駒を追加</button>
+        <span class="sub">（★=兵長が隊長、ATK/DEF+${SERGEANT_BUFF * 100}%。指揮枠: 兵士の駒 ${LDR_USE.piece}・兵長 ${LDR_USE['兵長']}・副将 ${LDR_USE['副将']}・斥候/暗殺者 0）</span>
       </div>
     </div>`;
   }).join('');
@@ -2550,7 +2599,7 @@ function renderGeneralEditor() {
     ${row('統率力', '<span data-v="ldr"></span>', `<input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}">`, '<span data-r="ldr"></span>')}
     ${row('SPD 強化<div class="sub">素早さ：行動の順番・移動力</div>', `<select data-g="spd">${upOpts(b.buy?.spd || 0)}</select>`, '', '<span data-r="spd"></span>')}
     ${row('ACT 強化<div class="sub">手数：1ターンの攻撃回数</div>', `<select data-g="act">${upOpts(b.buy?.act || 0)}</select>`, '', '<span data-r="act"></span>')}
-    ${row('武器', `<select data-g="weapon"><option value="刀" ${b.weapon !== '弓' ? 'selected' : ''}>刀（近接・射程1）</option><option value="弓" ${b.weapon === '弓' ? 'selected' : ''}>弓（遠距離・射程4・後衛）</option></select>`, '', '<span class="sub" data-r="weapon"></span>')}
+    ${row('武器', `<select data-g="weapon">${Object.entries(WEAPONS).map(([k, w]) => `<option value="${k}" ${weaponOf(b) === k ? 'selected' : ''}>${w.icon} ${w.label}</option>`).join('')}</select>`, '', '<span class="sub" data-r="weapon"></span>')}
     ${row('射程 強化', `<select data-g="rng"></select>`, '', '<span data-r="rng"></span>')}
     ${row('スキル1', `<select data-g="s1">${skillOpts(b.skills[0])}</select>`, '', '<span class="sub" data-r="s1"></span>')}
     ${slots > 1 ? row('スキル2', `<select data-g="s2"><option value="">なし</option>${skillOpts(b.skills[1])}</select>`, '', '<span class="sub" data-r="s2"></span>') : ''}
@@ -2585,7 +2634,9 @@ function renderGeneralEditor() {
     out('def', tmp.def);
     out('ldr', `兵士の駒 ${cs.ldr}つまで${g.rank === '総大将' ? `／士気 +${Math.round((MORALE_BONUS + (cs.ldr - LDR_BASE) * MORALE_PER_LDR) * 1000) / 10}%` : ''}`);
     out('rng', `射程 ${tmp.rng}`);
-    out('weapon', nb.weapon === '弓' ? `固定枠 +${cs.fixedCost - commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, { ...nb, weapon: '刀' }, slots).fixedCost}（遠くから撃てる分、脆い）` : '');
+    const wDiff = cs.fixedCost - commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, { ...nb, weapon: '刀' }, slots).fixedCost;
+    const wTraits = (TYPES[generalType(nb)].traits || []).map(k => TRAITS[k].name).join('・');
+    out('weapon', weaponOf(nb) === '刀' ? '' : `固定枠 ${wDiff >= 0 ? '+' : ''}${Math.round(wDiff)}${wTraits ? `／能力: ${wTraits}` : ''}`);
     // 強化なしの場合と並べて、強化で何が変わるかを見せる
     const base = k => { const u = new Unit('player', g.rank, COMMANDER_TYPE, '', 0, 0, { ...nb, buy: { ...nb.buy, [k]: 0 } }); unitSeq--; return u; };
     const b0 = base('spd'), a0 = base('act'), per = u => (u.actRate / ACT_PER_ATTACK).toFixed(1);
@@ -2636,7 +2687,7 @@ function onCampaignClick(e) {
       const size = Math.floor(+$('campaign').querySelector(`[data-role="psize"][data-q="${q.id}"]`).value / 10) * 10;
       if (size < MIN_TROOPS) return alert(`1駒は${MIN_TROOPS}人以上です。`);
       if (size > poolLeft(P, type)) return alert(`${type}の予備は${poolLeft(P, type)}人しかいません。`);
-      if (q.pieces.length >= squadCap(P, q)) return alert('隊長の統率力の上限です。駒をまとめるか、隊長の統率力を上げてください。');
+      if (squadRoom(P, q) < LDR_USE.piece) return alert('隊長の統率力（指揮枠）の上限です。駒をまとめるか、配下の将を減らすか、隊長の統率力を上げてください。');
       q.pieces.push({ type, size });
       break;
     }
@@ -2653,6 +2704,7 @@ function onCampaignChange(e) {
   if (!P || !el.dataset.role) return;
   if (el.dataset.role === 'sg' && el.value) {
     const q = P.squads.find(x => x.id === el.dataset.q);
+    if (memberUse(memberById(P, el.value)) > squadRoom(P, q)) { alert('隊長の統率力（指揮枠）が足りません。'); renderCampaign(); return; }
     q.members.push(el.value);
   } else if (el.dataset.role === 'newleader' && el.value) {
     const m = memberById(P, el.value);

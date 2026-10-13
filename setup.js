@@ -82,7 +82,7 @@ function renderSetup() {
       ? `<select data-su-preset="${g.id}">${presetOpts(g.buildName)}</select>`
       : `<button class="small" data-act="edit" data-id="${g.id}">振り分け</button>`;
     return `<div class="gen-card"><div><b>${g.name}</b>（${g.rank}）<span class="sub">${g.buildName || '標準'}</span></div>
-      <div class="gen-weapon ${g.build?.weapon === '弓' ? 'bow' : ''}">${g.build?.weapon === '弓' ? '🏹 弓（遠距離）' : '⚔ 刀（近接）'} 射程 ${tmp.rng}</div>
+      <div class="gen-weapon ${weaponOf(g.build) !== '刀' ? 'bow' : ''}">${WEAPONS[weaponOf(g.build)].icon} ${WEAPONS[weaponOf(g.build)].label.replace(/（.*/, '')} 射程 ${tmp.rng}</div>
       <div class="sub">HP ${tmp.maxHp} / ATK ${tmp.atk} / DEF ${tmp.def} / 移動 ${tmp.move} / 統率 ${cs.ldr} / スキル ${cs.skills.join('・')}</div>
       <div>${ctrl}</div></div>`;
   }).join('');
@@ -134,7 +134,7 @@ function randomBuild(rank) {
       buy: { spd: (d(3) - 1) * 10, act: (d(3) - 1) * 10 },
       skills: shuffled(Object.keys(SKILLS)).slice(0, slots > 1 && d(3) === 1 ? 2 : 1),
       ldr: baseLdr + d(5) - 3,   // 標準 ±2
-      weapon: d(4) === 1 ? '弓' : '刀',   // 4人に1人くらいは弓
+      weapon: d(2) === 1 ? '刀' : ['槍', '弓', '盾', '馬'][d(4) - 1],   // 半分は刀、残りは槍・弓・盾・馬
     };
     if (commanderStats(COMMANDER_TYPE, cost, b, slots).free >= std * 0.8) return b;
   }
