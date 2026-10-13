@@ -33,10 +33,11 @@ function startNewGame() {
   showView('form');
 }
 
-function setupSteps(cur) {
+/** 手順の表示。extra = 同じ行の右側に並べるボタン（③ のおまかせ編成・出陣など） */
+function setupSteps(cur, extra = '') {
   const steps = ['① 戦力のダイス', '② 将の設定', '③ 初期編成'];
   return `<div class="steps">${steps.map((s, i) => `<span class="step ${i + 1 === cur ? 'now' : i + 1 < cur ? 'done' : ''}">${s}</span>`).join('<span class="arrow">›</span>')}
-    ${cur === 3 ? '<button class="small" data-su="back2">◀ 将の設定に戻る</button>' : ''}</div>`;
+    ${cur === 3 ? '<button class="small" data-su="back2">◀ 将の設定に戻る</button>' : ''}${extra ? `<span class="step-actions">${extra}</span>` : ''}</div>`;
 }
 
 function diceText(r) {

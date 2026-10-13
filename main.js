@@ -2597,14 +2597,12 @@ function renderCampaign() {
       </div>
     </div>`;
   }).join('');
+  const actions = `<button class="small" data-act="auto">おまかせ編成</button>
+      <button class="small" data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置</button>
+      <button class="small go" data-act="sortie" ${over ? 'disabled' : ''} title="この編成で戦域図へ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣</button>`;
   const leaderOpts = freeMembers(() => true).map(m => `<option value="${m.id}">${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）</option>`).join('');
   box.innerHTML = `
-    ${campaign.setup ? setupSteps(3) : ''}
-    <div class="cp-head">
-      <button data-act="auto">おまかせ編成</button>
-      <button data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置（隊はそのまま）</button>
-      <button data-act="sortie" class="go" ${over ? 'disabled' : ''} title="この編成で戦域図へ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣（戦域図へ）</button>
-    </div>
+    ${campaign.setup ? setupSteps(3, actions) : `<div class="cp-head">${actions}</div>`}
     ${over ? `<div class="cp-over">${P.defeated ? '<b class="warn">💀 自軍は敗北しました。</b>' : '<b>🏆 CPU軍に勝利しました！</b>'}
       この軍での戦いは終わりです。「🏠 タイトル」の「▶ 新しく始める」で次の戦いへ。</div>` : ''}
     <div class="cp-pool">兵力（予備 / 総数）: ${pool}

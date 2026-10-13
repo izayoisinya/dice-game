@@ -280,7 +280,7 @@ button.big { font-size: 1.2rem; padding: 12px 40px; min-width: 260px; }
 
 /* ゲーム開始の手順 */
 .steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
-.step { padding: 4px 12px; border-radius: 14px; background: #2c3038; color: #999; font-size: 0.9rem; }
+.step { padding: 3px 10px; border-radius: 14px; background: #2c3038; color: #999; font-size: 0.85rem; white-space: nowrap; }
 .step.now { background: #4a6fa5; color: #fff; font-weight: bold; }
 .step.done { color: #9fe39f; }
 .steps .arrow { color: #666; }
@@ -331,3 +331,6 @@ html { touch-action: manipulation; }
 /* 槍の技（突き・薙ぎ払い）の当たる敵 */
 .cell.spearhit { box-shadow: inset 0 0 0 3px #ffd84a, 0 0 8px #ffd84a; }
 button.skill.armed { background: #b8860b; }
+/* 手順の行に並べるボタン（③ 初期編成のおまかせ編成・出陣など） */
+.step-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
+.steps button.small { font-size: 0.85rem; padding: 3px 10px; border-radius: 14px; white-space: nowrap; }
