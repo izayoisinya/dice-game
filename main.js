@@ -399,9 +399,10 @@ class Unit {
     this.hp = this.maxHp;
     this.atk = st.atk;
     this.def = st.def;
-    this.spd = st.spd + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
+    // SPD・ACT は兵士の駒と同じ物差し（階級の倍率を割り戻した値）で持つ。行動順・回避・表示はこの値
+    this.spd = Math.round(st.spd / tempoDiv) + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
     this.rng = cs ? cs.rng : t.rng;
-    this.act = st.act;
+    this.act = Math.round(st.act / tempoDiv);
     this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV)) + MOVE_BONUS;
     this.actRate = st.act / tempoDiv;      // 1行動ごとに行動ゲージにたまる量
     this.gauge = (d(5) - 1) * 10;          // 初期ゲージ 0〜40（全員が同じタイミングで動かないようずらす）
