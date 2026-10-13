@@ -2572,7 +2572,14 @@ function fmtLog(text) {
       (all, pre, side, name) => `${pre}<span class="nm-${side === 'P' ? 'p' : 'c'}">${name}</span>`);
 }
 
-let sideOpen = false;   // 縦向きの画面で、将・兵長の一覧を開いているか
+let sideOpen = false;
+const squadOpen = new Set();   // 広げている隊（編成の詳細を表で見る）
+
+/** 駒を追加するときの人数の初期値: 100人。予備かあと率いられる人数がそれより少なければ、その最大 */
+function pieceDefault(P, q, type) {
+  const n = Math.floor(Math.min(PIECE_DEFAULT, poolLeft(P, type), Math.max(0, squadRoom(P, q))) / 10) * 10;
+  return Math.max(MIN_TROOPS, n);
+}   // 縦向きの画面で、将・兵長の一覧を開いているか
 
 function renderCampaign() {
   const box = $('campaign');
@@ -2602,21 +2609,42 @@ function renderCampaign() {
     // 副将は、総大将か副将が率いる隊にだけ入れる（兵長が率いる小隊には兵長だけ）
     const desc = m => m.kind ? `${nm(m.name)}（${m.kind}）` : `${nm(m.name)}（${m.rank || m.type + '長'}・統率${memberLdr(m)}${memberUse(m) ? `・${memberUse(m)}人分` : ''}）`;
     const sgOpts = freeMembers(m => (!m.rank || lead?.rank) && memberUse(m) <= squadRoom(P, q), true).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
-    const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type} ${p.size}人${P.sergeants.some(s => s.type === p.type && q.members.includes(s.id)) || (lead && !lead.rank && lead.type === p.type) ? '★' : ''}
-        <button class="x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">×</button></span>`).join('') || '<span class="sub">なし</span>';
-    const sgs = q.members.map(id => `<span class="chip">${desc(memberById(P, id))}
-        <button class="x" data-act="rmsg" data-q="${q.id}" data-id="${id}">×</button></span>`).join('') || '<span class="sub">なし</span>';
-    return `<div class="squad">
-      <div class="sq-head"><b>${nm(q.name)}</b>（${squadKind(P, q)}）隊長 ${lead ? nm(lead.name) : 'なし'} ／ 率いる人数 ${squadUsed(P, q)}/${squadMenCap(P, q)}人分 ／ 駒 ${q.pieces.length}/${cap}${overCommand(P, q) ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
-        ${q.name !== '本隊' ? `<button class="small" data-act="disband" data-q="${q.id}">解散</button>` : ''}</div>
-      <div>配下の将: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">${lead?.rank ? '副将・兵長' : '兵長'}・斥候・暗殺者を追加…</option>${sgOpts}</select>` : ''}</div>
-      <div>兵士の駒: ${pieces}</div>
-      <div class="sq-add">
-        <select data-role="ptype" data-q="${q.id}">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
-        <input type="number" data-role="psize" data-q="${q.id}" min="${MIN_TROOPS}" step="10" value="${PIECE_DEFAULT}">人
-        <button class="small" data-act="addpiece" data-q="${q.id}" ${pieceBlock(P, q, MIN_TROOPS) ? 'disabled' : ''}>駒を追加</button>
-        <span class="sub">（★=兵長が隊長、ATK/DEF+${SERGEANT_BUFF * 100}%。率いる人数 = 統率力×${LDR_MEN}人分（兵士1人 = 1・兵長 ${MEMBER_MEN['兵長']}・副将 ${MEMBER_MEN['副将']}・斥候/暗殺者 0）、駒は統率力の数まで）</span>
+    const star = p => P.sergeants.some(s => s.type === p.type && q.members.includes(s.id)) || (lead && !lead.rank && lead.type === p.type);
+    const open = squadOpen.has(q.id);
+    const head = `<div class="sq-head" data-act="sqtoggle" data-q="${q.id}"><span class="sq-arrow">${open ? '▼' : '▶'}</span>
+        <b>${nm(q.name)}</b>（${squadKind(P, q)}）隊長 ${lead ? nm(lead.name) : 'なし'}
+        <span class="sq-stats">率いる人数 ${squadUsed(P, q)}/${squadMenCap(P, q)}人分 ／ 駒 ${q.pieces.length}/${cap} ／ 兵 ${squadTroops(q)}人</span>
+        ${overCommand(P, q) ? '<span class="warn">（統率オーバー）</span>' : ''}</div>`;
+    if (!open) {
+      // たたんだ状態: 中身を1行ずつ（タップで広げて編集）
+      const who = q.members.map(id => nm(memberById(P, id).name)).join('・') || 'なし';
+      const troops = q.pieces.map(p => `${p.type.replace('兵', '')}${p.size}${star(p) ? '★' : ''}`).join('　') || 'なし';
+      return `<div class="squad">${head}
+        <div class="sq-sum"><span class="sub">配下の将</span> ${who}</div>
+        <div class="sq-sum"><span class="sub">兵士の駒</span> ${troops}</div></div>`;
+    }
+    // 広げた状態: 配下の将と兵士の駒を表で（追加・外すもここで）
+    const memberRows = q.members.map(id => { const m = memberById(P, id); return `<tr><td>${nm(m.name)}</td><td>${m.kind || m.rank || m.type + '長'}</td>
+        <td>${m.kind ? '—' : memberLdr(m)}</td><td>${memberUse(m) || '—'}</td>
+        <td><button class="small x" data-act="rmsg" data-q="${q.id}" data-id="${id}">外す</button></td></tr>`; }).join('')
+      || '<tr><td colspan="5" class="sub">なし</td></tr>';
+    const pieceRows = q.pieces.map((p, i) => `<tr><td>${p.type}${star(p) ? ' ★' : ''}</td><td>${p.size}人</td>
+        <td><button class="small x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">外す</button></td></tr>`).join('')
+      || '<tr><td colspan="3" class="sub">なし</td></tr>';
+    const firstType = TYPE_NAMES.find(t => poolLeft(P, t) > 0) || TYPE_NAMES[0];
+    return `<div class="squad open">${head}
+      ${q.name !== '本隊' ? `<div><button class="small" data-act="disband" data-q="${q.id}">この隊を解散</button></div>` : ''}
+      <div class="sq-detail">
+        <div><h4>配下の将</h4><table class="sq-table"><thead><tr><th>名前</th><th>役</th><th>統率</th><th>人数分</th><th></th></tr></thead><tbody>${memberRows}</tbody></table>
+          ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">＋ ${lead?.rank ? '副将・兵長' : '兵長'}・斥候・暗殺者を追加…</option>${sgOpts}</select>` : ''}</div>
+        <div><h4>兵士の駒</h4><table class="sq-table"><thead><tr><th>兵種</th><th>人数</th><th></th></tr></thead><tbody>${pieceRows}</tbody></table>
+          <div class="sq-add">
+            <select data-role="ptype" data-q="${q.id}">${TYPE_NAMES.map(t => `<option ${t === firstType ? 'selected' : ''}>${t}</option>`).join('')}</select>
+            <input type="number" data-role="psize" data-q="${q.id}" min="${MIN_TROOPS}" step="10" value="${pieceDefault(P, q, firstType)}">人
+            <button class="small" data-act="addpiece" data-q="${q.id}" ${pieceBlock(P, q, MIN_TROOPS) ? 'disabled' : ''}>＋ 駒を追加</button>
+          </div></div>
       </div>
+      <div class="sub">★=兵長が率いる（ATK/DEF+${SERGEANT_BUFF * 100}%）。率いる人数 = 統率力×${LDR_MEN}人分（兵士1人 = 1・兵長 ${MEMBER_MEN['兵長']}・副将 ${MEMBER_MEN['副将']}・斥候/暗殺者 0）、駒は統率力の数まで</div>
     </div>`;
   }).join('');
   const actions = `<button class="small" data-act="auto">おまかせ編成</button>
@@ -2799,6 +2827,10 @@ function onCampaignClick(e) {
       break;
     }
     case 'sortie': startMapStage(); return;
+    case 'sqtoggle':
+      if (squadOpen.has(el.dataset.q)) squadOpen.delete(el.dataset.q); else squadOpen.add(el.dataset.q);
+      renderCampaign();
+      return;
     case 'side':   // 縦向き: 将・兵長の一覧（サイドメニュー）を出し入れする
       sideOpen = !sideOpen;
       document.querySelector('#campaign .cp-side')?.classList.toggle('open', sideOpen);
@@ -2813,13 +2845,21 @@ function onCampaignChange(e) {
   const el = e.target;
   const P = campaign.armies && campaign.armies.player;
   if (!P || !el.dataset.role) return;
+  if (el.dataset.role === 'ptype') {   // 兵種を変えたら、人数の初期値もその兵種の予備に合わせる
+    const q = P.squads.find(x => x.id === el.dataset.q);
+    const size = $('campaign').querySelector(`[data-role="psize"][data-q="${q.id}"]`);
+    if (size) size.value = pieceDefault(P, q, el.value);
+    return;
+  }
   if (el.dataset.role === 'sg' && el.value) {
     const q = P.squads.find(x => x.id === el.dataset.q);
     if (memberUse(memberById(P, el.value)) > squadRoom(P, q)) { alert(`${q.name}が率いられるのはあと${Math.max(0, squadRoom(P, q))}人分です。`); renderCampaign(); return; }
     q.members.push(el.value);
   } else if (el.dataset.role === 'newleader' && el.value) {
     const m = memberById(P, el.value);
-    P.squads.push({ id: `player-Q${P.seq++}`, name: `${m.name}隊`, leader: m.id, members: [], pieces: [] });
+    const id = `player-Q${P.seq++}`;
+    P.squads.push({ id, name: `${m.name}隊`, leader: m.id, members: [], pieces: [] });
+    squadOpen.add(id);   // 作った隊は広げて見せる
   } else {
     return;
   }

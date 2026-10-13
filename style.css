@@ -126,7 +126,7 @@ button.danger { background: #a14040; margin-left: auto; }
 .chip { display: inline-flex; align-items: center; gap: 4px; background: #33373f; border-radius: 12px; padding: 2px 8px; margin: 2px; font-size: 0.85rem; }
 .chip button.x { padding: 0 5px; font-size: 0.8rem; background: #6a3a3a; border-radius: 8px; }
 button.small { padding: 3px 8px; font-size: 0.8rem; }
-.squad { border: 1px solid #3c414b; border-radius: 8px; padding: 6px 10px; margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
+.squad { border: 1px solid #3c414b; border-radius: 8px; padding: 8px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; line-height: 1.7; }
 .sq-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .sq-add, .sq-go { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sq-add input { width: 70px; }
@@ -365,3 +365,17 @@ button.skill.armed { background: #b8860b; }
 }
 .nm-p { color: #8fc4ff; font-weight: bold; }
 .nm-c { color: #ff9a8f; font-weight: bold; }
+/* 隊のカード: たたむと要約、タップで広げて表で編集 */
+.squad .sq-head { cursor: pointer; user-select: none; }
+.squad .sq-arrow { color: #8fc4ff; width: 1em; }
+.squad .sq-stats { color: #bbb; font-size: 0.9rem; }
+.squad .sq-sum { font-size: 0.9rem; line-height: 1.8; }
+.squad .sq-sum .sub { display: inline-block; min-width: 5.5em; }
+.squad.open { border-color: #4a6fa5; background: #262a33; }
+.sq-detail { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 700px) { .sq-detail { grid-template-columns: 3fr 2fr; } }
+.sq-detail h4 { margin: 2px 0 4px; font-size: 0.95rem; color: #ddd; }
+.sq-table { width: 100%; border-collapse: collapse; font-size: 0.95rem; margin-bottom: 6px; }
+.sq-table th { text-align: left; color: #999; font-weight: normal; font-size: 0.8rem; border-bottom: 1px solid #3c414b; padding: 2px 6px; }
+.sq-table td { padding: 5px 6px; border-bottom: 1px solid #30343c; }
+.sq-table button.x { background: #6a3a3a; }
