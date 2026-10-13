@@ -381,3 +381,10 @@ button.skill.armed { background: #b8860b; }
 .sq-table button.x { background: #6a3a3a; }
 .squad.closed { cursor: pointer; }
 .squad.closed:hover { border-color: #4a6fa5; }
+/* 編成画面: タップで詳細を出せる行 */
+tr.tap { cursor: pointer; }
+tr.tap:hover td { background: #2f3440; }
+.info-table { width: 100%; border-collapse: collapse; margin: 6px 0 10px; }
+.info-table th { text-align: left; color: #999; font-weight: normal; padding: 4px 8px; width: 7em; border-bottom: 1px solid #30343c; }
+.info-table td { padding: 4px 8px; border-bottom: 1px solid #30343c; text-align: left; }
+.info-skills { font-size: 0.9rem; line-height: 1.6; color: #ccc; }

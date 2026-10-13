@@ -2595,10 +2595,10 @@ function renderCampaign() {
   if (campaign.smap) return renderCampaignLocked();
   const usedBy = id => nm(squadOf(P, id)?.name || '予備');
   const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
-  const generals = P.generals.map(g => `<tr><td>${nm(g.name)}${weaponOf(g.build) !== '刀' ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
+  const generals = P.generals.map(g => `<tr class="tap" data-act="info" data-id="${g.id}"><td>${nm(g.name)}${weaponOf(g.build) !== '刀' ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
       <td><button class="small" data-act="edit" data-id="${g.id}">振り分け</button></td></tr>`).join('');
-  const sergeants = P.sergeants.map(sg => `<tr><td>${nm(sg.name)}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
-  const specials = P.specials.map(x => `<tr><td>${nm(x.name)}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
+  const sergeants = P.sergeants.map(sg => `<tr class="tap" data-act="info" data-id="${sg.id}"><td>${nm(sg.name)}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
+  const specials = P.specials.map(x => `<tr class="tap" data-act="info" data-id="${x.id}"><td>${nm(x.name)}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="sub">なし</td></tr>';
   // 隊に入れられる将（副将・兵長）と斥候・暗殺者。隊長にできるのは副将・兵長だけ
   const freeMembers = (filter, withSpecials = false) => [...P.generals.filter(g => g.rank === '副将'), ...P.sergeants, ...(withSpecials ? P.specials : [])]
@@ -2624,11 +2624,11 @@ function renderCampaign() {
         <div class="sq-sum"><span class="sub">兵士の駒</span> ${troops}</div></div>`;
     }
     // 広げた状態: 配下の将と兵士の駒を表で（追加・外すもここで）
-    const memberRows = q.members.map(id => { const m = memberById(P, id); return `<tr><td>${nm(m.name)}</td><td>${m.kind || m.rank || m.type + '長'}</td>
+    const memberRows = q.members.map(id => { const m = memberById(P, id); return `<tr class="tap" data-act="info" data-id="${id}"><td>${nm(m.name)}</td><td>${m.kind || m.rank || m.type + '長'}</td>
         <td>${m.kind ? '—' : memberLdr(m)}</td><td>${memberUse(m) || '—'}</td>
         <td><button class="small x" data-act="rmsg" data-q="${q.id}" data-id="${id}">外す</button></td></tr>`; }).join('')
       || '<tr><td colspan="5" class="sub">なし</td></tr>';
-    const pieceRows = q.pieces.map((p, i) => `<tr><td>${p.type}${star(p) ? ' ★' : ''}</td><td>${p.size}人</td>
+    const pieceRows = q.pieces.map((p, i) => `<tr class="tap" data-act="info" data-q="${q.id}" data-i="${i}"><td>${p.type}${star(p) ? ' ★' : ''}</td><td>${p.size}人</td>
         <td><button class="small x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">外す</button></td></tr>`).join('')
       || '<tr><td colspan="3" class="sub">なし</td></tr>';
     const firstType = TYPE_NAMES.find(t => poolLeft(P, t) > 0) || TYPE_NAMES[0];
@@ -2798,6 +2798,50 @@ function renderGeneralEditor() {
   preview();
 }
 
+/** 詳細表示用の駒（個体差はちょうど真ん中の値にする） */
+function sampleUnit(rank, type, build, troops) {
+  const roll = d;
+  d = sides => Math.ceil(sides / 2);
+  try { const u = new Unit('player', rank, type, '', 0, 0, build, troops); unitSeq--; return u; } finally { d = roll; }
+}
+
+/** 編成画面: 駒・将をタップしたときの詳細（ポップアップ） */
+function showUnitInfo(kind, P, a) {
+  let u, title, rows = [];
+  const q = a.q && P.squads.find(x => x.id === a.q);
+  if (kind === 'piece') {
+    const p = q.pieces[+a.i];
+    u = sampleUnit('雑兵', p.type, AUTO_BUILD, p.size);
+    title = `${p.type}の駒（兵士 ${p.size}人）`;
+    rows.push(['所属', nm(q.name)]);
+    const lead = memberById(P, q.leader);
+    if (P.sergeants.some(s => s.type === p.type && q.members.includes(s.id)) || (lead && !lead.rank && lead.type === p.type)) rows.push(['★', `同じ兵種の兵長がいる（ATK/DEF+${SERGEANT_BUFF * 100}%）`]);
+  } else {
+    const m = memberById(P, a.id);
+    const sq = squadOf(P, m.id);
+    if (m.kind) { u = sampleUnit(m.kind === '暗殺者' ? '兵長' : '雑兵', m.kind); title = `${nm(m.name)}（${m.kind}）`; }
+    else if (m.rank) {
+      u = sampleUnit(m.rank, COMMANDER_TYPE, m.build);
+      title = `${nm(m.name)}（${m.rank}）`;
+      rows.push(['武器', `${WEAPONS[weaponOf(m.build)].icon} ${WEAPONS[weaponOf(m.build)].label}`], ['型', m.buildName || '標準']);
+    } else { u = sampleUnit('兵長', m.type); title = `${nm(m.name)}（${m.type}長）`; }
+    if (!m.kind) rows.push(['統率', `${memberLdr(m)}（率いる人数 ${memberLdr(m) * LDR_MEN}人分・駒 ${memberLdr(m)}つまで）`]);
+    rows.push(['所属', sq ? `${nm(sq.name)}${sq.leader === m.id ? '（隊長）' : ''}` : '予備']);
+    if (memberUse(m)) rows.push(['隊で使う人数分', `${memberUse(m)}人分`]);
+  }
+  const per = (u.actRate / ACT_PER_ATTACK).toFixed(1);
+  const stats = [['HP', u.maxHp], ['ATK', u.atk], ['DEF', u.def], ['SPD', `${u.spd}（戦闘では個体差 ±10）`], ['移動', u.move],
+    ['射程', u.rng], ['攻撃', `${per}回/ターン（ACT ${u.act}）`], ['命中', `${u.hit}%`], ['視界', `${u.vision ?? VISION_DEFAULT}マス`]];
+  const skills = (u.skills || []).map(k => `<div>✨<b>${k}</b>: ${SKILLS[k].desc}</div>`).join('');
+  const traits = (u.traits || []).map(k => `<div>◇<b>${TRAITS[k].name}</b>: ${TRAIT_HELP[k] || ''}</div>`).join('');
+  $('modal-body').innerHTML = `<h3>${title}</h3>
+    <table class="info-table">${[...rows, ...stats].map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
+    ${skills || traits ? `<div class="info-skills">${skills}${traits}</div>` : ''}
+    <div class="ed-buttons"><button data-act="infoclose" class="off">閉じる</button></div>`;
+  $('modal-body').querySelector('[data-act="infoclose"]').onclick = closeModal;
+  $('modal').classList.remove('hidden');
+}
+
 function closeModal() {
   $('modal').classList.add('hidden');
   $('modal-body').innerHTML = '';
@@ -2827,6 +2871,7 @@ function onCampaignClick(e) {
       break;
     }
     case 'sortie': startMapStage(); return;
+    case 'info': showUnitInfo(el.dataset.i != null ? 'piece' : 'member', P, el.dataset); return;
     case 'sqtoggle':
       if (squadOpen.has(el.dataset.q)) squadOpen.delete(el.dataset.q); else squadOpen.add(el.dataset.q);
       renderCampaign();
