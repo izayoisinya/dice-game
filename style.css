@@ -379,3 +379,5 @@ button.skill.armed { background: #b8860b; }
 .sq-table th { text-align: left; color: #999; font-weight: normal; font-size: 0.8rem; border-bottom: 1px solid #3c414b; padding: 2px 6px; }
 .sq-table td { padding: 5px 6px; border-bottom: 1px solid #30343c; }
 .sq-table button.x { background: #6a3a3a; }
+.squad.closed { cursor: pointer; }
+.squad.closed:hover { border-color: #4a6fa5; }

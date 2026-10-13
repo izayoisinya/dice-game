@@ -2619,7 +2619,7 @@ function renderCampaign() {
       // たたんだ状態: 中身を1行ずつ（タップで広げて編集）
       const who = q.members.map(id => nm(memberById(P, id).name)).join('・') || 'なし';
       const troops = q.pieces.map(p => `${p.type.replace('兵', '')}${p.size}${star(p) ? '★' : ''}`).join('　') || 'なし';
-      return `<div class="squad">${head}
+      return `<div class="squad closed" data-act="sqtoggle" data-q="${q.id}">${head}
         <div class="sq-sum"><span class="sub">配下の将</span> ${who}</div>
         <div class="sq-sum"><span class="sub">兵士の駒</span> ${troops}</div></div>`;
     }
