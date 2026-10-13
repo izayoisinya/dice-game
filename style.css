@@ -332,5 +332,7 @@ html { touch-action: manipulation; }
 .cell.spearhit { box-shadow: inset 0 0 0 3px #ffd84a, 0 0 8px #ffd84a; }
 button.skill.armed { background: #b8860b; }
 /* 手順の行に並べるボタン（③ 初期編成のおまかせ編成・出陣など） */
-.step-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
+.step-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }   /* 右寄せ */
 .steps button.small { font-size: 0.85rem; padding: 3px 10px; border-radius: 14px; white-space: nowrap; }
+/* 兵力（予備 / 総数）はスクロールしても上部バーの下に貼り付ける */
+.cp-pool { position: sticky; top: var(--topbar-h, 60px); z-index: 5; background: #262930; margin: 8px -8px; padding: 6px 8px; border-radius: 6px; box-shadow: 0 4px 8px rgba(0,0,0,0.35); }
