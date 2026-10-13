@@ -338,7 +338,8 @@ button.skill.armed { background: #b8860b; }
 .cp-pool { position: sticky; top: var(--topbar-h, 60px); z-index: 5; background: #262930; margin: 8px -8px; padding: 6px 8px; border-radius: 6px; box-shadow: 0 4px 8px rgba(0,0,0,0.35); }
 /* 編成画面: 将・兵長・斥候の一覧を左のサイドメニューに（兵力の欄の下に貼り付き、中だけスクロール） */
 @media (min-width: 900px) {
-  .cp-main { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .cp-main { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
+  .cp-side { order: 2; }   /* サイドメニューは右側 */
   .cp-side { position: sticky; top: calc(var(--topbar-h, 60px) + var(--pool-h, 80px));
     max-height: calc(100dvh - var(--topbar-h, 60px) - var(--pool-h, 80px) - 12px); overflow-y: auto;
     background: #22252c; border-radius: 8px; padding: 0 8px 8px; }
@@ -350,4 +351,17 @@ button.skill.armed { background: #b8860b; }
 }
 @media (min-width: 1400px) {
   .cp-body .squad-grid { grid-template-columns: 1fr 1fr; }
+}
+/* 縦向き（幅900px未満）: 将・兵長の一覧は右から出てくるメニュー */
+.side-toggle, .side-close { display: none; }
+@media (max-width: 899px) {
+  .side-toggle { display: block; position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 41;
+    padding: 10px 8px; line-height: 1.3; font-size: 0.85rem; border-radius: 8px 0 0 8px; box-shadow: -2px 2px 8px rgba(0,0,0,0.4); }
+  .cp-side { position: fixed; top: var(--topbar-h, 60px); right: 0; bottom: 0; width: min(360px, 88vw); z-index: 42;
+    background: #22252c; padding: 8px 10px; overflow-y: auto; box-shadow: -6px 0 16px rgba(0,0,0,0.5);
+    transform: translateX(105%); transition: transform 0.25s ease; }
+  .cp-side.open { transform: none; }
+  .cp-side .side-close { display: inline-block; float: right; }
+  .cp-side .cp-cols { grid-template-columns: 1fr; }
+  .cp-side .cp-cols > div { max-height: none; overflow: visible; }
 }

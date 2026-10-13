@@ -2552,6 +2552,13 @@ function loadCampaign() {
 // 画面
 // ------------------------------------------------------------
 
+/** 自軍の画面では名前の頭の「P」を省く（CPU軍と並ぶ戦闘のログ・盤面では残す） */
+function nm(name) {
+  return String(name).replace(/^P(?=\S)/, '');
+}
+
+let sideOpen = false;   // 縦向きの画面で、将・兵長の一覧を開いているか
+
 function renderCampaign() {
   const box = $('campaign');
   if (campaign.setup && campaign.setup.step < 3) return renderSetup();
@@ -2564,12 +2571,12 @@ function renderCampaign() {
   const P = A.player;
   const over = P.defeated || A.cpu.defeated;
   if (campaign.smap) return renderCampaignLocked();
-  const usedBy = id => squadOf(P, id)?.name || '予備';
+  const usedBy = id => nm(squadOf(P, id)?.name || '予備');
   const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
-  const generals = P.generals.map(g => `<tr><td>${g.name}${weaponOf(g.build) !== '刀' ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
+  const generals = P.generals.map(g => `<tr><td>${nm(g.name)}${weaponOf(g.build) !== '刀' ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
       <td><button class="small" data-act="edit" data-id="${g.id}">振り分け</button></td></tr>`).join('');
-  const sergeants = P.sergeants.map(sg => `<tr><td>${sg.name}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
-  const specials = P.specials.map(x => `<tr><td>${x.name}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
+  const sergeants = P.sergeants.map(sg => `<tr><td>${nm(sg.name)}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
+  const specials = P.specials.map(x => `<tr><td>${nm(x.name)}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="sub">なし</td></tr>';
   // 隊に入れられる将（副将・兵長）と斥候・暗殺者。隊長にできるのは副将・兵長だけ
   const freeMembers = (filter, withSpecials = false) => [...P.generals.filter(g => g.rank === '副将'), ...P.sergeants, ...(withSpecials ? P.specials : [])]
@@ -2578,14 +2585,14 @@ function renderCampaign() {
     const lead = memberById(P, q.leader);
     const cap = squadCap(P, q);
     // 副将は、総大将か副将が率いる隊にだけ入れる（兵長が率いる小隊には兵長だけ）
-    const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}${memberUse(m) ? `・${memberUse(m)}人分` : ''}）`;
+    const desc = m => m.kind ? `${nm(m.name)}（${m.kind}）` : `${nm(m.name)}（${m.rank || m.type + '長'}・統率${memberLdr(m)}${memberUse(m) ? `・${memberUse(m)}人分` : ''}）`;
     const sgOpts = freeMembers(m => (!m.rank || lead?.rank) && memberUse(m) <= squadRoom(P, q), true).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
     const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type} ${p.size}人${P.sergeants.some(s => s.type === p.type && q.members.includes(s.id)) || (lead && !lead.rank && lead.type === p.type) ? '★' : ''}
         <button class="x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     const sgs = q.members.map(id => `<span class="chip">${desc(memberById(P, id))}
         <button class="x" data-act="rmsg" data-q="${q.id}" data-id="${id}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     return `<div class="squad">
-      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 率いる人数 ${squadUsed(P, q)}/${squadMenCap(P, q)}人分 ／ 駒 ${q.pieces.length}/${cap}${overCommand(P, q) ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
+      <div class="sq-head"><b>${nm(q.name)}</b>（${squadKind(P, q)}）隊長 ${lead ? nm(lead.name) : 'なし'} ／ 率いる人数 ${squadUsed(P, q)}/${squadMenCap(P, q)}人分 ／ 駒 ${q.pieces.length}/${cap}${overCommand(P, q) ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
         ${q.name !== '本隊' ? `<button class="small" data-act="disband" data-q="${q.id}">解散</button>` : ''}</div>
       <div>配下の将: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">${lead?.rank ? '副将・兵長' : '兵長'}・斥候・暗殺者を追加…</option>${sgOpts}</select>` : ''}</div>
       <div>兵士の駒: ${pieces}</div>
@@ -2600,7 +2607,7 @@ function renderCampaign() {
   const actions = `<button class="small" data-act="auto">おまかせ編成</button>
       <button class="small" data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置</button>
       <button class="small go" data-act="sortie" ${over ? 'disabled' : ''} title="この編成で戦域図へ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣</button>`;
-  const leaderOpts = freeMembers(() => true).map(m => `<option value="${m.id}">${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）</option>`).join('');
+  const leaderOpts = freeMembers(() => true).map(m => `<option value="${m.id}">${nm(m.name)}（${m.rank || m.type + '長'}・統率${memberLdr(m)}）</option>`).join('');
   box.innerHTML = `
     ${campaign.setup ? setupSteps(3, actions) : `<div class="cp-head">${actions}</div>`}
     ${over ? `<div class="cp-over">${P.defeated ? '<b class="warn">💀 自軍は敗北しました。</b>' : '<b>🏆 CPU軍に勝利しました！</b>'}
@@ -2609,10 +2616,12 @@ function renderCampaign() {
       <span class="sub">副将 🎲[${P.generalRoll.dice.join('][')}]+${GENERAL_DICE.plus} = ${P.generalRoll.total}人 ／ 兵長 ${P.sergeants.length}人
         ／ 斥候 🎲[${P.scoutRoll?.dice.join('][') ?? ''}] = ${P.specials.filter(x => x.kind === '斥候').length}人
         ／ 暗殺者 🎲[${P.assassinRoll?.dice.join('][') ?? ''}]−1 = ${P.specials.filter(x => x.kind === '暗殺者').length}人</span></div>
+    <button class="side-toggle" data-act="side">👥<br>将<br>兵長</button>
     <div class="cp-main">
-    <aside class="cp-side">
+    <aside class="cp-side ${sideOpen ? 'open' : ''}">
+    <button class="side-close small" data-act="side">✕ 閉じる</button>
     <div class="cp-cols">
-      <div><h3>将</h3><table><thead><tr><th>名前</th><th>階級</th><th>統率</th><th>所属</th><th></th></tr></thead><tbody>${generals}</tbody></table></div>
+      <div><h3>将</h3><table><thead><tr><th>名前</th><th>統率</th><th>所属</th><th></th></tr></thead><tbody>${generals}</tbody></table></div>
       <div><h3>兵長</h3><table><thead><tr><th>名前</th><th>兵種</th><th>統率</th><th>所属</th></tr></thead><tbody>${sergeants}</tbody></table></div>
       <div><h3>斥候・暗殺者</h3><table><thead><tr><th>名前</th><th>役職</th><th>所属</th></tr></thead><tbody>${specials}</tbody></table></div>
     </div>
@@ -2625,7 +2634,7 @@ function renderCampaign() {
       // 視界（霧）ありでは、敵の編成は出陣前には分からない（戦域図で見つけて確かめる）
       ? '<div class="sub">CPU軍の編成は分かりません（戦域図で敵の隊を見つけると、隊の兵数が分かります）。設定で視界をオフにすると表示されます</div>'
       : `<details class="cp-cpu"><summary>CPU軍の編成（視界オフ）</summary>
-      ${A.cpu.squads.map(q => `<div>${q.name}（${squadKind(A.cpu, q)}）: 配下の将${q.members.length} / ${q.pieces.map(p => `${p.type}${p.size}`).join('・')}</div>`).join('')}
+      ${A.cpu.squads.map(q => `<div>${nm(q.name)}（${squadKind(A.cpu, q)}）: 配下の将${q.members.length} / ${q.pieces.map(p => `${p.type}${p.size}`).join('・')}</div>`).join('')}
     </details>`}
     </div></div>`;
   fitPool();
@@ -2667,7 +2676,7 @@ function renderGeneralEditor() {
   const row = (label, alloc, bar, real) => `<div class="ge-row"><div class="ge-label">${label}</div>${
     bar === '' && alloc.includes('<select') ? `<div class="ge-alloc wide">${alloc}</div>` : `<div class="ge-alloc">${alloc}</div><div class="ge-bar">${bar}</div>`}<div class="ge-real">${real}</div></div>`;
   box.innerHTML = `
-    <h3>${g.name}（${g.rank}）の振り分け</h3>
+    <h3>${nm(g.name)}（${g.rank}）の振り分け</h3>
     <div class="ge-head">${row('項目', '振り分け', '', '実際の値')}</div>
     ${row('HP', '<span data-v="hp"></span>', `<input type="range" data-g="hp" min="1" max="10" step="0.5" value="${b.hp}">`, '<b data-r="hp"></b>')}
     ${row('ATK', '<span data-v="atk"></span>', `<input type="range" data-g="atk" min="1" max="10" step="0.5" value="${b.atk}">`, '<b data-r="atk"></b>')}
@@ -2775,6 +2784,10 @@ function onCampaignClick(e) {
       break;
     }
     case 'sortie': startMapStage(); return;
+    case 'side':   // 縦向き: 将・兵長の一覧（サイドメニュー）を出し入れする
+      sideOpen = !sideOpen;
+      document.querySelector('#campaign .cp-side')?.classList.toggle('open', sideOpen);
+      return;
     default: return;
   }
   saveCampaign();

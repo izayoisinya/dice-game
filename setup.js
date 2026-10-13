@@ -82,7 +82,7 @@ function renderSetup() {
       : mode === 'preset'
       ? `<select data-su-preset="${g.id}">${presetOpts(g.buildName)}</select>`
       : `<button class="small" data-act="edit" data-id="${g.id}">振り分け</button>`;
-    return `<div class="gen-card"><div><b>${g.name}</b>（${g.rank}）<span class="sub">${g.buildName || '標準'}</span></div>
+    return `<div class="gen-card"><div><b>${nm(g.name)}</b>（${g.rank}）<span class="sub">${g.buildName || '標準'}</span></div>
       <div class="gen-weapon ${weaponOf(g.build) !== '刀' ? 'bow' : ''}">${WEAPONS[weaponOf(g.build)].icon} ${WEAPONS[weaponOf(g.build)].label.replace(/（.*/, '')} 射程 ${tmp.rng}</div>
       <div class="sub">HP ${tmp.maxHp} / ATK ${tmp.atk} / DEF ${tmp.def} / 移動 ${tmp.move} / 統率 ${cs.ldr} / スキル ${cs.skills.join('・')}</div>
       <div>${ctrl}</div></div>`;
