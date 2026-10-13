@@ -2617,9 +2617,12 @@ function renderCampaign() {
     <h3>隊</h3>
     <div class="squad-grid">${squads}</div>
     <div class="sq-new">${leaderOpts ? `新しい隊（副将 → 分隊 / 兵長 → 小隊）: <select data-role="newleader"><option value="">隊長を選ぶ…</option>${leaderOpts}</select>` : '<span class="sub">隊長にできる将が残っていません</span>'}</div>
-    <details class="cp-cpu"><summary>CPU軍の編成</summary>
+    ${state.fog
+      // 視界（霧）ありでは、敵の編成は出陣前には分からない（戦域図で見つけて確かめる）
+      ? '<div class="sub">CPU軍の編成は分かりません（戦域図で敵の隊を見つけると、隊の兵数が分かります）。設定で視界をオフにすると表示されます</div>'
+      : `<details class="cp-cpu"><summary>CPU軍の編成（視界オフ）</summary>
       ${A.cpu.squads.map(q => `<div>${q.name}（${squadKind(A.cpu, q)}）: 配下の将${q.members.length} / ${q.pieces.map(p => `${p.type}${p.size}`).join('・')}</div>`).join('')}
-    </details>`;
+    </details>`}`;
   if (campaign.editing) renderGeneralEditor();
 }
 
@@ -2834,6 +2837,7 @@ $('fog').addEventListener('change', () => {
   state.fog = $('fog').checked;
   render();
   renderStrat();
+  renderCampaign();
   saveGame();
 });
 
