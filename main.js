@@ -649,7 +649,16 @@ function nearestEnemy(unit) {
 
 /** 大将が本陣で待つか（斥候・暗殺者は数えない。配下の兵が残っている間は待つ） */
 function isHolding(unit) {
-  return isLeader(unit) && alliesOf(unit).some(a => !a.special) && troopRatio(unit.side) >= advanceRatio(unit.side);
+  return isLeader(unit) && alliesOf(unit).some(a => !a.special) && troopRatio(unit.side) >= advanceRatio(unit.side)
+    && !leaderThreatened(unit);
+}
+
+/**
+ * 大将が狙われているか: 見えている敵のうち、大将を攻撃できる間合い（射程 + 1マス）にいる者がいる。
+ * 狙われたら本陣で待つのをやめて自分から戦う（距離を取って一方的に撃たれ続けないように）
+ */
+function leaderThreatened(unit) {
+  return seenEnemies(unit).some(e => !e.special && distance(e, unit) <= effRng(e) + 1);
 }
 
 /** その戦局の大将の士気範囲内にいるか（大将自身は対象外） */
