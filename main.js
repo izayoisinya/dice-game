@@ -136,7 +136,7 @@ const TYPES = {
   '剣兵': { stats: { hp: 110, atk: 100, def: 90, spd: 100, act: 90 }, rng: 1, hit: 85, best: 1, traits: ['pursuit'],
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
   // 打たれ強く射程2、攻撃速度はやや遅い
-  '槍兵': { stats: { hp: 120, atk: 100, def: 100, spd: 80, act: 60 }, rng: 2, hit: 80, best: 2, traits: ['spear'],
+  '槍兵': { stats: { hp: 110, atk: 120, def: 90, spd: 80, act: 60 }, rng: 2, hit: 80, best: 2, traits: ['spear'],
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 0.85, pow: 1.0 } } },
   // 遠距離攻撃の代わりに脆い。
   // 平面（マンハッタン距離）向け: 斜め方向は距離が長く数えられ、前衛越しに撃つと距離3〜4になるため
