@@ -800,8 +800,17 @@ function withinFrontLine(unit, p) {
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // 上下左右の4方向
 
 /** 地点 (x,y) が、unit から見て敵の足止め（ZOC）範囲（上下左右に隣接）か */
-function inEnemyZoc(unit, x, y) {
-  return enemiesOf(unit).some(e => e.traits.includes('zoc') && Math.abs(e.x - x) + Math.abs(e.y - y) === 1);
+function inEnemyZoc(unit, x, y, known = false) {
+  return enemiesOf(unit).some(e => e.traits.includes('zoc') && Math.abs(e.x - x) + Math.abs(e.y - y) === 1 && knownFoe(unit, e, known));
+}
+/** known: false = すべての敵 / true = 今見えている敵 / Set = その id の敵（移動前に見えていた敵） */
+function knownFoe(unit, e, known) {
+  return !known || (known instanceof Set ? known.has(e.id) : visibleTo(unit.side, e));
+}
+/** そのマスの敵。known = true なら見えている敵だけ（手動プレイの表示用。見えない敵の位置が漏れないように） */
+function enemyAt(unit, x, y, known = false) {
+  const o = unitAt(x, y);
+  return o && o.side !== unit.side && knownFoe(unit, o, known) ? o : null;
 }
 
 /**
@@ -809,7 +818,7 @@ function inEnemyZoc(unit, x, y) {
  * 4方向に1マスずつ進む。味方のいるマスは通過できるが止まれない。
  * 敵のいるマスは通過も不可。敵の足止め（ZOC）範囲に入ったらそこで止まる。マップの外には出られない。
  */
-function reachableCells(unit, steps) {
+function reachableCells(unit, steps, known = false) {
   const { w, h } = state.map;
   const seen = new Set([`${unit.x},${unit.y}`]);
   const cells = [];
@@ -820,10 +829,12 @@ function reachableCells(unit, steps) {
       for (const [dx, dy] of DIRS) {
         const nx = x + dx, ny = y + dy, key = `${nx},${ny}`;
         if (nx < 0 || ny < 0 || nx >= w || ny >= h || seen.has(key)) continue;
-        const other = unitAt(nx, ny);
-        if (other && other.side !== unit.side) continue;   // 敵は通り抜け不可
+        const foe = enemyAt(unit, nx, ny, known);
+        if (foe) continue;                                 // 敵は通り抜け不可
+        let other = unitAt(nx, ny);
+        if (other && other.side !== unit.side) other = null; // （known のとき）見えない敵はいないものとして扱う
         seen.add(key);
-        if (!inEnemyZoc(unit, nx, ny)) next.push([nx, ny]);   // ZOC 内からは先へ進めない
+        if (!inEnemyZoc(unit, nx, ny, known)) next.push([nx, ny]);   // ZOC 内からは先へ進めない
         if (other) continue;                               // 味方のマスには止まれない
         cells.push([nx, ny]);
       }
@@ -1446,14 +1457,15 @@ function enterAttack(unit) {
 }
 
 /** 今のフェーズで止まれるマス */
-function manualReach(unit) {
-  if (state.phase === 'move' && !unit.rooted) return reachableCells(unit, unit.move);
-  if (state.phase === 'retreat') return reachableCells(unit, unit.move);
+/** 手動プレイで動けるマス。known = true なら見えている敵だけを考える（表示・クリック用） */
+function manualReach(unit, known = false) {
+  if (state.phase === 'move' && !unit.rooted) return reachableCells(unit, unit.move, known);
+  if (state.phase === 'retreat') return reachableCells(unit, unit.move, known);
   // 一撃離脱中は、攻撃した後に移動力いっぱい動ける
-  if (state.phase === 'attack' && unit.hitAndRun && state.manual.attacked > 0) return reachableCells(unit, unit.move);
+  if (state.phase === 'attack' && unit.hitAndRun && state.manual.attacked > 0) return reachableCells(unit, unit.move, known);
   // 移動せずに攻撃した後は、移動力の半分まで動いて間合いを取れる
   if (state.phase === 'attack' && !state.manual.moved && state.manual.attacked > 0 && !unit.rooted) {
-    return reachableCells(unit, unit.retreat);
+    return reachableCells(unit, unit.retreat, known);
   }
   return [];
 }
@@ -1470,7 +1482,7 @@ function manualTargets(unit) {
  * 手動で移動したときの突撃判定。出発点から一直線に CHARGE_MIN マス以上走り、
  * その先の隣に敵がいれば突撃になる（途中に敵や敵の ZOC がないこと）。
  */
-function manualCharge(unit, fromX, fromY) {
+function manualCharge(unit, fromX, fromY, known = false) {
   if (!unit.traits.includes('charge')) return null;
   const dx = Math.sign(unit.x - fromX), dy = Math.sign(unit.y - fromY);
   if (dx !== 0 && dy !== 0) return null;
@@ -1478,11 +1490,10 @@ function manualCharge(unit, fromX, fromY) {
   if (run < CHARGE_MIN) return null;
   for (let k = 1; k < run; k++) {
     const x = fromX + dx * k, y = fromY + dy * k;
-    const o = unitAt(x, y);
-    if ((o && o.side !== unit.side) || inEnemyZoc(unit, x, y)) return null;
+    if (enemyAt(unit, x, y, known) || inEnemyZoc(unit, x, y, known)) return null;
   }
-  const ahead = unitAt(unit.x + dx, unit.y + dy);
-  return ahead && ahead.side !== unit.side ? { run, target: ahead.id } : null;
+  const ahead = enemyAt(unit, unit.x + dx, unit.y + dy, known);
+  return ahead ? { run, target: ahead.id } : null;
 }
 
 function onCellClick(x, y) {
@@ -1490,18 +1501,27 @@ function onCellClick(x, y) {
   const unit = currentUnit();
   if (!unit || state.over) return;
   ui2.spear = null;   // マスを押したら槍の技の表示はやめる
-  const other = unitAt(x, y);
+  const other = enemyAt(unit, x, y, true);   // 見えない敵はいないものとして扱う
 
   // 敵をクリック → 攻撃
-  if (other && other.side !== unit.side) {
+  if (other) {
     if (!manualTargets(unit).includes(other)) return;
     if (state.phase === 'move') enterAttack(unit);
     manualAttack(unit, other);
     return;
   }
-  // 空きマスをクリック → 移動 / 離脱
-  if (!manualReach(unit).some(([cx, cy]) => cx === x && cy === y)) return;
+  // 空きマスをクリック → 移動 / 離脱（見えている範囲で選ぶ）
+  if (!manualReach(unit, true).some(([cx, cy]) => cx === x && cy === y)) return;
   const before = unit.posText, fromX = unit.x, fromY = unit.y;
+  // 霧の中の敵に阻まれて行けないときは、本当に行けるマスのうち目的地にいちばん近いところで止まる
+  const truth = manualReach(unit);
+  if (!truth.some(([cx, cy]) => cx === x && cy === y)) {
+    const stop = [[unit.x, unit.y], ...truth].sort((a, b) =>
+      distance({ x: a[0], y: a[1] }, { x, y }) - distance({ x: b[0], y: b[1] }, { x, y }) ||
+      distance({ x: a[0], y: a[1] }, unit) - distance({ x: b[0], y: b[1] }, unit))[0];
+    [x, y] = stop;
+    log(`🌫 ${unit.name} は霧の中の敵に行く手を阻まれた！`, unit.side);
+  }
   [unit.x, unit.y] = [x, y];
   if (state.phase === 'retreat') {
     log(`${unit.name} は離脱した。${before} → ${unit.posText}`, unit.side);
@@ -1744,9 +1764,11 @@ function buffText(u) {
 
 /** 手動で (x,y) へ移動したら突撃になるか */
 function chargeFrom(unit, x, y) {
+  // 表示用: 動く前に見えていた敵だけ（仮に動かした先で隠れた敵が見えてしまわないように）
+  const seen = new Set(enemiesOf(unit).filter(e => visibleTo(unit.side, e)).map(e => e.id));
   const [ox, oy] = [unit.x, unit.y];
   [unit.x, unit.y] = [x, y];
-  const c = manualCharge(unit, ox, oy);
+  const c = manualCharge(unit, ox, oy, seen);
   [unit.x, unit.y] = [ox, oy];
   return c;
 }
@@ -1787,13 +1809,13 @@ function renderField(acting) {
   // 突撃になる移動先（騎兵など）と、一斉指揮の範囲
   const curU = currentUnit();
   const chargeSet = new Set(curU && state.phase === 'move' && curU.traits.includes('charge')
-    ? manualReach(curU).filter(([x, y]) => chargeFrom(curU, x, y)).map(([x, y]) => `${x},${y}`) : []);
+    ? manualReach(curU, true).filter(([x, y]) => chargeFrom(curU, x, y)).map(([x, y]) => `${x},${y}`) : []);
   const spOpt = curU && ui2.spear != null ? spearOptions(curU)[ui2.spear] : null;
   const spearCells = new Set(spOpt ? spOpt.hits.map(h => `${h.u.x},${h.u.y}`) : []);
   const cmdRange = curU && skillReady(curU, '一斉指揮') && canUseSkill(curU, '一斉指揮') && ui2.preview === '一斉指揮';
   const deploy = deployMode();
   const cur = currentUnit();
-  const reach = new Set(cur ? manualReach(cur).map(([x, y]) => `${x},${y}`) : []);
+  const reach = new Set(cur ? manualReach(cur, true).map(([x, y]) => `${x},${y}`) : []);
   const targets = new Set(cur ? manualTargets(cur).map(u => u.id) : []);
   // プレイヤー軍の視界。手動プレイでは見えない敵を描かない（オート観戦では半透明で描く）
   const eyes = state.player.units.filter(u => u.alive);
