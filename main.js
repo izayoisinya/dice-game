@@ -2196,24 +2196,40 @@ function poolLeft(army, type) {
 }
 
 /**
- * 指揮枠: 隊長の統率力の分だけ、兵士の駒と配下の将を入れられる。
- * 使う枠 = 兵士の駒 1 / 兵長 1 / 副将 2（斥候・暗殺者は単独で動く者なので 0）
+ * 統率力で決まる2つの上限:
+ *   率いる人数（指揮量）= 統率力 × 100人分。兵士は1人 = 1、配下の兵長 = 100人分・副将 = 150人分（階級のコストで換算: 兵長 1000 / 副将 1500 ÷ 兵士1人 10）。
+ *     斥候・暗殺者は単独で動く者なので 0
+ *   駒の数 = 統率力（細かく分けすぎないように）
  */
-const LDR_USE = { piece: 1, '兵長': 1, '副将': 2 };
+const LDR_MEN = 100;
+const MEMBER_MEN = { '兵長': 100, '副将': 150 };
 function memberUse(m) {
   if (!m || m.kind) return 0;
-  return m.rank ? LDR_USE[m.rank] ?? 2 : LDR_USE['兵長'];
+  return MEMBER_MEN[m.rank || '兵長'] ?? MEMBER_MEN['副将'];
 }
 function squadUsed(army, q) {
-  return q.pieces.length * LDR_USE.piece + q.members.reduce((a, id) => a + memberUse(memberById(army, id)), 0);
+  return squadTroops(q) + q.members.reduce((a, id) => a + memberUse(memberById(army, id)), 0);
 }
-/** 隊にあと入れられる指揮枠 */
+function squadMenCap(army, q) {
+  return squadCap(army, q) * LDR_MEN;
+}
+/** 隊にあと率いられる人数分 */
 function squadRoom(army, q) {
-  return squadCap(army, q) - squadUsed(army, q);
+  return squadMenCap(army, q) - squadUsed(army, q);
+}
+/** 統率オーバー（人数か駒の数が上限を超えている） */
+function overCommand(army, q) {
+  return squadUsed(army, q) > squadMenCap(army, q) || q.pieces.length > squadCap(army, q);
+}
+/** 兵士の駒（size 人）を足せるか。足せなければ理由 */
+function pieceBlock(army, q, size) {
+  if (q.pieces.length >= squadCap(army, q)) return `${q.name}は駒の数が隊長の統率力（${squadCap(army, q)}）の上限です。`;
+  if (size > squadRoom(army, q)) return `${q.name}が率いられるのはあと${Math.max(0, squadRoom(army, q))}人分です（隊長の統率力 × ${LDR_MEN}人）。`;
+  return null;
 }
 
 /**
- * 隊の指揮枠 = 隊長の統率力（配下の将の統率力は足さない）。
+ * 隊の駒の数の上限 = 隊長の統率力（配下の将の統率力は足さない）。率いる人数の上限はこれ × LDR_MEN。
  * 隊長が倒れて統率力の低い将が継ぐと上限を超えることがある（統率オーバー。戦域図では移動が遅くなる予定）
  */
 function squadCap(army, q) {
@@ -2258,15 +2274,30 @@ function splitPieces(type, n, target) {
 function autoForm(army) {
   const main = army.squads.find(q => q.name === '本隊');
   army.squads = [main];
-  // 本隊に残す副将は、兵士の駒（兵種の数）を入れても指揮枠が余る分だけ。ほかの副将はそれぞれ分隊を率いる
+  // 本隊に残す副将は1人まで（統率力に余裕があるときだけ）。ほかの副将はそれぞれ分隊を率いる
   const subs = shuffled(army.generals.filter(g => g.rank === '副将'));
-  const types = TYPE_NAMES.filter(t => army.totals[t] > 0).length;
-  const keep = Math.max(0, Math.min(1, Math.floor((squadCap(army, main) - types) / LDR_USE['副将'])));
+  const keep = squadCap(army, main) >= 7 ? 1 : 0;
   for (const g of subs.slice(keep)) {
     army.squads.push({ id: `${army.side}-Q${army.seq++}`, name: `${g.name}隊`, leader: g.id, members: [], pieces: [] });
   }
   autoFill(army);
+  // 率いきれずに余った兵士は、予備の兵長が小隊を組んで率いる（同じ兵種の兵長を優先。最大 AUTO_SMALL_SQUADS 隊）
+  for (let n = 0; n < AUTO_SMALL_SQUADS; n++) {
+    const free = army.sergeants.filter(sg => !squadOf(army, sg.id));
+    const types = TYPE_NAMES.filter(t => poolLeft(army, t) >= 50).sort((a, b) => poolLeft(army, b) - poolLeft(army, a));
+    if (!free.length || !types.length) break;
+    const sg = free.find(x => x.type === types[0]) || free.sort((a, b) => b.ldr - a.ldr)[0];
+    const q = { id: `${army.side}-Q${army.seq++}`, name: `${sg.name}隊`, leader: sg.id, members: [], pieces: [] };
+    army.squads.push(q);
+    for (const t of [sg.type, ...types.filter(x => x !== sg.type)]) {
+      const size = Math.floor(Math.min(poolLeft(army, t), squadRoom(army, q)) / 10) * 10;
+      if (size >= 50 && !pieceBlock(army, q, size)) q.pieces.push({ type: t, size });
+    }
+    if (!q.pieces.length) { army.squads.pop(); break; }
+  }
 }
+const AUTO_SMALL_SQUADS = 3;
+const AUTO_TROOP_SHARE = 0.75;   // おまかせ: 率いる人数のうち兵士に使う割合の目安（残りで兵長・副将を連れる）
 function autoFill(army) {
   const main = army.squads.find(q => q.name === '本隊');
   for (const q of army.squads) { q.members = []; q.pieces = []; }
@@ -2278,9 +2309,22 @@ function autoFill(army) {
     else if (lead.rank) focus.set(q, shuffled(TYPE_NAMES).slice(0, Math.min(1 + d(3), squadCap(army, q))));
     else focus.set(q, [lead.type, ...shuffled(TYPE_NAMES.filter(t => t !== lead.type)).slice(0, Math.min(d(2), squadCap(army, q)) - 1)]);
   }
-  // 指揮枠のうち、兵士の駒（兵種ごとに最低1つ）の分は空けておく
-  const pieceNeed = q => Math.max(1, focus.get(q).filter(t => army.totals[t] > 0).length);
-  const fits = (q, m) => squadRoom(army, q) - memberUse(m) >= pieceNeed(q);
+  // ① 兵士を配る目安（本隊 2 : 分隊 1 : 小隊 0.5）。率いる人数の AUTO_TROOP_SHARE までに抑える
+  const weight = q => (q === main ? 2 : memberById(army, q.leader).rank ? 1 : 0.5);
+  const share = new Map(army.squads.map(q => [q, {}]));
+  for (const t of TYPE_NAMES) {
+    const takers = army.squads.filter(q => focus.get(q).includes(t));
+    const W = takers.reduce((a, q) => a + weight(q), 0);
+    for (const q of takers) share.get(q)[t] = Math.floor(army.totals[t] * weight(q) / W / 10) * 10;
+  }
+  for (const q of army.squads) {
+    const sh = share.get(q), sum = Object.values(sh).reduce((a, n) => a + n, 0);
+    const limit = Math.floor(squadMenCap(army, q) * AUTO_TROOP_SHARE);
+    if (sum > limit) for (const t of Object.keys(sh)) sh[t] = Math.floor(sh[t] * limit / sum / 10) * 10;
+  }
+  const planned = q => Object.values(share.get(q)).reduce((a, n) => a + n, 0);
+  const fits = (q, m) => squadMenCap(army, q) - planned(q) - q.members.reduce((a, id) => a + memberUse(memberById(army, id)), 0) >= memberUse(m);
+  // ② 余った人数分に配下の将（本隊に副将、兵種の合う兵長）
   for (const g of army.generals) if (g.rank === '副将' && !leaders.has(g.id) && fits(main, g)) main.members.push(g.id);
   const freeSergeants = army.sergeants.filter(sg => !leaders.has(sg.id));
   for (const q of army.squads) {
@@ -2294,23 +2338,20 @@ function autoFill(army) {
   army.specials.filter(x => x.kind === '斥候').forEach((x, i) => { if (i < army.squads.length) army.squads[i].members.push(x.id); });
   const hideouts = army.squads.length > 1 ? army.squads.filter(q => q !== main) : army.squads;
   army.specials.filter(x => x.kind === '暗殺者').forEach((x, i) => hideouts[i % hideouts.length].members.push(x.id));
-  const weight = q => (q === main ? 2 : memberById(army, q.leader).rank ? 1 : 0.5);
-  const share = new Map(army.squads.map(q => [q, {}]));
-  for (const t of TYPE_NAMES) {
-    const takers = army.squads.filter(q => focus.get(q).includes(t));
-    const W = takers.reduce((a, q) => a + weight(q), 0);
-    let rest = army.totals[t];
-    for (const q of takers.filter(q => q !== main)) {
-      const n = Math.floor(army.totals[t] * weight(q) / W / 10) * 10;
-      share.get(q)[t] = n;
-      rest -= n;
+  // ③ まだ人数分が余っていれば、予備の兵士を足す（本隊から）
+  const left = Object.fromEntries(TYPE_NAMES.map(t => [t, army.totals[t] - army.squads.reduce((a, q) => a + (share.get(q)[t] || 0), 0)]));
+  for (const q of [main, ...army.squads.filter(x => x !== main)]) {
+    for (const t of focus.get(q)) {
+      const room = squadMenCap(army, q) - planned(q) - q.members.reduce((a, id) => a + memberUse(memberById(army, id)), 0);
+      const add = Math.floor(Math.min(room, left[t]) / 10) * 10;
+      if (add > 0) { share.get(q)[t] = (share.get(q)[t] || 0) + add; left[t] -= add; }
     }
-    if (main) share.get(main)[t] = rest;
   }
+  // ④ 駒に分ける（駒の数は統率力まで。収まらなければ駒を大きくする）
   for (const q of army.squads) {
-    const cap = Math.max(1, squadRoom(army, q));   // 配下の将を入れた残りの指揮枠
+    const cap = Math.max(1, squadCap(army, q));
     for (let target = AUTO_PIECE; ; target += 50) {
-      q.pieces = Object.entries(share.get(q)).flatMap(([t, n]) => splitPieces(t, n, target));
+      q.pieces = Object.entries(share.get(q)).filter(([, n]) => n >= MIN_TROOPS).flatMap(([t, n]) => splitPieces(t, n, target));
       if (q.pieces.length <= cap || target > 5000) break;
     }
   }
@@ -2515,22 +2556,22 @@ function renderCampaign() {
     const lead = memberById(P, q.leader);
     const cap = squadCap(P, q);
     // 副将は、総大将か副将が率いる隊にだけ入れる（兵長が率いる小隊には兵長だけ）
-    const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}・枠${memberUse(m)}）`;
-    const sgOpts = freeMembers(m => (!m.rank || lead?.rank) && memberUse(m) <= cap - squadUsed(P, q), true).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
+    const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}・統率${memberLdr(m)}${memberUse(m) ? `・${memberUse(m)}人分` : ''}）`;
+    const sgOpts = freeMembers(m => (!m.rank || lead?.rank) && memberUse(m) <= squadRoom(P, q), true).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('');
     const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type} ${p.size}人${P.sergeants.some(s => s.type === p.type && q.members.includes(s.id)) || (lead && !lead.rank && lead.type === p.type) ? '★' : ''}
         <button class="x" data-act="rmpiece" data-q="${q.id}" data-i="${i}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     const sgs = q.members.map(id => `<span class="chip">${desc(memberById(P, id))}
         <button class="x" data-act="rmsg" data-q="${q.id}" data-id="${id}">×</button></span>`).join('') || '<span class="sub">なし</span>';
     return `<div class="squad">
-      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 指揮枠 ${squadUsed(P, q)}/${cap}${squadUsed(P, q) > cap ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
+      <div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${lead ? lead.name : 'なし'} ／ 率いる人数 ${squadUsed(P, q)}/${squadMenCap(P, q)}人分 ／ 駒 ${q.pieces.length}/${cap}${overCommand(P, q) ? '<span class="warn">（統率オーバー）</span>' : ''} ／ 兵 ${squadTroops(q)}人
         ${q.name !== '本隊' ? `<button class="small" data-act="disband" data-q="${q.id}">解散</button>` : ''}</div>
       <div>配下の将: ${sgs} ${sgOpts ? `<select data-role="sg" data-q="${q.id}"><option value="">${lead?.rank ? '副将・兵長' : '兵長'}・斥候・暗殺者を追加…</option>${sgOpts}</select>` : ''}</div>
       <div>兵士の駒: ${pieces}</div>
       <div class="sq-add">
         <select data-role="ptype" data-q="${q.id}">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
         <input type="number" data-role="psize" data-q="${q.id}" min="${MIN_TROOPS}" step="10" value="${PIECE_DEFAULT}">人
-        <button class="small" data-act="addpiece" data-q="${q.id}" ${squadUsed(P, q) >= cap ? 'disabled' : ''}>駒を追加</button>
-        <span class="sub">（★=兵長が隊長、ATK/DEF+${SERGEANT_BUFF * 100}%。指揮枠: 兵士の駒 ${LDR_USE.piece}・兵長 ${LDR_USE['兵長']}・副将 ${LDR_USE['副将']}・斥候/暗殺者 0）</span>
+        <button class="small" data-act="addpiece" data-q="${q.id}" ${pieceBlock(P, q, MIN_TROOPS) ? 'disabled' : ''}>駒を追加</button>
+        <span class="sub">（★=兵長が隊長、ATK/DEF+${SERGEANT_BUFF * 100}%。率いる人数 = 統率力×${LDR_MEN}人分（兵士1人 = 1・兵長 ${MEMBER_MEN['兵長']}・副将 ${MEMBER_MEN['副将']}・斥候/暗殺者 0）、駒は統率力の数まで）</span>
       </div>
     </div>`;
   }).join('');
@@ -2687,7 +2728,8 @@ function onCampaignClick(e) {
       const size = Math.floor(+$('campaign').querySelector(`[data-role="psize"][data-q="${q.id}"]`).value / 10) * 10;
       if (size < MIN_TROOPS) return alert(`1駒は${MIN_TROOPS}人以上です。`);
       if (size > poolLeft(P, type)) return alert(`${type}の予備は${poolLeft(P, type)}人しかいません。`);
-      if (squadRoom(P, q) < LDR_USE.piece) return alert('隊長の統率力（指揮枠）の上限です。駒をまとめるか、配下の将を減らすか、隊長の統率力を上げてください。');
+      const why = pieceBlock(P, q, size);
+      if (why) return alert(why);
       q.pieces.push({ type, size });
       break;
     }
@@ -2704,7 +2746,7 @@ function onCampaignChange(e) {
   if (!P || !el.dataset.role) return;
   if (el.dataset.role === 'sg' && el.value) {
     const q = P.squads.find(x => x.id === el.dataset.q);
-    if (memberUse(memberById(P, el.value)) > squadRoom(P, q)) { alert('隊長の統率力（指揮枠）が足りません。'); renderCampaign(); return; }
+    if (memberUse(memberById(P, el.value)) > squadRoom(P, q)) { alert(`${q.name}が率いられるのはあと${Math.max(0, squadRoom(P, q))}人分です。`); renderCampaign(); return; }
     q.members.push(el.value);
   } else if (el.dataset.role === 'newleader' && el.value) {
     const m = memberById(P, el.value);

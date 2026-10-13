@@ -159,7 +159,7 @@ function tokenMove(t) {
   const army = campaign.armies[t.side], q = tokenSquad(t);
   const n = squadTroops(q);
   const base = n <= 200 ? 4 : n <= 500 ? 3 : n <= 1000 ? 2 : 1;
-  return Math.max(1, base - (squadUsed(army, q) > squadCap(army, q) ? 1 : 0));
+  return Math.max(1, base - (overCommand(army, q) ? 1 : 0));
 }
 
 function tokenVision(t) {
@@ -416,7 +416,8 @@ function reorg(op, a) {
     case 'piece': {   // 兵士の駒を別の隊へ（to なしなら予備へ: 本陣だけ）
       const piece = from.pieces[a.i];
       if (to) {
-        if (squadRoom(army, to) < LDR_USE.piece) return fail(`${to.name}は隊長の統率力（指揮枠）の上限です。`);
+        const why = pieceBlock(army, to, piece.size);
+        if (why) return fail(why);
         to.pieces.push(piece);
       } else if (hub.kind !== 'base') return fail('予備に戻せるのは本陣だけです。');
       from.pieces.splice(a.i, 1);
@@ -425,7 +426,7 @@ function reorg(op, a) {
     case 'member': {  // 配下の将・斥候・暗殺者を別の隊へ（to なしなら予備へ: 本陣だけ）
       if (to) {
         if (!canHold(army, to, a.id)) return fail('副将は、兵長が率いる小隊には入れません。');
-        if (memberUse(memberById(army, a.id)) > squadRoom(army, to)) return fail(`${to.name}は隊長の統率力（指揮枠）が足りません。`);
+        if (memberUse(memberById(army, a.id)) > squadRoom(army, to)) return fail(`${to.name}が率いられるのはあと${Math.max(0, squadRoom(army, to))}人分です。`);
         to.members.push(a.id);
       } else if (hub.kind !== 'base') return fail('予備に戻せるのは本陣だけです。');
       from.members = from.members.filter(x => x !== a.id);
@@ -462,13 +463,14 @@ function reorg(op, a) {
       const size = Math.floor(a.size / 10) * 10;
       if (size < MIN_TROOPS) return fail(`1駒は${MIN_TROOPS}人以上です。`);
       if (size > poolLeft(army, a.type)) return fail(`${a.type}の予備は${poolLeft(army, a.type)}人です。`);
-      if (squadRoom(army, to) < LDR_USE.piece) return fail(`${to.name}は隊長の統率力（指揮枠）の上限です。`);
+      const why = pieceBlock(army, to, size);
+      if (why) return fail(why);
       to.pieces.push({ type: a.type, size });
       break;
     }
     case 'addmember': {  // 予備の将・斥候・暗殺者を隊に入れる（本陣だけ）
       if (!canHold(army, to, a.id)) return fail('副将は、兵長が率いる小隊には入れません。');
-      if (memberUse(memberById(army, a.id)) > squadRoom(army, to)) return fail(`${to.name}は隊長の統率力（指揮枠）が足りません。`);
+      if (memberUse(memberById(army, a.id)) > squadRoom(army, to)) return fail(`${to.name}が率いられるのはあと${Math.max(0, squadRoom(army, to))}人分です。`);
       to.members.push(a.id);
       break;
     }
@@ -502,7 +504,7 @@ function renderReorg() {
       <button class="small ro-btn" data-op="addpiece" data-to="${q.id}">駒を足す</button>
       <select class="ro" data-op="addmember" data-to="${q.id}"><option value="">将などを入れる…</option>${
         [...army.generals.filter(g => g.rank === '副将'), ...army.sergeants, ...army.specials].filter(m => !squadOf(army, m.id)).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('')}</select></div>` : '';
-    return `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(army, q)}）隊長 ${desc(lead)} ／ 指揮枠 ${squadUsed(army, q)}/${squadCap(army, q)} ／ 兵 ${squadTroops(q)}人 ${merge}</div>
+    return `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(army, q)}）隊長 ${desc(lead)} ／ 率いる人数 ${squadUsed(army, q)}/${squadMenCap(army, q)}人分 ／ 駒 ${q.pieces.length}/${squadCap(army, q)} ／ 兵 ${squadTroops(q)}人 ${merge}</div>
       <div>配下: ${members}</div><div>兵士の駒: ${pieces}</div>${add}</div>`;
   }).join('');
   return `<div class="reorg"><div class="ap-head"><b>🏯 ${hub.name}で再編成</b> <button class="small" id="sm-reorg-close">閉じる</button></div>
