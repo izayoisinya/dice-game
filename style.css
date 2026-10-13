@@ -78,8 +78,7 @@ tr.rank-兵長 td:first-child { color: #9fe39f; }
   line-height: 1.5;
 }
 .log .turn { color: #ffd76f; margin-top: 6px; }
-.log .player { color: #8fc4ff; }
-.log .cpu { color: #ff9a8f; }
+.log .player, .log .cpu { color: #ddd; }   /* 文章は同じ色。名前だけ敵味方の色（.nm-p / .nm-c） */
 .log .death { color: #ff5555; font-weight: bold; }
 .log .sys { color: #aaa; }
 
@@ -165,8 +164,7 @@ button.go { background: #3f8a4f; }
 .strat-info { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; }
 .smap-log { background: #111317; border-radius: 6px; padding: 6px 8px; font-size: 0.8rem; max-height: 260px; overflow-y: auto; line-height: 1.5; }
 .smap-log .turn { color: #ffd76f; }
-.smap-log .player { color: #8fc4ff; }
-.smap-log .cpu { color: #ff9a8f; }
+.smap-log .player, .smap-log .cpu { color: #ddd; }
 .scell.fortcell .fort { font-size: 1.2em; top: auto; right: auto; opacity: 1; }
 .scell.fortcell .glyph { position: absolute; bottom: 1px; }
 .scell.fort-none { box-shadow: inset 0 0 0 2px #bbb; }
@@ -365,3 +363,5 @@ button.skill.armed { background: #b8860b; }
   .cp-side .cp-cols { grid-template-columns: 1fr; }
   .cp-side .cp-cols > div { max-height: none; overflow: visible; }
 }
+.nm-p { color: #8fc4ff; font-weight: bold; }
+.nm-c { color: #ff9a8f; font-weight: bold; }

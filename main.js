@@ -1697,7 +1697,7 @@ function log(text, cls = 'sys') {
   if (state.logs.length > LOG_KEEP) state.logs.splice(0, state.logs.length - LOG_KEEP);
   const div = document.createElement('div');
   div.className = cls;
-  div.textContent = text;
+  div.innerHTML = fmtLog(text);
   const box = $('log');
   box.appendChild(div);
   while (box.childElementCount > LOG_KEEP) box.removeChild(box.firstChild);
@@ -1724,7 +1724,7 @@ function renderArmy(army, side, acting) {
     const ratio = u.hp / u.maxHp;
     const color = ratio > 0.5 ? '#5c5' : ratio > 0.25 ? '#dc5' : '#d55';
     tr.innerHTML = `
-      <td>${u.name}${u.troops ? `<small class="sub">(${u.troopsNow}人)</small>` : ''}</td><td>${u.rank}${u.build ? `<small class="sub">(${u.build}${u.skills.length ? '・' + u.skills.join('/') : ''})</small>` : ''}</td><td>${u.type}</td>
+      <td>${nm(u.name)}${u.troops ? `<small class="sub">(${u.troopsNow}人)</small>` : ''}</td><td>${rankName(u.rank)}${u.build ? `<small class="sub">(${u.build}${u.skills.length ? '・' + u.skills.join('/') : ''})</small>` : ''}</td><td>${u.type}</td>
       <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
       <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}<small class="sub">(${(u.actRate / ACT_PER_ATTACK).toFixed(1)}回)</small></td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
@@ -1840,7 +1840,7 @@ function renderField(acting) {
       cell.dataset.y = y;
       if (chargeSet.has(`${x},${y}`)) cell.title = '🐎 ここへ一直線に走ると突撃（初撃の威力アップ）';
       if (u) {
-        cell.title = `${u.name} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
+        cell.title = `${nm(u.name)} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
         cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>`;
       }
       cells.appendChild(cell);
@@ -1902,7 +1902,7 @@ function renderActionPanel() {
   const spearHint = unit.traits.includes('spear') && canHit
     ? `<div class="ap-hint">🔱 ${spOpts.length ? '技のボタンを押すと当たる敵が黄色で光ります。もう一度押すと実行。' : ''}ふつうの攻撃は射程${effRng(unit)}の敵1体。<b>突き</b>は隣の敵の真後ろにも敵がいるとき（2体）、<b>薙ぎ払い</b>は周りのひと続きの3マス（角を含む）に敵が2体以上いるときに使えます。</div>` : '';
   panel.innerHTML = `
-    <div class="ap-head"><b>${unit.name}</b>（${unit.rank}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
+    <div class="ap-head"><b class="nm-${unit.side === 'player' ? 'p' : 'c'}">${nm(unit.name)}</b>（${rankName(unit.rank)}・${unit.type}）HP ${unit.hp}/${unit.maxHp}
       ／ 移動 ${unit.rooted ? '不可' : unit.move} ／ 射程 ${effRng(unit)} ／ 攻撃できる回数 ${Math.floor(gauge / ACT_PER_ATTACK)}
       ${state.manual.smash ? ' ／ 強撃 準備中' : ''}${unit.hitAndRun ? ' ／ 一撃離脱中（反撃なし・攻撃後に移動可）' : ''}${state.manual.charge ? ` ／ 突撃 ${state.manual.charge.run}マス` : ''}</div>
     <div class="ap-hint">${hint}</div>
@@ -2554,7 +2554,22 @@ function loadCampaign() {
 
 /** 自軍の画面では名前の頭の「P」を省く（CPU軍と並ぶ戦闘のログ・盤面では残す） */
 function nm(name) {
-  return String(name).replace(/^P(?=\S)/, '');
+  return String(name).replace(/^[PC](?=[^\sA-Za-z])/, '');
+}
+
+/** 表示用の階級名（内部の「雑兵」は「兵士」と表示する） */
+function rankName(r) {
+  return r === '雑兵' ? '兵士' : r;
+}
+
+/**
+ * ログの1行を表示用の HTML にする。文章は同じ色で、駒・隊の名前だけ敵味方の色にする
+ * （名前の頭の P / C は省き、色で見分ける）
+ */
+function fmtLog(text) {
+  return String(text).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+    .replace(/(^|[^A-Za-z])([PC])([一-龯々ぁ-んァ-ヶー]+[0-9]*(?:隊)?)/g,
+      (all, pre, side, name) => `${pre}<span class="nm-${side === 'P' ? 'p' : 'c'}">${name}</span>`);
 }
 
 let sideOpen = false;   // 縦向きの画面で、将・兵長の一覧を開いているか

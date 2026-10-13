@@ -830,7 +830,7 @@ function renderStratBody() {
     info = '<div class="sub">自軍の隊（青）をクリックして選びます。全部動かしたら「ターン終了」。</div>';
   }
   if (m.phase === 'player' && !m.battle) info += `<div class="ap-buttons"><button id="sm-end">ターン終了</button></div>`;
-  info += `<div class="smap-log">${m.logs.slice(-12).reverse().map(l => `<div class="${l.cls}">${l.text}</div>`).join('')}</div>`;
+  info += `<div class="smap-log">${m.logs.slice(-12).reverse().map(l => `<div class="${l.cls}">${fmtLog(l.text)}</div>`).join('')}</div>`;
   $('strat-info').innerHTML = info;
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
