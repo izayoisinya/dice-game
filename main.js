@@ -2368,7 +2368,7 @@ function renderCampaign() {
   if (campaign.smap) return renderCampaignLocked();
   const usedBy = id => squadOf(P, id)?.name || '予備';
   const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
-  const generals = P.generals.map(g => `<tr><td>${g.name}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
+  const generals = P.generals.map(g => `<tr><td>${g.name}${g.build?.weapon === '弓' ? ' <span class="gen-weapon bow">🏹弓</span>' : ''}</td><td>${g.rank}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
       <td><button class="small" data-act="edit" data-id="${g.id}">振り分け</button></td></tr>`).join('');
   const sergeants = P.sergeants.map(sg => `<tr><td>${sg.name}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
   const specials = P.specials.map(x => `<tr><td>${x.name}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
@@ -2462,8 +2462,8 @@ function renderGeneralEditor() {
     ${row('ATK', '<span data-v="atk"></span>', `<input type="range" data-g="atk" min="1" max="10" step="0.5" value="${b.atk}">`, '<b data-r="atk"></b>')}
     ${row('DEF', '<span data-v="def"></span>', `<input type="range" data-g="def" min="1" max="10" step="0.5" value="${b.def}">`, '<b data-r="def"></b>')}
     ${row('統率力', '<span data-v="ldr"></span>', `<input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}">`, '<span data-r="ldr"></span>')}
-    ${row('SPD 強化', `<select data-g="spd">${upOpts(b.buy?.spd || 0)}</select>`, '', '<span data-r="spd"></span>')}
-    ${row('ACT 強化', `<select data-g="act">${upOpts(b.buy?.act || 0)}</select>`, '', '<span data-r="act"></span>')}
+    ${row('SPD 強化<div class="sub">素早さ：行動の順番・移動力</div>', `<select data-g="spd">${upOpts(b.buy?.spd || 0)}</select>`, '', '<span data-r="spd"></span>')}
+    ${row('ACT 強化<div class="sub">手数：1ターンの攻撃回数</div>', `<select data-g="act">${upOpts(b.buy?.act || 0)}</select>`, '', '<span data-r="act"></span>')}
     ${row('武器', `<select data-g="weapon"><option value="刀" ${b.weapon !== '弓' ? 'selected' : ''}>刀（近接・射程1）</option><option value="弓" ${b.weapon === '弓' ? 'selected' : ''}>弓（遠距離・射程4・後衛）</option></select>`, '', '<span class="sub" data-r="weapon"></span>')}
     ${row('射程 強化', `<select data-g="rng"></select>`, '', '<span data-r="rng"></span>')}
     ${row('スキル1', `<select data-g="s1">${skillOpts(b.skills[0])}</select>`, '', '<span class="sub" data-r="s1"></span>')}
@@ -2500,8 +2500,11 @@ function renderGeneralEditor() {
     out('ldr', `兵士の駒 ${cs.ldr}つまで${g.rank === '総大将' ? `／士気 +${Math.round((MORALE_BONUS + (cs.ldr - LDR_BASE) * MORALE_PER_LDR) * 1000) / 10}%` : ''}`);
     out('rng', `射程 ${tmp.rng}`);
     out('weapon', nb.weapon === '弓' ? `固定枠 +${cs.fixedCost - commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, { ...nb, weapon: '刀' }, slots).fixedCost}（遠くから撃てる分、脆い）` : '');
-    out('spd', `移動 ${tmp.move}`);
-    out('act', `攻撃 ${(tmp.actRate / ACT_PER_ATTACK).toFixed(1)}回`);
+    // 強化なしの場合と並べて、強化で何が変わるかを見せる
+    const base = k => { const u = new Unit('player', g.rank, COMMANDER_TYPE, '', 0, 0, { ...nb, buy: { ...nb.buy, [k]: 0 } }); unitSeq--; return u; };
+    const b0 = base('spd'), a0 = base('act'), per = u => (u.actRate / ACT_PER_ATTACK).toFixed(1);
+    out('spd', `SPD ${b0.spd} → <b>${tmp.spd}</b>／移動 ${b0.move} → <b>${tmp.move}</b><div class="sub">SPD が高いほどターン内で先に動ける</div>`);
+    out('act', `攻撃 ${per(a0)} → <b>${per(tmp)}</b> 回/ターン<div class="sub">ACT ${a0.act} → ${tmp.act}</div>`);
     out('s1', SKILLS[v('s1').value]?.desc || '');
     if (v('s2')) out('s2', SKILLS[v('s2').value]?.desc || '');
     box.querySelector('[data-g="preview"]').innerHTML =

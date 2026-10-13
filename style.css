@@ -324,3 +324,7 @@ button.off { background: #2c3038; color: #bbb; }
 .ge-alloc.wide { grid-column: span 2; }
 .ge-alloc.wide select { width: auto; max-width: 100%; }
 @media (max-width: 600px) { .ge-alloc.wide { grid-column: span 2; } }
+.gen-weapon { display: inline-block; width: fit-content; font-size: 0.85rem; padding: 1px 8px; margin: 3px 0; border-radius: 10px; background: #3a3f4a; }
+.gen-weapon.bow { background: #2f5a3a; color: #bfe8c8; }
+/* iPhone・iPad でタップがダブルタップ（拡大）待ちにならないように */
+html { touch-action: manipulation; }

@@ -82,6 +82,7 @@ function renderSetup() {
       ? `<select data-su-preset="${g.id}">${presetOpts(g.buildName)}</select>`
       : `<button class="small" data-act="edit" data-id="${g.id}">振り分け</button>`;
     return `<div class="gen-card"><div><b>${g.name}</b>（${g.rank}）<span class="sub">${g.buildName || '標準'}</span></div>
+      <div class="gen-weapon ${g.build?.weapon === '弓' ? 'bow' : ''}">${g.build?.weapon === '弓' ? '🏹 弓（遠距離）' : '⚔ 刀（近接）'} 射程 ${tmp.rng}</div>
       <div class="sub">HP ${tmp.maxHp} / ATK ${tmp.atk} / DEF ${tmp.def} / 移動 ${tmp.move} / 統率 ${cs.ldr} / スキル ${cs.skills.join('・')}</div>
       <div>${ctrl}</div></div>`;
   }).join('');
