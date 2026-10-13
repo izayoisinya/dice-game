@@ -2644,7 +2644,7 @@ function renderCampaign() {
             <button class="small" data-act="addpiece" data-q="${q.id}" ${pieceBlock(P, q, MIN_TROOPS) ? 'disabled' : ''}>＋ 駒を追加</button>
           </div></div>
       </div>
-      <div class="sub">★=兵長が率いる（ATK/DEF+${SERGEANT_BUFF * 100}%）。率いる人数 = 統率力×${LDR_MEN}人分（兵士1人 = 1・兵長 ${MEMBER_MEN['兵長']}・副将 ${MEMBER_MEN['副将']}・斥候/暗殺者 0）、駒は統率力の数まで</div>
+      <div class="sub">★=同じ兵種の兵長がこの隊にいる駒（戦闘中その兵長が生きている間 ATK/DEF+${SERGEANT_BUFF * 100}%）。率いる人数 = 統率力×${LDR_MEN}人分（兵士1人 = 1・兵長 ${MEMBER_MEN['兵長']}・副将 ${MEMBER_MEN['副将']}・斥候/暗殺者 0）、駒は統率力の数まで</div>
     </div>`;
   }).join('');
   const actions = `<button class="small" data-act="auto">おまかせ編成</button>
