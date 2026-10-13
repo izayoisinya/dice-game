@@ -310,6 +310,16 @@ for (const [name, t] of Object.entries(TYPES)) {
 }
 
 const HIT_SPREAD = 5;   // 命中率の個体差 ±5%
+// 回避: 狙われた側の SPD が基準（100）より高いほど当たりにくく、低いほど当たりやすい
+// （SPD 10 ごとに 1.5%。避ける側は最大 −10%、鈍くて当たりやすい側は最大 +5%。盾兵が弓に弱くなりすぎないように）
+const EVADE_BASE_SPD = 100;
+const EVADE_PER_SPD = 0.15;
+const EVADE_CAP = 10;
+const EXPOSE_CAP = 5;
+/** 回避による命中率の増減（マイナス = 避けられやすい） */
+function evadeMod(defender) {
+  return Math.max(-EVADE_CAP, Math.min(EXPOSE_CAP, Math.round((EVADE_BASE_SPD - defender.spd) * EVADE_PER_SPD)));
+}
 // 兵として編成される兵種（総大将専用の「将」は除く）
 const TYPE_NAMES = Object.keys(TYPES).filter(k => !TYPES[k].commanderOnly && !TYPES[k].special);
 const COMMANDER_TYPE = '将';
@@ -688,7 +698,7 @@ function surroundCount(attacker, defender) {
 
 /**
  * 攻撃判定:
- *   命中率 = HIT × 距離の命中倍率。1d100 が命中率以下なら命中
+ *   命中率 = HIT × 距離の命中倍率 ＋ 回避（相手の SPD で ±10%）。1d100 が命中率以下なら命中
  *   基本値   = max(ATK × 0.25, ATK − DEF × 0.5 + 1d6×10)
  *   ダメージ = max(10, 基本値 × 距離の威力倍率 × 相性 × 突撃 × 包囲)  ※四捨五入
  *   包囲     = 1 + 0.1 × 攻撃対象に隣接する味方の数
@@ -699,9 +709,10 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   const dist = distance(attacker, defender);
   const f = attacker.falloff[dist] ?? attacker.falloff[Math.max(...Object.keys(attacker.falloff).map(Number))];
   const aim = attacker.traits.includes('aim') && !attacker.moved ? AIM_HIT[lv(attacker)] : 0;
-  const hitRate = Math.round(attacker.hit * f.hit) + aim;
+  const evade = evadeMod(defender);
+  const hitRate = Math.max(5, Math.min(99, Math.round(attacker.hit * f.hit) + aim + evade));
   const hitRoll = d(100);
-  if (hitRoll > hitRate) return { hit: false, hitRate, hitRoll };
+  if (hitRoll > hitRate) return { hit: false, hitRate, hitRoll, evade };
   const die = d(6);
   const crit = die === 6;
   const baseAtk = effAtk(attacker) * atkMult;
@@ -713,7 +724,12 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
     * (defender.traits.includes('guard') ? 1 - GUARD_CUT[lv(defender)] : 1);
   const base = Math.max(atk * MIN_DAMAGE_RATE, atk - effDef(defender) * 0.5 + die * DAMAGE_DIE_SCALE);
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult));
-  return { hit: true, hitRate, hitRoll, dmg, die, crit, surround };
+  return { hit: true, hitRate, hitRoll, evade, dmg, die, crit, surround };
+}
+
+/** ログ用: 回避で命中率が変わっていれば添える */
+function evText(r) {
+  return r.evade ? `（${r.evade < 0 ? '素早くて回避' : '鈍くて被弾'}${r.evade > 0 ? '+' : ''}${r.evade}）` : '';
 }
 
 /** SPD 降順で行動キューを作る（同値はランダム） */
@@ -867,7 +883,7 @@ function performSpear(unit, opt, atkMult = 1) {
   for (const h of opt.hits) {
     if (!h.u.alive) continue;
     const r = calcAttack(unit, h.u, h.mult, atkMult);
-    if (!r.hit) { log(`　${h.u.name} にかわされた！ [命中${r.hitRate}% 🎲${r.hitRoll}]`, unit.side); continue; }
+    if (!r.hit) { log(`　${h.u.name} にかわされた！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}]`, unit.side); continue; }
     h.u.hp = Math.max(0, h.u.hp - r.dmg);
     log(`　${h.u.name} に ${r.dmg} のダメージ！${r.crit ? ' 会心！' : ''} (残HP ${h.u.hp}/${h.u.maxHp})`, unit.side);
     if (!h.u.alive) {
@@ -905,11 +921,11 @@ function performAttack(unit, target, bonus = 1, atkMult = 1) {
   if (unit.traits.includes('stealth')) unit.revealed = true;
   const r = calcAttack(unit, target, bonus, atkMult);
   if (!r.hit) {
-    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
+    log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] ${target.name} にかわされた！`, unit.side);
     return false;
   }
   target.hp = Math.max(0, target.hp - r.dmg);
-  log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${atkMult > 1 ? ` 強撃×${atkMult}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
+  log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${atkMult > 1 ? ` 強撃×${atkMult}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
   if (!target.alive) {
     log(`☠ ${target.name} は倒れた！`, 'death');
     if (checkVictory()) return true;
@@ -945,11 +961,11 @@ function counterAttack(defender, attacker) {
   }
   const r = calcAttack(defender, attacker, COUNTER_MULT);
   if (!r.hit) {
-    log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}% 🎲${r.hitRoll}] ${attacker.name} にかわされた！`, defender.side);
+    log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] ${attacker.name} にかわされた！`, defender.side);
     return false;
   }
   attacker.hp = Math.max(0, attacker.hp - r.dmg);
-  log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}% 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${attacker.name} に ${r.dmg} のダメージ！ (残HP ${attacker.hp}/${attacker.maxHp})`, defender.side);
+  log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${attacker.name} に ${r.dmg} のダメージ！ (残HP ${attacker.hp}/${attacker.maxHp})`, defender.side);
   if (!attacker.alive) {
     log(`☠ ${attacker.name} は倒れた！`, 'death');
     return checkVictory();
