@@ -340,7 +340,7 @@ button.skill.armed { background: #b8860b; }
   .cp-side { order: 2; }   /* サイドメニューは右側 */
   .cp-side { position: sticky; top: calc(var(--topbar-h, 60px) + var(--pool-h, 80px));
     max-height: calc(100dvh - var(--topbar-h, 60px) - var(--pool-h, 80px) - 12px); overflow-y: auto;
-    background: #22252c; border-radius: 8px; padding: 0 8px 8px; }
+    background: #22252c; border-radius: 8px; padding: 0 8px 8px; overflow-x: hidden; }
   .cp-side .cp-cols { grid-template-columns: 1fr; gap: 4px; }
   .cp-side .cp-cols > div { max-height: none; overflow: visible; }
   .cp-side table { font-size: 0.85rem; }
@@ -389,3 +389,4 @@ tr.tap:hover td { background: #2f3440; }
 .info-table td { padding: 4px 8px; border-bottom: 1px solid #30343c; text-align: left; }
 .info-skills { font-size: 0.9rem; line-height: 1.6; color: #ccc; }
 .rare-tag { color: #ffd76f; font-weight: bold; }
+.cp-side .gen-weapon { font-size: 0.75rem; padding: 0 5px; margin: 0; }

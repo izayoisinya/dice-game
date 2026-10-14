@@ -2759,7 +2759,7 @@ function renderCampaign() {
   if (campaign.smap) return renderCampaignLocked();
   const usedBy = id => nm(squadOf(P, id)?.name || '予備');
   const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
-  const generals = P.generals.map(g => `<tr class="tap" data-act="info" data-id="${g.id}"><td>${nm(g.name)}${weaponOf(g.build) !== '刀' ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
+  const generals = P.generals.map(g => `<tr class="tap" data-act="info" data-id="${g.id}"><td>${nm(g.name)}${weaponOf(g.build) !== '刀' && !g.rare ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
       <td><button class="small" data-act="edit" data-id="${g.id}">${g.rare ? '詳細' : '振り分け'}</button></td></tr>`).join('');
   const sergeants = P.sergeants.map(sg => `<tr class="tap" data-act="info" data-id="${sg.id}"><td>${nm(sg.name)}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
   const specials = P.specials.map(x => `<tr class="tap" data-act="info" data-id="${x.id}"><td>${nm(x.name)}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
