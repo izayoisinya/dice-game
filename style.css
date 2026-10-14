@@ -388,3 +388,4 @@ tr.tap:hover td { background: #2f3440; }
 .info-table th { text-align: left; color: #999; font-weight: normal; padding: 4px 8px; width: 7em; border-bottom: 1px solid #30343c; }
 .info-table td { padding: 4px 8px; border-bottom: 1px solid #30343c; text-align: left; }
 .info-skills { font-size: 0.9rem; line-height: 1.6; color: #ccc; }
+.rare-tag { color: #ffd76f; font-weight: bold; }

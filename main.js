@@ -87,7 +87,10 @@ const TRAITS = {
   charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
   scout:  { name: '索敵',   cost: 100 }, // 視界が広い。隠密の敵も2マスまで見つけられる
   stealth: { name: '隠密',  cost: 50 },  // 敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで姿が見える）
-  assassin: { name: '暗殺', cost: 0 },   // 将（兵長以上）への攻撃が強く、兵士の駒への攻撃は弱い
+  assassin: { name: '暗殺', cost: 0 },
+  dual:   { name: '二刀流', cost: 0 },       // 二刀流剣士: 1回の攻撃で2回斬る
+  dash:   { name: 'すれ違い斬り', cost: 0 }, // 二刀流剣士: 隣の敵の向こうへ駆け抜けながら斬る
+  deflect: { name: '剣弾き', cost: 0 },      // 二刀流剣士: 攻撃を剣で弾く   // 将（兵長以上）への攻撃が強く、兵士の駒への攻撃は弱い
 };
 const ASSASSIN_VS_GENERAL = 1.6;   // 暗殺者 → 将（兵長・副将・総大将）の威力倍率
 const ASSASSIN_VS_TROOPS = 0.5;    // 暗殺者 → 兵士の駒・斥候の威力倍率
@@ -99,6 +102,8 @@ const SCOUT_KEEP = 5;              // 斥候（オート）が最も近い敵と
 // 兵種の固有能力の強さ。[兵士の駒, 兵長] の順（兵長の方が少し強い）
 const DEFLECT_CUT = [0.2, 0.3];                // 矢払い（剣兵）: 3マス以上離れたところからの攻撃のダメージを減らす（兵士の駒 / 兵長）
 const VOLLEY_TAKEN = 0.3;                        // 長柄の弱み（槍兵）: 3マス以上離れたところからの攻撃（矢）のダメージ +30%
+const DUAL_MULT = 0.6;                           // 二刀流: 1回の攻撃で2回斬る（それぞれ ATK ×0.6）
+const DEFLECT_CHANCE = 35;                       // 剣弾き: 攻撃が当たったとき弾いてダメージ 0 にする確率（%）
 const BRACE_TARGETS = ['剣兵', '騎兵', '将', '騎将'];   // 迎え突きが効く相手（剣・騎兵と、刀・馬の将。盾兵は盾で受けるので効かない）
 const BRACE_MULT = [0.3, 0.4];                  // 迎え突き（槍兵）: 隣に踏み込んできた敵への一撃の威力（兵士の駒 / 兵長）
 const THRUST_MULT = [[0.8, 0.5], [0.9, 0.6]];   // 突き: 縦に並んだ敵2体（手前 / 奥）
@@ -121,6 +126,9 @@ const TRAIT_HELP = {
   pursuit: `矢払い: 3マス以上離れたところからの攻撃のダメージ −${pct(DEFLECT_CUT[0])}%（兵長 −${pct(DEFLECT_CUT[1])}%）。追撃: 敵を倒すと行動ゲージが ${PURSUIT_GAUGE[0]}（兵長 ${PURSUIT_GAUGE[1]}）たまり（攻撃1回分 = ${ACT_PER_ATTACK}）、移動力の半分だけ次の敵へ踏み込める。弱った敵を続けて仕留める`,
   cover: '敵と味方の間（同じ縦・横の直線上）にいると、その味方への攻撃を代わりに受ける',
   charge: `上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×${pct(CHARGE_BONUS_LV[0])}%（兵長 ×${pct(CHARGE_BONUS_LV[1])}%）だけ初撃の威力が上がる。奇襲の一撃なので相手の回避を無視し、命中 +${CHARGE_HIT}%（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示`,
+  dual: `1回の攻撃で2回斬る（それぞれ ATK ×${pct(DUAL_MULT)}%、別々に命中判定）`,
+  dash: '隣の敵の向こう側（2マス先）へ駆け抜けながら、その敵を斬る（攻撃1回分・1行動に1回）。囲みを抜けたり、後ろの敵に回り込んだりできる',
+  deflect: `攻撃が当たったとき ${DEFLECT_CHANCE}% の確率で剣で弾いてダメージ 0。相手が自分の間合いにいれば反撃もする`,
   scout: '視界が広い。隠密の敵も2マスまで見つけられる',
   stealth: '敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで見える）',
   assassin: '将（兵長以上）への攻撃 ×1.6、兵士の駒への攻撃 ×0.5',
@@ -190,6 +198,16 @@ const TYPES = {
   '騎将': { stats: { hp: 100, atk: 90, def: 80, spd: 130, act: 70 }, rng: 1, hit: 85, best: 1, commanderOnly: true, traits: ['charge'],
             weaponDiscount: 45,    // 足の分を軽く（割引なしだと勝率 5%、+40 で 35%、+45 で 43%、+80 で 88%）
             falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
+  // レアな副将「二刀流剣士」専用。耐久を削ぎ落とし、足と手数で斬り込む。選べるスキルは持たず、固有能力だけで戦う
+  '二刀将': { stats: { hp: 60, atk: 120, def: 40, spd: 130, act: 140 }, rng: 1, hit: 90, best: 1, commanderOnly: true, rare: true,
+            traits: ['dual', 'dash', 'deflect'], weaponDiscount: 40,   // 1対1で通常の副将に勝率82%、剣兵300人と五分くらい（+120 だと強すぎ、0 だと通常の副将と互角）
+            falloff: { 1: { hit: 1.0, pow: 1.0 } } },
+};
+
+/** レアな将（固定の型。振り分け・スキル選択はできない） */
+const RARE_GENERALS = {
+  '二刀流剣士': { chance: 20, build: { hp: 2, atk: 5, def: 3, buy: {}, weapon: '二刀', skills: [], ldr: 3 },   // 統率は最低（LDR_BASE）。一匹狼
+    desc: '耐久を削ぎ落とした二刀流の剣士。足が速く手数が多い。二刀流・すれ違い斬り・剣弾きの固有能力だけで戦う（スキルは選べない）' },
 };
 
 /** 将の武器。三すくみの相性は持たない（将の兵種はどれも相性 ×1.0） */
@@ -199,6 +217,7 @@ const WEAPONS = {
   '弓': { type: '弓将', icon: '🏹', label: '弓（遠距離・射程4・後衛）' },
   '盾': { type: '盾将', icon: '🛡', label: '盾（堅守: 受けるダメージ減）' },
   '馬': { type: '騎将', icon: '🐎', label: '馬（騎乗・突撃・足が速い）' },
+  '二刀': { type: '二刀将', icon: '⚔⚔', label: '二刀（レア: 二刀流剣士専用）', rare: true },
 };
 function weaponOf(build) {
   return WEAPONS[build?.weapon] ? build.weapon : '刀';
@@ -756,6 +775,7 @@ function tickUnit(u) {
   u.revealed = false;
   u.moved = false;   // この行動で移動したか（狙い撃ち）
   u.pursuitMove = 0; // 追撃: 敵を倒したあとに踏み込めるマス数
+  u.dashed = false;  // すれ違い斬りをこの行動で使ったか
 }
 
 /** 攻撃対象に上下左右で隣接している、攻撃側の味方の数（攻撃者自身は除く） */
@@ -796,6 +816,8 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   const base = atk * DEF_K / (DEF_K + effDef(defender)) * (0.7 + die * 0.1) * DMG_SCALE;
   // 受け流し（盾）: 一定の確率でダメージを大きく減らす
   const parry = defender.traits.includes('guard') && d(100) <= PARRY_CHANCE[lv(defender)];
+  // 剣弾き（二刀流剣士）: 一定の確率で攻撃を剣で弾き、ダメージ 0
+  if (defender.traits.includes('deflect') && d(100) <= DEFLECT_CHANCE) return { hit: true, hitRate, hitRoll, evade, dmg: 0, die, crit: false, surround, deflected: true };
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult * (parry ? 1 - PARRY_CUT : 1)));
   return { hit: true, hitRate, hitRoll, evade, dmg, die, crit, surround, parry };
 }
@@ -932,6 +954,29 @@ function findCharge(unit) {
   return best;
 }
 
+/** すれ違い斬りの候補: 上下左右の隣の敵（見えている）と、その向こう側の空いたマス。{ target, to: [x, y], dir } の配列 */
+function dashOptions(unit) {
+  if (!unit.traits.includes('dash') || unit.dashed || unit.rooted) return [];
+  const opts = [];
+  for (const [dx, dy] of DIRS) {
+    const e = enemyAt(unit, unit.x + dx, unit.y + dy, true);
+    const tx = unit.x + 2 * dx, ty = unit.y + 2 * dy;
+    if (!e || tx < 0 || ty < 0 || tx >= state.map.w || ty >= state.map.h || unitAt(tx, ty)) continue;
+    opts.push({ target: e, to: [tx, ty], dir: [dx, dy] });
+  }
+  return opts;
+}
+
+/** すれ違い斬り: 敵の向こうへ駆け抜けながら斬る（攻撃1回分）。決着したら true */
+function performDash(unit, opt) {
+  const before = unit.posText;
+  [unit.x, unit.y] = opt.to;
+  unit.dashed = true;
+  unit.moved = true;
+  log(`💨 ${unit.name} のすれ違い斬り！ ${before} → ${unit.posText}`, unit.side);
+  return performAttack(unit, opt.target);
+}
+
 /**
  * 槍兵の範囲攻撃の候補。
  *   突き = 上下左右の向きで、隣の敵とその奥の敵（2体とも見えている）
@@ -999,7 +1044,7 @@ function braceStrike(unit, fromX, fromY) {
     const r = calcAttack(e, unit, BRACE_MULT[lv(e)]);
     if (!r.hit) { log(`🔱 ${e.name} の迎え突き！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] ${unit.name} にかわされた！`, e.side); continue; }
     unit.hp = Math.max(0, unit.hp - r.dmg);
-    log(`🔱 ${e.name} の迎え突き！ ${unit.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！ (残HP ${unit.hp}/${unit.maxHp})`, e.side);
+    log(`🔱 ${e.name} の迎え突き！ ${unit.name} に${r.parry ? '（🛡受け流し）' : r.deflected ? '（⚔弾いた！）' : ''} ${r.dmg} のダメージ！ (残HP ${unit.hp}/${unit.maxHp})`, e.side);
     if (!unit.alive) { log(`☠ ${unit.name} は倒れた！`, 'death'); checkVictory(); return true; }
   }
   return !unit.alive;
@@ -1024,7 +1069,7 @@ function performSpear(unit, opt, atkMult = 1) {
     const r = calcAttack(unit, h.u, h.mult, atkMult);
     if (!r.hit) { log(`　${h.u.name} にかわされた！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}]`, unit.side); continue; }
     h.u.hp = Math.max(0, h.u.hp - r.dmg);
-    log(`　${h.u.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！${r.crit ? ' 会心！' : ''} (残HP ${h.u.hp}/${h.u.maxHp})`, unit.side);
+    log(`　${h.u.name} に${r.parry ? '（🛡受け流し）' : r.deflected ? '（⚔弾いた！）' : ''} ${r.dmg} のダメージ！${r.crit ? ' 会心！' : ''} (残HP ${h.u.hp}/${h.u.maxHp})`, unit.side);
     if (!h.u.alive) {
       log(`☠ ${h.u.name} は倒れた！`, 'death');
       if (checkVictory()) return true;
@@ -1055,6 +1100,15 @@ function coverFor(attacker, target) {
  * bonus = 突撃などの威力倍率、atkMult = 強撃などの ATK 倍率
  */
 function performAttack(unit, target, bonus = 1, atkMult = 1) {
+  if (!unit.traits.includes('dual')) return performAttackOnce(unit, target, bonus, atkMult, true);
+  // 二刀流: 2回斬る（それぞれ ATK ×DUAL_MULT）。反撃は2回目のあとに1回だけ
+  log(`⚔⚔ ${unit.name} の二刀流！`, unit.side);
+  if (performAttackOnce(unit, target, bonus * DUAL_MULT, atkMult, false)) return true;
+  if (!target.alive || !unit.alive) return false;
+  return performAttackOnce(unit, target, bonus * DUAL_MULT, atkMult, true);
+}
+
+function performAttackOnce(unit, target, bonus = 1, atkMult = 1, counter = true) {
   target = coverFor(unit, target);
   const dist = distance(unit, target);
   if (unit.traits.includes('stealth')) unit.revealed = true;
@@ -1064,7 +1118,7 @@ function performAttack(unit, target, bonus = 1, atkMult = 1) {
     return false;
   }
   target.hp = Math.max(0, target.hp - r.dmg);
-  log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${atkMult > 1 ? ` 強撃×${atkMult}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
+  log(`${unit.name} の攻撃！ [距離${dist} 命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''}${bonus > 1 ? ` 突撃×${bonus.toFixed(2)}` : ''}${atkMult > 1 ? ` 強撃×${atkMult}` : ''}${r.surround ? ` 包囲×${(1 + SURROUND_BONUS * r.surround).toFixed(1)}` : ''} ${target.name} に${r.parry ? '（🛡受け流し）' : r.deflected ? '（⚔弾いた！）' : ''} ${r.dmg} のダメージ！ (残HP ${target.hp}/${target.maxHp})`, unit.side);
   if (!target.alive) {
     log(`☠ ${target.name} は倒れた！`, 'death');
     if (checkVictory()) return true;
@@ -1075,7 +1129,7 @@ function performAttack(unit, target, bonus = 1, atkMult = 1) {
     }
     return false;
   }
-  return counterAttack(target, unit);
+  return counter ? counterAttack(target, unit) : false;
 }
 
 /**
@@ -1105,7 +1159,7 @@ function counterAttack(defender, attacker) {
     return false;
   }
   attacker.hp = Math.max(0, attacker.hp - r.dmg);
-  log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${attacker.name} に${r.parry ? '（🛡受け流し）' : ''} ${r.dmg} のダメージ！ (残HP ${attacker.hp}/${attacker.maxHp})`, defender.side);
+  log(`↩ ${defender.name} の反撃！ [命中${r.hitRate}%${evText(r)} 🎲${r.hitRoll}] 命中！ [🎲${r.die}]${r.crit ? ' 会心の一撃！' : ''} ${attacker.name} に${r.parry ? '（🛡受け流し）' : r.deflected ? '（⚔弾いた！）' : ''} ${r.dmg} のダメージ！ (残HP ${attacker.hp}/${attacker.maxHp})`, defender.side);
   if (!attacker.alive) {
     log(`☠ ${attacker.name} は倒れた！`, 'death');
     return checkVictory();
@@ -1292,6 +1346,14 @@ function actUnit(unit) {
     if (!target || distance(unit, target) > effRng(unit)) break;
     unit.gauge -= ACT_PER_ATTACK;
     attacked++;
+    // 二刀流剣士: すれ違い斬りで、狙う敵の向こうへ抜けながら斬る（囲まれていれば抜け出す）
+    const dash = dashOptions(unit).find(o => o.target === target);
+    if (dash && (alliesOf(unit).length === 0 || seenEnemies(unit).filter(e => distance(e, unit) === 1).length >= 2 || Math.random() < 0.5)) {
+      if (performDash(unit, dash)) return;
+      if (!unit.alive) return;
+      first = false;
+      continue;
+    }
     // 突撃ボーナスは初撃のみ
     const bonus = charge && first ? 1 + CHARGE_BONUS_LV[lv(unit)] * charge.run : 1;
     // 強撃: 攻撃できるときに初撃へ乗せる
@@ -1623,6 +1685,18 @@ function onCellClick(x, y) {
     log(`${unit.name} は移動した。${before} → ${unit.posText}`, unit.side);
   }
   enterAttack(unit);
+  render(unit);
+  saveGame();
+}
+
+function manualDash(unit, opt) {
+  if (state.phase === 'move') enterAttack(unit);
+  if (unit.gauge < ACT_PER_ATTACK) return;
+  unit.gauge -= ACT_PER_ATTACK;
+  state.manual.attacked++;
+  state.manual.moved = true;
+  if (performDash(unit, opt)) return;
+  if (!unit.alive) { endManual(); return; }
   render(unit);
   saveGame();
 }
@@ -1977,6 +2051,8 @@ function renderActionPanel() {
   // 槍兵の範囲攻撃（攻撃できる回数が残っていれば）
   const canHit = (state.phase === 'move' || state.phase === 'attack') && gauge >= ACT_PER_ATTACK;
   const spOpts = canHit ? spearOptions(unit) : [];
+  const dashOpts = canHit ? dashOptions(unit) : [];
+  const dashBtns = dashOpts.map((o, i) => `<button class="skill" data-dash="${i}">💨すれ違い斬り${{ '0,-1': '↑', '1,0': '→', '0,1': '↓', '-1,0': '←' }[o.dir.join(',')]}（${o.target.name}）</button>`).join('');
   // 1回目のタップで盤面に当たる敵を表示、2回目（「実行」）で攻撃する
   if (ui2.spear != null && !spOpts[ui2.spear]) ui2.spear = null;
   const spearBtns = spOpts.map((o, i) => `<button class="skill ${ui2.spear === i ? 'armed' : ''}" data-spear="${i}">🔱${o.name}${dirName(unit, o)}${ui2.spear === i ? ' ▶ 実行' : ''}（${o.hits.map(h => `${h.u.name} ${Math.round(h.mult * 100)}%`).join('・')}）</button>`).join('');
@@ -1993,6 +2069,7 @@ function renderActionPanel() {
     <div class="ap-buttons">
       ${state.phase === 'move' ? '<button id="ap-stay">移動しない</button>' : ''}
       ${spearBtns}
+      ${dashBtns}
       ${skills}
       ${state.phase !== 'retreat' ? '<button id="ap-end">行動終了</button>' : '<button id="ap-noretreat">離脱しない</button>'}
       ${unit === leaderOf(state.player) ? '<button id="ap-withdraw" class="danger">撤退</button>' : ''}
@@ -2006,6 +2083,7 @@ function renderActionPanel() {
   const wd = $('ap-withdraw');
   if (wd) wd.onclick = () => onWithdraw(unit);
   for (const b of panel.querySelectorAll('button.skill')) b.onclick = () => onSkill(b.dataset.skill);
+  for (const b of panel.querySelectorAll('[data-dash]')) b.onclick = () => manualDash(unit, dashOpts[+b.dataset.dash]);
   for (const b of panel.querySelectorAll('[data-spear]')) b.onclick = () => {
     const i = +b.dataset.spear;
     if (ui2.spear === i) manualSpear(unit, spOpts[i]);
@@ -2255,8 +2333,13 @@ function newArmy(side, pre = null) {
   }
   const generalRoll = pre ? pre.generals : rollExpr(GENERAL_DICE);
   const generals = [{ id: `${side}-G0`, rank: '総大将', name: `${label}総大将`, build: defaultBuild(LDR_BASE + 4) }];
+  let rareLeft = 1;   // レアな将は1つの軍に1人まで
   for (let i = 1; i <= generalRoll.total; i++) {
-    generals.push({ id: `${side}-G${i}`, rank: '副将', name: `${label}副将${i}`, build: defaultBuild(LDR_BASE + 2) });
+    const rare = rareLeft > 0 && Object.entries(RARE_GENERALS).find(([, r]) => d(r.chance) === 1);
+    if (rare) {
+      rareLeft--;
+      generals.push({ id: `${side}-G${i}`, rank: '副将', name: `${label}${rare[0]}`, rare: rare[0], build: structuredClone(rare[1].build), buildName: `★${rare[0]}` });
+    } else generals.push({ id: `${side}-G${i}`, rank: '副将', name: `${label}副将${i}`, build: defaultBuild(LDR_BASE + 2) });
   }
   const sergeants = [];
   for (const t of TYPE_NAMES) {
@@ -2677,7 +2760,7 @@ function renderCampaign() {
   const usedBy = id => nm(squadOf(P, id)?.name || '予備');
   const pool = TYPE_NAMES.map(t => `<span class="chip">${t} 🎲${P.troopDice[t]} <b>${poolLeft(P, t)}</b>/${P.totals[t]}人</span>`).join('');
   const generals = P.generals.map(g => `<tr class="tap" data-act="info" data-id="${g.id}"><td>${nm(g.name)}${weaponOf(g.build) !== '刀' ? ` <span class="gen-weapon bow">${WEAPONS[weaponOf(g.build)].icon}${weaponOf(g.build)}</span>` : ''}</td><td>${memberLdr(g)}</td><td>${usedBy(g.id)}</td>
-      <td><button class="small" data-act="edit" data-id="${g.id}">振り分け</button></td></tr>`).join('');
+      <td><button class="small" data-act="edit" data-id="${g.id}">${g.rare ? '詳細' : '振り分け'}</button></td></tr>`).join('');
   const sergeants = P.sergeants.map(sg => `<tr class="tap" data-act="info" data-id="${sg.id}"><td>${nm(sg.name)}</td><td>${sg.type}</td><td>${sg.ldr}</td><td>${usedBy(sg.id)}</td></tr>`).join('');
   const specials = P.specials.map(x => `<tr class="tap" data-act="info" data-id="${x.id}"><td>${nm(x.name)}</td><td>${x.kind}</td><td>${usedBy(x.id)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="sub">なし</td></tr>';
@@ -2808,7 +2891,7 @@ function renderGeneralEditor() {
     ${row('統率力', '<span data-v="ldr"></span>', `<input type="range" data-g="ldr" min="${LDR_BASE}" max="${LDR_MAX}" step="1" value="${b.ldr}">`, '<span data-r="ldr"></span>')}
     ${row('SPD 強化<div class="sub">素早さ：行動の順番・移動力</div>', `<select data-g="spd">${upOpts(b.buy?.spd || 0)}</select>`, '', '<span data-r="spd"></span>')}
     ${row('ACT 強化<div class="sub">手数：1ターンの攻撃回数</div>', `<select data-g="act">${upOpts(b.buy?.act || 0)}</select>`, '', '<span data-r="act"></span>')}
-    ${row('武器', `<select data-g="weapon">${Object.entries(WEAPONS).map(([k, w]) => `<option value="${k}" ${weaponOf(b) === k ? 'selected' : ''}>${w.icon} ${w.label}</option>`).join('')}</select>`, '', '<span class="sub" data-r="weapon"></span>')}
+    ${row('武器', `<select data-g="weapon">${Object.entries(WEAPONS).filter(([, w]) => !w.rare).map(([k, w]) => `<option value="${k}" ${weaponOf(b) === k ? 'selected' : ''}>${w.icon} ${w.label}</option>`).join('')}</select>`, '', '<span class="sub" data-r="weapon"></span>')}
     ${row('射程 強化', `<select data-g="rng"></select>`, '', '<span data-r="rng"></span>')}
     ${row('スキル1', `<select data-g="s1">${skillOpts(b.skills[0])}</select>`, '', '<span class="sub" data-r="s1"></span>')}
     ${slots > 1 ? row('スキル2', `<select data-g="s2"><option value="">なし</option>${skillOpts(b.skills[1])}</select>`, '', '<span class="sub" data-r="s2"></span>') : ''}
@@ -2903,7 +2986,8 @@ function showUnitInfo(kind, P, a) {
     if (m.kind) { u = sampleUnit(m.kind === '暗殺者' ? '兵長' : '雑兵', m.kind); title = `${nm(m.name)}（${m.kind}）`; }
     else if (m.rank) {
       u = sampleUnit(m.rank, COMMANDER_TYPE, m.build);
-      title = `${nm(m.name)}（${m.rank}）`;
+      title = `${nm(m.name)}（${m.rank}${m.rare ? '・★レア' : ''}）`;
+      if (m.rare) rows.push(['★レア', RARE_GENERALS[m.rare].desc]);
       rows.push(['武器', `${WEAPONS[weaponOf(m.build)].icon} ${WEAPONS[weaponOf(m.build)].label}`], ['型', m.buildName || '標準']);
     } else { u = sampleUnit('兵長', m.type); title = `${nm(m.name)}（${m.type}長）`; }
     if (!m.kind) rows.push(['統率', `${memberLdr(m)}（率いる人数 ${memberLdr(m) * LDR_MEN}人分・駒 ${memberLdr(m)}つまで）`]);
@@ -2937,7 +3021,9 @@ function onCampaignClick(e) {
   switch (el.dataset.act) {
     case 'auto': autoForm(P); break;
     case 'fill': autoFill(P); break;
-    case 'edit': campaign.editing = el.dataset.id; break;
+    case 'edit':
+      if (memberById(P, el.dataset.id)?.rare) { showUnitInfo('member', P, { id: el.dataset.id }); return; }   // レアな将は振り分けできない
+      campaign.editing = el.dataset.id; break;
     case 'disband': P.squads = P.squads.filter(x => x !== q); break;
     case 'rmpiece': q.pieces.splice(+el.dataset.i, 1); break;
     case 'rmsg': q.members = q.members.filter(id => id !== el.dataset.id); break;

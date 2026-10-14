@@ -77,14 +77,15 @@ function renderSetup() {
     const tmp = new Unit('player', g.rank, COMMANDER_TYPE, '', 0, 0, g.build);
     unitSeq--;
     const cs = commanderStats(COMMANDER_TYPE, RANKS[g.rank].cost, g.build, SKILL_SLOTS[g.rank]);
-    const ctrl = mode === 'random'
+    const ctrl = g.rare ? `<span class="rare-tag">★レア</span> <button class="small" data-act="edit" data-id="${g.id}">詳細</button>`
+      : mode === 'random'
       ? (g.rolled ? '<span class="sub">振り済み</span>' : `<button class="small" data-su="rollgen" data-id="${g.id}">🎲 振る</button>`)
       : mode === 'preset'
       ? `<select data-su-preset="${g.id}">${presetOpts(g.buildName)}</select>`
       : `<button class="small" data-act="edit" data-id="${g.id}">振り分け</button>`;
     return `<div class="gen-card"><div><b>${nm(g.name)}</b>（${g.rank}）<span class="sub">${g.buildName || '標準'}</span></div>
       <div class="gen-weapon ${weaponOf(g.build) !== '刀' ? 'bow' : ''}">${WEAPONS[weaponOf(g.build)].icon} ${WEAPONS[weaponOf(g.build)].label.replace(/（.*/, '')} 射程 ${tmp.rng}</div>
-      <div class="sub">HP ${tmp.maxHp} / ATK ${tmp.atk} / DEF ${tmp.def} / 移動 ${tmp.move} / 統率 ${cs.ldr} / スキル ${cs.skills.join('・')}</div>
+      <div class="sub">HP ${tmp.maxHp} / ATK ${tmp.atk} / DEF ${tmp.def} / 移動 ${tmp.move} / 統率 ${cs.ldr} / ${g.rare ? `固有 ${(TYPES[generalType(g.build)].traits || []).map(k => TRAITS[k].name).join('・')}` : `スキル ${cs.skills.join('・')}`}</div>
       <div>${ctrl}</div></div>`;
   }).join('');
   box.innerHTML = `${setupSteps(2)}
@@ -158,14 +159,14 @@ function onSetupClick(e) {
     case 'next1': {
       // 振ったダイスで自軍を作る。CPU軍はここで振って、おまかせ編成・ランダムな将にする
       campaign.armies = { player: newArmy('player', su.rolls), cpu: newArmy('cpu') };
-      for (const g of campaign.armies.cpu.generals) { g.build = randomBuild(g.rank); g.buildName = 'ランダム'; }
+      for (const g of campaign.armies.cpu.generals.filter(g => !g.rare)) { g.build = randomBuild(g.rank); g.buildName = 'ランダム'; }
       autoForm(campaign.armies.cpu);
       su.step = 2;
       break;
     }
     case 'mode': su.genMode = el.dataset.mode; campaign.editing = null; break;
     case 'rollgen': case 'rollgenall':
-      for (const g of P.generals.filter(g => !g.rolled && (el.dataset.su === 'rollgenall' || g.id === el.dataset.id))) {
+      for (const g of P.generals.filter(g => !g.rare && !g.rolled && (el.dataset.su === 'rollgenall' || g.id === el.dataset.id))) {
         g.build = randomBuild(g.rank);
         g.buildName = 'ランダム';
         g.rolled = true;
@@ -187,7 +188,7 @@ function onSetupChange(e) {
   const el = e.target, id = el.dataset.suPreset;
   if (!id || !el.value || !campaign.setup) return;
   const P = campaign.armies.player;
-  for (const g of P.generals.filter(g => id === '__all' || g.id === id)) {
+  for (const g of P.generals.filter(g => !g.rare && (id === '__all' || g.id === id))) {
     g.build = presetBuild(g.rank, el.value);
     g.buildName = el.value;
   }
