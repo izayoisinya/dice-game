@@ -62,6 +62,7 @@ const MIN_TROOPS = 10;
 const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
 const FORT_DEF = 0.2;          // 戦域図の砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
+const SERGEANT_SPD = 10;      // 兵長は兵士より SPD +10（隊を率いて一歩先に動く。回避も少し上がる）
 const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
@@ -413,7 +414,8 @@ class Unit {
     // DEF まで伸ばすと「HP × ATK × DEF」で強さが階級の3乗になり、同じコストの兵士の駒が太刀打ちできなくなるため
     this.def = Math.round(st.def / (r.cost / BASE_COST));
     // SPD・ACT は兵士の駒と同じ物差し（階級の倍率を割り戻した値）で持つ。行動順・回避・表示はこの値
-    this.spd = Math.round(st.spd / tempoDiv) + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
+    // 兵長は割り戻した SPD/ACT のコストの一部で、兵士より少し速い（+SERGEANT_SPD）。残りは固有能力の強化（兵長の値）に使う扱い
+    this.spd = Math.round(st.spd / tempoDiv) + (rank === '兵長' && !t.special ? SERGEANT_SPD : 0) + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
     this.rng = cs ? cs.rng : t.rng;
     this.act = Math.round(st.act / tempoDiv);
     this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV)) + MOVE_BONUS;
