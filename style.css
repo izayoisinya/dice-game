@@ -34,6 +34,7 @@ select { padding: 4px; }
 
 table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
 th, td { padding: 3px 6px; text-align: center; border-bottom: 1px solid #333; white-space: nowrap; }
+th.hp, td.hp { text-align: left; }
 th { color: #aaa; font-weight: normal; }
 tr.dead { opacity: 0.35; text-decoration: line-through; }
 tr.acting { background: #4a4520; }

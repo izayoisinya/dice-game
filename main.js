@@ -1667,20 +1667,23 @@ function onCellClick(x, y) {
     log(`🌫 ${unit.name} は霧の中の敵に行く手を阻まれた！`, unit.side);
   }
   [unit.x, unit.y] = [x, y];
-  // 槍兵の隣に踏み込んだら迎え突きを受ける（倒れたら行動終了）
-  if (braceStrike(unit, fromX, fromY) || state.over) {
+  // 槍兵の隣に踏み込んだら迎え突きを受ける（移動のログの後に出す。倒れたら行動終了）
+  const braced = () => {
+    if (!braceStrike(unit, fromX, fromY) && !state.over) return false;
     if (!state.over) endManual(); else render(unit);
     saveGame();
-    return;
-  }
+    return true;
+  };
   if (state.phase === 'retreat') {
     log(`${unit.name} は離脱した。${before} → ${unit.posText}`, unit.side);
+    if (braced()) return;
     endManual();
     return;
   }
   if (state.phase === 'attack' && unit.pursuitMove > 0) {
     log(`⚔ ${unit.name} は追撃で踏み込んだ。${before} → ${unit.posText}`, unit.side);
     unit.pursuitMove = 0;
+    if (braced()) return;
     render(unit);
     saveGame();
     return;
@@ -1688,6 +1691,7 @@ function onCellClick(x, y) {
   if (state.phase === 'attack') {
     log(unit.hitAndRun ? `${unit.name} は離脱した。${before} → ${unit.posText}`
                        : `${unit.name} は攻撃してから間合いを取った。${before} → ${unit.posText}`, unit.side);
+    if (braced()) return;
     endManual();
     return;
   }
@@ -1700,6 +1704,7 @@ function onCellClick(x, y) {
   } else {
     log(`${unit.name} は移動した。${before} → ${unit.posText}`, unit.side);
   }
+  if (braced()) return;
   enterAttack(unit);
   render(unit);
   saveGame();
@@ -1893,8 +1898,8 @@ function renderArmy(army, side, acting) {
     const ratio = u.hp / u.maxHp;
     const color = ratio > 0.5 ? '#5c5' : ratio > 0.25 ? '#dc5' : '#d55';
     tr.innerHTML = `
-      <td>${nm(u.name)}${u.troops ? `<small class="sub">(${u.troopsNow}人)</small>` : ''}</td><td>${rankName(u.rank)}${u.build ? `<small class="sub">(${u.build}${u.skills.length ? '・' + u.skills.join('/') : ''})</small>` : ''}</td><td>${u.type}</td>
-      <td><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
+      <td>${nm(u.name)}${u.troops ? `<small class="sub">(${u.troopsNow}人)</small>` : ''}</td><td>${rankName(u.rank)}</td><td>${u.type}</td>
+      <td class="hp"><span class="hpbar"><div style="width:${ratio * 100}%;background:${color}"></div></span>${u.hp}/${u.maxHp}</td>
       <td>${u.atk}</td><td>${u.def}</td><td>${u.spd}</td><td>${u.rng}</td><td>${u.act}<small class="sub">(${(u.actRate / ACT_PER_ATTACK).toFixed(1)}回)</small></td><td>${u.hit}%</td><td>${u.posText}</td>`;
     tbody.appendChild(tr);
   }
