@@ -2163,9 +2163,11 @@ function applyZoom(kind) {
   // 戦域図の枠は中身に合わせて伸びる（max-height だけ決まっている）ので、今の高さではなく上限の高さに合わせる
   const maxH = parseFloat(getComputedStyle(wrap).maxHeight);
   const availH = Math.max(160, Number.isFinite(maxH) ? maxH : (wrap.clientHeight || window.innerHeight * 0.6));
-  const fit = Math.min((wrap.clientWidth - 12) / map.w, (availH - 12) / map.h);   // 全体が収まるマスの大きさ
+  const edge = kind === 'smap' ? 2 : 0;   // 戦域図はマップの外側1段も入れて収める
+  const fit = Math.min((wrap.clientWidth - 12) / (map.w + edge), (availH - 12) / (map.h + edge));   // 全体が収まるマスの大きさ
   const cell = Math.max(8, fit * zoom[kind]);
-  el.style.width = `${Math.floor(cell * map.w)}px`;
+  const cols = map.w + (kind === 'smap' && typeof ui !== 'undefined' && ui.pad ? ui.pad.x * 2 : 0);   // 戦域図はマップの外側の分も
+  el.style.width = `${Math.floor(cell * cols)}px`;
   el.style.maxWidth = 'none';
   el.style.setProperty('--cell', `${cell}px`);
 }
@@ -2253,7 +2255,7 @@ function showView(v) {
   if (v === 'title') $('btn-continue').classList.toggle('hidden', !campaign.armies && !campaign.setup);
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   if (!same) window.scrollTo(0, 0);
-  if (v === 'map') requestAnimationFrame(() => applyZoom('smap'));
+  if (v === 'map') requestAnimationFrame(() => (campaign.smap ? renderStrat() : applyZoom('smap')));   // 戦域図は画面の大きさでマップの外側の段数が決まるので描き直す
 }
 
 function setBattleOpen(open) {
@@ -3212,7 +3214,7 @@ window.addEventListener('resize', () => {
   lastW = window.innerWidth;
   fitPool();
   applyZoom('field');
-  applyZoom('smap');
+  if (campaign.smap && !$('view-map').classList.contains('hidden')) renderStrat(); else applyZoom('smap');
   if (typeof placeStratInfo === 'function') placeStratInfo();
 });
 if (typeof ResizeObserver === 'function') new ResizeObserver(fitTopbar).observe(document.querySelector('.topbar'));

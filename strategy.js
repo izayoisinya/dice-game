@@ -72,6 +72,29 @@ function costMap(m, from) {
   return dist;
 }
 
+const BASE_ROWS = 3;   // 本陣を置ける段（自軍は下から、CPU軍は上から）
+
+/** 自軍の本陣を置けるマス: 下の BASE_ROWS 段の、通れるマス（川・砦の上と、砦から3マス未満は不可） */
+function baseCells() {
+  const m = smap(), out = [];
+  for (let y = m.h - BASE_ROWS; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+    if (TERRAIN[smapCell(m, x, y)].cost === Infinity || m.forts.some(f => distance(f, { x, y }) < 3)) continue;
+    const dist = costMap(m, { x, y });
+    if (dist[m.bases.cpu.y * m.w + m.bases.cpu.x] < Infinity && m.forts.every(f => dist[f.y * m.w + f.x] < Infinity)) out.push([x, y]);
+  }
+  return out;
+}
+
+/** 自軍の本陣を動かし、自軍の隊を置き直す（出陣直後の「本陣を置く」でだけ） */
+function moveBase(x, y) {
+  const m = smap();
+  m.bases.player = { x, y };
+  m.tokens = m.tokens.filter(t => t.side !== 'player');
+  deploy('player');
+  saveCampaign();
+  renderStrat();
+}
+
 /** 戦域図を作る: 広さはダイス。森・山・川（浅瀬）と砦を置く。両軍の本陣がつながるまで作り直す */
 function genStrategicMap() {
   for (;;) {
@@ -91,7 +114,10 @@ function genStrategicMap() {
       }
       for (let i = 0; i < 1 + d(2); i++) { const [x, yy] = pick(river); setCell(m, x, yy, '浅瀬'); }
     }
-    m.bases = { player: { x: Math.floor(m.w / 2), y: m.h - 1 }, cpu: { x: Math.floor((m.w - 1) / 2), y: 0 } };
+    // 本陣: 自軍は下の真ん中（出陣のときに自分で動かせる）。CPU軍は上の3段のどこか（ランダム）
+    m.bases = { player: { x: Math.floor(m.w / 2), y: m.h - 1 }, cpu: { x: 1 + Math.floor(Math.random() * (m.w - 2)), y: Math.floor(Math.random() * BASE_ROWS) } };
+    setCell(m, m.bases.player.x, m.bases.player.y, '平地');
+    setCell(m, m.bases.cpu.x, m.bases.cpu.y, '平地');
     // 砦: 1d3+1 か所。中ほどの平地に、互いと本陣から 4マス以上離して置く
     m.forts = [];
     const nForts = 1 + d(3);
@@ -168,6 +194,12 @@ function tokenVision(t) {
 }
 
 /** その陣営から見えているマス */
+/** CPU軍の本陣を描くか（霧ありなら、一度でも見えたら） */
+function cpuBaseShown() {
+  const m = smap();
+  return !state.fog || !!m.cpuBaseSeen;
+}
+
 function smapSight(side) {
   const m = smap(), seen = new Set();
   for (const t of liveTokens().filter(t => t.side === side)) {
@@ -539,12 +571,13 @@ function startMapStage() {
   if (!A || A.player.defeated || A.cpu.defeated) return;
   campaign.smap = genStrategicMap();
   campaign.setup = null;   // ゲーム開始の手順はここで終わり
-  Object.assign(campaign.smap, { tokens: [], traps: [], turn: 1, phase: 'player', cpuQueue: [], battle: null, pending: null, logs: [] });
+  Object.assign(campaign.smap, { tokens: [], traps: [], turn: 1, phase: 'setbase', cpuQueue: [], battle: null, pending: null, logs: [], cpuBaseSeen: false });
+  ui.scrolled = false;
   deploy('player');
   deploy('cpu');
   ui.selected = null;
   smapLog(`🗺 戦域図 ${campaign.smap.w}×${campaign.smap.h}（幅 ${SMAP_MIN_W}+🎲[${campaign.smap.wd.dice.join('][')}] / 高さ ${SMAP_MIN_H}+🎲[${campaign.smap.hd.dice.join('][')}]）。砦 ${campaign.smap.forts.length}か所`, 'turn');
-  smapLog('--- ターン 1（自軍） ---', 'turn');
+  smapLog('🏯 自軍の本陣の位置を決めてください（光っているマス）。', 'turn');
   saveCampaign();
   renderCampaign();
   renderStrat();
@@ -749,8 +782,9 @@ function tokenGlyph(t) {
 /** 描き直しでスクロール位置が先頭に戻されないよう、覚えておいて描き直した後に戻す */
 function renderStrat() {
   const wrap = $('smap-wrap'), keep = [wrap.scrollTop, wrap.scrollLeft, window.scrollY];
+  const centering = !ui.scrolled;
   renderStratBody();
-  [wrap.scrollTop, wrap.scrollLeft] = keep;
+  if (!(centering && ui.scrolled)) [wrap.scrollTop, wrap.scrollLeft] = keep;   // 真ん中に合わせた直後は戻さない
   if (window.scrollY !== keep[2]) window.scrollTo(window.scrollX, keep[2]);
 }
 
@@ -768,19 +802,35 @@ function renderStratBody() {
   const modeCells = new Set(!sel || !ui.mode ? [] : (ui.mode === 'trap' ? trapCells(sel) : disarmCells(sel)).map(([x, y]) => `${x},${y}`));
   const targets = new Set(sel && myTurn && !sel.acted ? tokenTargets(sel).map(o => o.id) : []);
   const grid = $('smap');
-  grid.style.gridTemplateColumns = `repeat(${m.w}, minmax(0, 1fr))`;
+  if (sight && sight.has(`${m.bases.cpu.x},${m.bases.cpu.y}`)) m.cpuBaseSeen = true;
+  const baseSpots = new Set(m.phase === 'setbase' ? baseCells().map(([x, y]) => `${x},${y}`) : []);
+  // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。外側の段数は、全体表示で画面が埋まる分
+  const wrap = $('smap-wrap');
+  const fit = Math.min((wrap.clientWidth - 12) / (m.w + 2), (wrap.clientHeight - 12) / (m.h + 2));   // 全体表示で、マップと外側1段が収まる大きさ
+  ui.pad = wrap.clientWidth && fit > 0
+    ? { x: Math.max(1, Math.ceil(((wrap.clientWidth - 12) / fit - m.w) / 2) + 1), y: Math.max(1, Math.ceil(((wrap.clientHeight - 12) / fit - m.h) / 2) + 1) }
+    : { x: 0, y: 0 };
+  const P = ui.pad;
+  grid.style.gridTemplateColumns = `repeat(${m.w + P.x * 2}, minmax(0, 1fr))`;
   let html = '';
-  for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+  for (let y = -P.y; y < m.h + P.y; y++) for (let x = -P.x; x < m.w + P.x; x++) {
+    if (x < 0 || y < 0 || x >= m.w || y >= m.h) {
+      // 外側: いちばん近いマップの端の地形を、暗くして続ける
+      const cx = Math.max(0, Math.min(m.w - 1, x)), cy = Math.max(0, Math.min(m.h - 1, y));
+      const far = Math.max(cx - x, x - cx, cy - y, y - cy);
+      html += `<div class="scell oob t-${smapCell(m, cx, cy)}" style="--far:${Math.min(far, 6)}"></div>`;
+      continue;
+    }
     const ter = smapCell(m, x, y), f = fortAt(x, y);
     let t = tokenAt(x, y);
     if (t && !tokenVisibleTo('player', t)) t = null;
-    const base = m.bases.player.x === x && m.bases.player.y === y ? 'player' : m.bases.cpu.x === x && m.bases.cpu.y === y ? 'cpu' : null;
+    const base = m.bases.player.x === x && m.bases.player.y === y ? 'player' : cpuBaseShown() && m.bases.cpu.x === x && m.bases.cpu.y === y ? 'cpu' : null;
     const tr = trapAt(x, y);
     const trapShown = tr && tr.known.player;
     const cls = ['scell', `t-${ter}`,
       ui.mode && modeCells.has(`${x},${y}`) ? 'trapmode' : '',
       sight && !sight.has(`${x},${y}`) ? 'fog' : '',
-      reach.has(`${x},${y}`) ? 'reach' : '',
+      reach.has(`${x},${y}`) || baseSpots.has(`${x},${y}`) ? 'reach' : '',
       t && targets.has(t.id) ? 'target' : '',
       t ? (t.side === 'player' ? 'p' : 'c') : '',
       t && t === sel ? 'acting' : '',
@@ -797,12 +847,21 @@ function renderStratBody() {
   }
   grid.innerHTML = html;
   applyZoom('smap');
+  // 開いたときは、マップが真ん中に来るようにスクロールしておく
+  if (!ui.scrolled && wrap.clientWidth) {
+    wrap.scrollLeft = (wrap.scrollWidth - wrap.clientWidth) / 2;
+    wrap.scrollTop = (wrap.scrollHeight - wrap.clientHeight) / 2;
+    ui.scrolled = true;
+  }
   const forts = side => m.forts.filter(f => f.owner === side).length;
-  $('strat-label').textContent = `${m.w}×${m.h}　ターン ${m.turn}（${m.phase === 'player' ? '自軍の番' : m.phase === 'cpu' ? 'CPU軍の番' : '決着'}）　砦 自軍${forts('player')} / CPU${forts('cpu')} / 中立${m.forts.length - forts('player') - forts('cpu')}`;
+  $('strat-label').textContent = `${m.w}×${m.h}　ターン ${m.turn}（${m.phase === 'setbase' ? '本陣を置く' : m.phase === 'player' ? '自軍の番' : m.phase === 'cpu' ? 'CPU軍の番' : '決着'}）　砦 自軍${forts('player')} / CPU${forts('cpu')} / 中立${m.forts.length - forts('player') - forts('cpu')}`;
   // 操作: 右上の箱（hud: 状況・ターン終了）と、選んだマスの近くに出る箱（info: 隊の操作・砦の説明。再編成は大きく中央に）
   let info = '', hud = '';
   ui.anchor = null;
-  if (m.phase === 'over') {
+  if (m.phase === 'setbase') {
+    hud = `<div class="sub">自軍の本陣の位置を決めます。光っているマス（下の${BASE_ROWS}段）をタップすると、本陣と隊が移ります。</div>
+      <div class="ap-buttons"><button id="sm-basego" class="go">この位置で開始</button></div>`;
+  } else if (m.phase === 'over') {
     hud = `<div class="result">${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'}</div>`;
   } else if (m.pending) {
     hud = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
@@ -845,6 +904,12 @@ function renderStratBody() {
   placeStratInfo();
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
+  on('sm-basego', 'onclick', () => {
+    m.phase = 'player';
+    smapLog('--- ターン 1（自軍） ---', 'turn');
+    saveCampaign();
+    renderStrat();
+  });
   on('sm-close', 'onclick', () => { ui.selected = null; ui.info = null; ui.moved = false; ui.mode = null; renderStrat(); });
   on('sm-open-battle', 'onclick', () => setBattleOpen(true));
   on('sm-reorg', 'onclick', () => { ui.reorg = hubOf(sel); ui.mode = null; renderStrat(); });
@@ -924,6 +989,10 @@ function placeInfo(key) {
 
 function onSmapClick(x, y) {
   const m = smap();
+  if (m && m.phase === 'setbase') {
+    if (baseCells().some(([cx, cy]) => cx === x && cy === y)) moveBase(x, y);
+    return;
+  }
   if (!m || m.phase !== 'player' || m.battle) return;
   const sel = liveTokens().find(t => t.id === ui.selected);
   const t = tokenAt(x, y);
@@ -964,14 +1033,14 @@ function onSmapClick(x, y) {
   ui.selected = t && t.side === 'player' ? t.id : null;
   // 砦・本陣のマス（隊がいない）をクリックしたら説明を出す
   const f = fortAt(x, y);
-  ui.info = !ui.selected ? (f ? f.id : m.bases.player.x === x && m.bases.player.y === y ? 'base-player' : m.bases.cpu.x === x && m.bases.cpu.y === y ? 'base-cpu' : null) : null;
+  ui.info = !ui.selected ? (f ? f.id : m.bases.player.x === x && m.bases.player.y === y ? 'base-player' : cpuBaseShown() && m.bases.cpu.x === x && m.bases.cpu.y === y ? 'base-cpu' : null) : null;
   renderStrat();
 }
 
 function initStrategy() {
   $('smap').addEventListener('click', e => {
     const cell = e.target.closest('.scell');
-    if (cell) onSmapClick(Number(cell.dataset.x), Number(cell.dataset.y));
+    if (cell && cell.dataset.x != null) onSmapClick(Number(cell.dataset.x), Number(cell.dataset.y));   // マップの外のマスは無視
   });
   renderStrat();
   // 戦闘中にCPUの番だった（再読み込み）なら続きから

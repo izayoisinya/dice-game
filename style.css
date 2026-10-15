@@ -172,7 +172,9 @@ button.go { background: #3f8a4f; }
 .strat-info .ap-close { position: absolute; top: 4px; right: 4px; padding: 0 8px; background: #3a3f4a; }
 .strat-info > :nth-child(2) { padding-right: 28px; }   /* ✕ と重ならないように */
 .strat-info.center { background: rgba(20, 22, 27, 0.96); }
-.strat-stage .smap { margin: 0 auto; }   /* マップは横の真ん中に */
+.strat-stage .smap { margin: 0 auto; border-radius: 0; }
+/* マップの外側（入れない）: 端の地形を暗くして続ける。離れるほど暗い */
+.scell.oob { pointer-events: none; filter: brightness(calc(0.42 - var(--far, 1) * 0.04)) saturate(0.55); }
 .smap { display: grid; gap: 1px; background: #1a1c20; padding: 4px; border-radius: 8px; }
 .scell { position: relative; aspect-ratio: 1; border-radius: 2px; display: flex; align-items: center; justify-content: center;
   font-size: clamp(0.5rem, 1.1vw, 0.8rem); font-weight: bold; cursor: pointer; overflow: hidden; }
