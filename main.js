@@ -35,7 +35,8 @@ const RANKS = {
   '総大将': { cost: 2000 },
 };
 const BASE_COST = RANKS['雑兵'].cost;
-const STAT_KEYS = ['hp', 'atk', 'def', 'spd', 'act'];   // 射程以外の比例拡大するステータス
+// 射程以外の比例拡大するステータス。INT（知力）は魔法の威力・抵抗用（今は INT を持つ兵種はいない。表にない兵種は 0）
+const STAT_KEYS = ['hp', 'atk', 'def', 'spd', 'act', 'int'];
 
 /** 射程に払うコスト（RNG1=10, 2=40, 3=70, 4=100, 5=130） */
 function rngCost(rng) {
@@ -235,9 +236,9 @@ function traitCost(t) {
 function scaleStats(type, cost) {
   const t = TYPES[type];
   const budget = cost - (rngCost(t.rng) + traitCost(t)) * cost / BASE_COST;
-  const baseSum = STAT_KEYS.reduce((s, k) => s + t.stats[k], 0);
+  const baseSum = STAT_KEYS.reduce((s, k) => s + (t.stats[k] || 0), 0);
   const out = {};
-  for (const k of STAT_KEYS) out[k] = Math.round(t.stats[k] * budget / baseSum);
+  for (const k of STAT_KEYS) out[k] = Math.round((t.stats[k] || 0) * budget / baseSum);
   const diff = budget - STAT_KEYS.reduce((s, k) => s + out[k], 0);
   const top = STAT_KEYS.reduce((a, k) => (out[k] > out[a] ? k : a), STAT_KEYS[0]);
   out[top] += diff;
@@ -357,7 +358,7 @@ function commanderStats(type, cost, build, slots = SKILL_SLOTS['総大将']) {
 
 // 起動時にプリセットの合計がコストと一致しているか確認する
 for (const [name, t] of Object.entries(TYPES)) {
-  const sum = STAT_KEYS.reduce((s, k) => s + t.stats[k], 0) + rngCost(t.rng) + traitCost(t);
+  const sum = STAT_KEYS.reduce((s, k) => s + (t.stats[k] || 0), 0) + rngCost(t.rng) + traitCost(t);
   if (sum !== BASE_COST) console.warn(`${name} のステータス合計が ${sum}（${BASE_COST} であるべき）`);
 }
 
@@ -432,6 +433,7 @@ class Unit {
     // DEF は階級の倍率を掛けない（兵士の駒と同じ物差し）。HP と ATK だけが階級で伸びる。
     // DEF まで伸ばすと「HP × ATK × DEF」で強さが階級の3乗になり、同じコストの兵士の駒が太刀打ちできなくなるため
     this.def = Math.round(st.def / (r.cost / BASE_COST));
+    this.int = Math.round(st.int || 0);    // 知力（魔法の威力・抵抗。今は INT を持つ兵種・将はいない）
     // SPD・ACT は兵士の駒と同じ物差し（階級の倍率を割り戻した値）で持つ。行動順・回避・表示はこの値
     // 兵長は割り戻した SPD/ACT のコストの一部で、兵士より少し速い（+SERGEANT_SPD）。残りは固有能力の強化（兵長の値）に使う扱い
     this.spd = Math.round(st.spd / tempoDiv) + (rank === '兵長' && !t.special ? SERGEANT_SPD : 0) + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
@@ -2995,7 +2997,7 @@ function showUnitInfo(kind, P, a) {
     if (memberUse(m)) rows.push(['隊で使う人数分', `${memberUse(m)}人分`]);
   }
   const per = (u.actRate / ACT_PER_ATTACK).toFixed(1);
-  const stats = [['HP', u.maxHp], ['ATK', u.atk], ['DEF', u.def], ['SPD', `${u.spd}（戦闘では個体差 ±10）`], ['移動', u.move],
+  const stats = [['HP', u.maxHp], ['ATK', u.atk], ['DEF', u.def], ['INT', u.int || '—'], ['SPD', `${u.spd}（戦闘では個体差 ±10）`], ['移動', u.move],
     ['射程', u.rng], ['攻撃', `${per}回/ターン（ACT ${u.act}）`], ['命中', `${u.hit}%`], ['視界', `${u.vision ?? VISION_DEFAULT}マス`]];
   const skills = (u.skills || []).map(k => `<div>✨<b>${k}</b>: ${SKILLS[k].desc}</div>`).join('');
   const traits = (u.traits || []).map(k => `<div>◇<b>${TRAITS[k].name}</b>: ${TRAIT_HELP[k] || ''}</div>`).join('');
