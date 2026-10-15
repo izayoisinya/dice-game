@@ -65,6 +65,7 @@ const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
 const FORT_DEF = 0.2;          // 戦域図の砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
 const SERGEANT_SPD = 10;      // 兵長は兵士より SPD +10（隊を率いて一歩先に動く。回避も少し上がる）
+const SERGEANT_SPARE = 0.5;    // 兵長の SPD/ACT 割り戻しの残りのうち HP/ATK に振る割合（全部振ると副将並みになるため半分）
 const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
@@ -234,6 +235,13 @@ function traitCost(t) {
  * 雑兵プリセットを階級のコストまで比例拡大する。射程の値はそのまま（コストは比率分払う）。
  * 端数で合計がずれた分は、いちばん大きいステータスで調整する。
  */
+/** 兵長のステータス: SPD / ACT の割り戻しで浮いたコストから SPD+SERGEANT_SPD の分を引き、残りの SERGEANT_SPARE を HP / ATK に足す */
+function sergeantStats(st, f) {
+  const spare = Math.max(0, Math.round(((st.spd + st.act) * (1 - 1 / f) - SERGEANT_SPD * f) * SERGEANT_SPARE));
+  const hp = Math.round(spare * st.hp / (st.hp + st.atk));
+  return { ...st, hp: st.hp + hp, atk: st.atk + spare - hp, spare };
+}
+
 function scaleStats(type, cost) {
   const t = TYPES[type];
   const budget = cost - (rngCost(t.rng) + traitCost(t)) * cost / BASE_COST;
@@ -411,12 +419,12 @@ class Unit {
     // 総大将・副将は固定枠 + 自由振り分け、それ以外は雑兵プリセットの拡大
     const isGeneral = rank === '総大将' || rank === '副将';
     const cs = isGeneral ? commanderStats(type, r.cost, build, SKILL_SLOTS[rank]) : null;
-    const st = cs ? cs.stats : scaleStats(type, r.cost);
+    let st = cs ? cs.stats : scaleStats(type, r.cost);
     // テンポ系（移動・攻撃頻度）は階級で伸びすぎないよう、雑兵基準に割り戻して使う
     // （総大将の SPD / ACT は最初から雑兵基準の固定値なので割り戻さない）
     const tempoDiv = cs ? 1 : r.cost / BASE_COST;
-    // （以前は割り戻した SPD / ACT の分を HP / DEF に配り直していたが、比率型のダメージと DEF の物差しの統一で
-    //   兵長は配り直さなくても兵士 約135人分の強さになったのでやめた）
+    // 兵長: 割り戻した SPD / ACT の分のうち、SPD+SERGEANT_SPD に使った残りを HP / ATK に（プリセットの比で）振る
+    if (rank === '兵長' && !t.special) st = sergeantStats(st, tempoDiv);
     this.id = ++unitSeq;
     this.side = side;           // 'player' | 'cpu'
     this.name = name;
