@@ -307,9 +307,13 @@ button.off { background: #2c3038; color: #bbb; }
 /* 編成画面の2列 */
 .setup-cols { display: grid; grid-template-columns: 1fr; gap: 0 24px; }
 .setup-cols .setup-dice { max-width: none; }
-.squad-grid { display: grid; grid-template-columns: 1fr; gap: 0 12px; align-items: start; }   /* 隣の隊を開いても、同じ行のカードは自分の高さのまま */
+.squad-grid { display: flex; flex-direction: column; }   /* 1列: 列の入れ物は消して order で元の順に */
+.squad-grid > .sq-col { display: contents; }
 @media (min-width: 900px) {
-  .setup-cols, .squad-grid { grid-template-columns: 1fr 1fr; }
+  .setup-cols { grid-template-columns: 1fr 1fr; }
+  /* 2列: 左右の列をそれぞれ縦に積む（隊を開いても隣のカードは伸びず、下に空きもできない） */
+  .squad-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; align-items: start; }
+  .squad-grid > .sq-col { display: block; min-width: 0; }
   .cp-cols { grid-template-columns: 1fr 1fr 0.8fr; }
 }
 
@@ -356,10 +360,12 @@ button.skill.armed { background: #b8860b; }
   .cp-side .cp-cols > div { max-height: none; overflow: visible; }
   .cp-side table { font-size: 0.85rem; }
   .cp-side table button.small { padding: 2px 6px; font-size: 0.75rem; }
-  .cp-body .squad-grid { grid-template-columns: 1fr; }
+  .cp-body .squad-grid { display: flex; }
+  .cp-body .squad-grid > .sq-col { display: contents; }
 }
 @media (min-width: 1400px) {
-  .cp-body .squad-grid { grid-template-columns: 1fr 1fr; }
+  .cp-body .squad-grid { display: grid; }
+  .cp-body .squad-grid > .sq-col { display: block; }
 }
 /* 縦向き（幅900px未満）: 将・兵長の一覧は右から出てくるメニュー */
 .side-toggle, .side-close { display: none; }

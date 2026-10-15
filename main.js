@@ -2783,6 +2783,15 @@ function pieceDefault(P, q, type) {
   return Math.max(MIN_PIECE, n);
 }   // 縦向きの画面で、将・兵長の一覧を開いているか
 
+/**
+ * 隊のカードを2列に並べる。カードは左右の列に交互に入れ、列ごとに縦に積む（開いたカードの隣に空きを作らない）。
+ * 1列の画面では order で元の順に戻す
+ */
+function squadGrid(cards) {
+  const col = r => `<div class="sq-col">${cards.map((c, i) => i % 2 === r ? `<div class="sq-item" style="order:${i}">${c}</div>` : '').join('')}</div>`;
+  return `<div class="squad-grid">${col(0)}${col(1)}</div>`;
+}
+
 function renderCampaign() {
   const box = $('campaign');
   if (campaign.setup && campaign.setup.step < 3) return renderSetup();
@@ -2848,7 +2857,7 @@ function renderCampaign() {
       </div>
       <div class="sub">★=同じ兵種の兵長がこの隊にいる駒（戦闘中その兵長が生きている間 ATK/DEF+${SERGEANT_BUFF * 100}%）。率いる人数 = 統率力×${LDR_MEN}人分（兵士1人 = 1・兵長 ${MEMBER_MEN['兵長']}・副将 ${MEMBER_MEN['副将']}・斥候/暗殺者 0）、駒は統率力の数まで</div>
     </div>`;
-  }).join('');
+  });
   const actions = `<button class="small" data-act="auto">おまかせ編成</button>
       <button class="small" data-act="fill" title="今の隊の数と隊長はそのままに、将・斥候・暗殺者・兵士を配り直します">自動配置</button>
       <button class="small go" data-act="sortie" ${over ? 'disabled' : ''} title="この編成で戦域図へ。どの隊にも入っていない斥候・暗殺者は単独で出ます">🗺 出陣</button>`;
@@ -2873,7 +2882,7 @@ function renderCampaign() {
     </aside>
     <div class="cp-body">
     <h3>隊</h3>
-    <div class="squad-grid">${squads}</div>
+    ${squadGrid(squads)}
     <div class="sq-new">${leaderOpts ? `新しい隊（副将 → 分隊 / 兵長 → 小隊）: <select data-role="newleader"><option value="">隊長を選ぶ…</option>${leaderOpts}</select>` : '<span class="sub">隊長にできる将が残っていません</span>'}</div>
     ${state.fog
       // 視界（霧）ありでは、敵の編成は出陣前には分からない（戦域図で見つけて確かめる）
@@ -2915,12 +2924,12 @@ function renderCampaignLocked() {
         <div><h4>将</h4><table class="sq-table"><thead><tr><th>名前</th><th>役</th><th>統率</th></tr></thead><tbody>${memberRows}</tbody></table></div>
         <div><h4>兵士の駒</h4><table class="sq-table"><thead><tr><th>兵種</th><th>人数</th></tr></thead><tbody>${pieceRows}</tbody></table></div>
       </div><div class="sub">行をタップすると、今の状態を表示します</div></div>`;
-  }).join('');
+  });
   $('campaign').innerHTML = `
     <div class="cp-head"><span class="sub">出陣中はここでは編成を変えられません。戦域図で自軍の砦・本陣の上か隣にいる隊を選ぶと「再編成」できます。隊をタップで開き、将・駒をタップで今の状態を確認できます。</span>
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}</div>
     <div class="cp-pool">兵力（残り）: ${TYPE_NAMES.map(t => `<span class="chip">${t} ${P.totals[t]}人</span>`).join('')}</div>
-    <div class="squad-grid">${cards}</div>`;
+    ${squadGrid(cards)}`;
 }
 
 /**
