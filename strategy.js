@@ -732,7 +732,7 @@ function cpuAct(t) {
 // 画面
 // ------------------------------------------------------------
 
-const ui = { selected: null, moved: false, mode: null, reorg: null, info: null };   // reorg = 再編成中の拠点、info = 説明を出している砦・本陣   // mode = 'trap'（罠を仕掛ける）/ 'disarm'（解除）
+const ui = { selected: null, moved: false, mode: null, reorg: null, info: null, anchor: null };   // anchor = 操作の箱を寄せるマス [x, y] / 'center'   // reorg = 再編成中の拠点、info = 説明を出している砦・本陣   // mode = 'trap'（罠を仕掛ける）/ 'disarm'（解除）
 
 function smapLog(text, cls = 'sys') {
   const m = smap();
@@ -799,20 +799,23 @@ function renderStratBody() {
   applyZoom('smap');
   const forts = side => m.forts.filter(f => f.owner === side).length;
   $('strat-label').textContent = `${m.w}×${m.h}　ターン ${m.turn}（${m.phase === 'player' ? '自軍の番' : m.phase === 'cpu' ? 'CPU軍の番' : '決着'}）　砦 自軍${forts('player')} / CPU${forts('cpu')} / 中立${m.forts.length - forts('player') - forts('cpu')}`;
-  // 操作パネル
-  let info = '';
+  // 操作: 右上の箱（hud: 状況・ターン終了）と、選んだマスの近くに出る箱（info: 隊の操作・砦の説明。再編成は大きく中央に）
+  let info = '', hud = '';
+  ui.anchor = null;
   if (m.phase === 'over') {
-    info = `<div class="result">${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'}</div>`;
+    hud = `<div class="result">${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'}</div>`;
   } else if (m.pending) {
-    info = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
+    hud = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
   } else if (m.battle) {
-    info = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}</div>
+    hud = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}</div>
       <button id="sm-open-battle">⚔ 局地戦の画面を開く</button>`;
   } else if (m.phase === 'cpu') {
-    info = '<div>CPU軍が行動中…</div>';
+    hud = '<div>CPU軍が行動中…</div>';
   } else if (ui.reorg) {
     info = renderReorg();
+    ui.anchor = 'center';
   } else if (sel && sel.side === 'player') {
+    ui.anchor = [sel.x, sel.y];
     const q = tokenSquad(sel), opts = stationOptions(sel);
     const hub = hubOf(sel);
     info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
@@ -827,14 +830,23 @@ function renderStratBody() {
       ${hub ? `<div class="sub">${hub.name}の近く（${HUB_RANGE}マス以内）にいるので、再編成できます${m.forts.some(f => f.owner === 'player' && distance(f, sel) <= 1) ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
   } else if (ui.info) {
     info = placeInfo(ui.info);
-  } else {
-    info = '<div class="sub">自軍の隊（青）をクリックして選びます。全部動かしたら「ターン終了」。</div>';
+    const f = m.forts.find(f => f.id === ui.info), b = f || m.bases[ui.info === 'base-player' ? 'player' : 'cpu'];
+    ui.anchor = [b.x, b.y];
   }
-  if (m.phase === 'player' && !m.battle) info += `<div class="ap-buttons"><button id="sm-end">ターン終了</button></div>`;
-  info += `<div class="smap-log">${m.logs.slice(-12).reverse().map(l => `<div class="${l.cls}">${fmtLog(l.text)}</div>`).join('')}</div>`;
+  if (m.phase === 'player' && !m.battle) {
+    if (!info) hud += '<div class="sub">自軍の隊（青）をクリックして選びます。全部動かしたら「ターン終了」。</div>';
+    hud += `<div class="ap-buttons"><button id="sm-end">ターン終了</button></div>`;
+  }
+  $('strat-hud').innerHTML = hud;
+  $('strat-hud').classList.toggle('hidden', !hud);
+  $('smap-log').innerHTML = m.logs.slice(-30).reverse().map(l => `<div class="${l.cls}">${fmtLog(l.text)}</div>`).join('');
+  if (info && ui.anchor !== 'center') info = '<button class="small ap-close" id="sm-close" title="閉じる">✕</button>' + info;
   $('strat-info').innerHTML = info;
+  $('strat-info').classList.toggle('hidden', !info);
+  placeStratInfo();
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
+  on('sm-close', 'onclick', () => { ui.selected = null; ui.info = null; ui.moved = false; ui.mode = null; renderStrat(); });
   on('sm-open-battle', 'onclick', () => setBattleOpen(true));
   on('sm-reorg', 'onclick', () => { ui.reorg = hubOf(sel); ui.mode = null; renderStrat(); });
   on('sm-reorg-close', 'onclick', () => { ui.reorg = null; renderStrat(); });
@@ -860,6 +872,30 @@ function renderStratBody() {
     if (e.target.value && station(sel, e.target.value)) { sel.acted = true; ui.selected = null; ui.moved = false; saveCampaign(); renderCampaign(); }
     renderStrat();
   });
+}
+
+/** 操作の箱を、選んだマスの近く（右、入らなければ左）に置く。マップのスクロール・拡大でも付いていく */
+function placeStratInfo() {
+  const box = $('strat-info'), stage = $('strat-stage');
+  if (!box || box.classList.contains('hidden')) return;
+  box.classList.toggle('center', ui.anchor === 'center');
+  if (!Array.isArray(ui.anchor)) { box.style.left = box.style.top = ''; return; }
+  const cell = document.querySelector(`#smap .scell[data-x="${ui.anchor[0]}"][data-y="${ui.anchor[1]}"]`);
+  if (!cell) return;
+  const S = stage.getBoundingClientRect(), C = cell.getBoundingClientRect();
+  const w = box.offsetWidth, h = box.offsetHeight, gap = 8;
+  const clampX = v => Math.max(gap, Math.min(S.width - w - gap, v)), clampY = v => Math.max(gap, Math.min(S.height - h - gap, v));
+  let left, top;
+  if (C.right - S.left + gap + w <= S.width - gap) [left, top] = [C.right - S.left + gap, clampY(C.top - S.top - 10)];   // 右
+  else if (C.left - S.left - gap - w >= gap) [left, top] = [C.left - S.left - gap - w, clampY(C.top - S.top - 10)];   // 左
+  else {
+    // 横に入らない（縦長の画面）: マスの下、入らなければ上。マスにかぶらないように
+    left = clampX(C.left - S.left + C.width / 2 - w / 2);
+    const below = C.bottom - S.top + gap, above = C.top - S.top - gap - h;
+    top = below + h <= S.height - gap ? below : above >= gap ? above : (S.height - h - gap);
+  }
+  box.style.left = `${Math.round(left)}px`;
+  box.style.top = `${Math.round(top)}px`;
 }
 
 /** 砦・本陣の説明 */

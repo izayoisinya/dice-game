@@ -89,11 +89,20 @@
       <div id="strat-box" class="panel hidden">
         <h2>戦域図 <small id="strat-label"></small>
           <span class="zoom" data-zoom-for="smap"><button data-zoom="-" title="縮小">−</button><button data-zoom="0" title="全体を表示">全体</button><button data-zoom="+" title="拡大">＋</button></span></h2>
-        <div class="strat-wrap">
+        <!-- マップを画面いっぱいに。操作・ログ・凡例はマップの上に重ねる半透明の箱 -->
+        <div class="strat-stage" id="strat-stage">
           <div class="zoom-wrap" id="smap-wrap"><div id="smap" class="smap"></div></div>
-          <div id="strat-info" class="strat-info"></div>
+          <div id="strat-hud" class="strat-float strat-hud"></div>
+          <details id="smap-logbox" class="strat-float strat-logbox" open>
+            <summary>ログ</summary>
+            <div id="smap-log" class="smap-log"></div>
+          </details>
+          <details class="strat-float strat-legend">
+            <summary>凡例</summary>
+            <div class="sub">★本=本隊 ☆=分隊 ◆=小隊 斥=斥候 暗=暗殺者 守=砦の守備隊<br>🏯砦（点線の枠 青=自軍・赤=CPU軍・灰=中立） 陣=本陣<br>点滅する赤枠⚔=攻撃できる敵<br>地形: 平地1 森2 山3 浅瀬2 川×（数字は移動コスト）</div>
+          </details>
+          <div id="strat-info" class="strat-float strat-info hidden"></div>
         </div>
-        <div class="sub">★本=本隊 ☆=分隊 ◆=小隊 斥=斥候 暗=暗殺者 守=砦の守備隊 / 🏯砦（点線の枠 青=自軍・赤=CPU軍・灰=中立） 陣=本陣 / 点滅する赤枠⚔=攻撃できる敵 / 地形: 平地1 森2 山3 浅瀬2 川×（数字は移動コスト）</div>
       </div>
     </section>
   </main>

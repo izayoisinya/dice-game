@@ -3179,11 +3179,13 @@ window.addEventListener('resize', () => {
   fitPool();
   applyZoom('field');
   applyZoom('smap');
+  if (typeof placeStratInfo === 'function') placeStratInfo();
 });
 if (typeof ResizeObserver === 'function') new ResizeObserver(fitTopbar).observe(document.querySelector('.topbar'));
 fitTopbar();
 initZoom('field');
 initZoom('smap');
+$('smap-wrap').addEventListener('scroll', () => { if (typeof placeStratInfo === 'function') placeStratInfo(); }, { passive: true });   // 操作の箱を選んだマスに付いていかせる
 
 $('field').addEventListener('click', e => {
   const cell = e.target.closest('.cell');

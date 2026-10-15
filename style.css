@@ -145,8 +145,27 @@ button.small { padding: 3px 8px; font-size: 0.8rem; }
 
 /* 戦域図 */
 button.go { background: #3f8a4f; }
-.strat-wrap { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 12px; align-items: start; }
-@media (max-width: 900px) { .strat-wrap { grid-template-columns: 1fr; } }
+/* 戦域図は画面いっぱい（上部バーの下から画面の下まで）。操作・ログ・凡例はマップの上に重ねる */
+#strat-box { display: flex; flex-direction: column; height: calc(100svh - var(--topbar-h, 60px) - 24px); margin: 0; box-sizing: border-box; padding: 8px 10px; }
+#strat-box > h2 { margin: 0 0 6px; flex-shrink: 0; }
+.strat-stage { position: relative; flex: 1; min-height: 0; }
+.strat-stage #smap-wrap { position: absolute; inset: 0; max-height: none; height: auto; }
+.strat-float { position: absolute; z-index: 6; background: rgba(17, 19, 23, 0.82); border: 1px solid rgba(120, 140, 170, 0.35); border-radius: 8px;
+  padding: 6px 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); backdrop-filter: blur(2px); font-size: 0.85rem; }
+.strat-float > summary { cursor: pointer; color: #cfd8e6; font-weight: bold; }
+.strat-hud { top: 8px; right: 8px; max-width: min(320px, calc(100% - 16px)); display: flex; flex-direction: column; gap: 6px; }
+.strat-hud .ap-buttons { margin: 0; }
+.strat-logbox { left: 8px; bottom: 8px; width: min(360px, calc(100% - 16px)); }
+.strat-logbox .smap-log { background: transparent; padding: 4px 0 0; max-height: 26svh; }
+.strat-legend { left: 8px; top: 8px; max-width: min(320px, calc(100% - 16px)); }
+.strat-legend:not([open]) { opacity: 0.85; }
+.strat-info { width: min(340px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; z-index: 7; border-color: #4a6fa5; }
+.strat-info.center { left: 50% !important; top: 8px !important; transform: translateX(-50%); width: min(720px, calc(100% - 16px)); }
+.strat-info.hidden { display: none; }
+.strat-info .ap-close { position: absolute; top: 4px; right: 4px; padding: 0 8px; background: #3a3f4a; }
+.strat-info > :nth-child(2) { padding-right: 28px; }   /* ✕ と重ならないように */
+.strat-info.center { background: rgba(20, 22, 27, 0.96); }
+.strat-stage .smap { margin: 0 auto; }   /* マップは横の真ん中に */
 .smap { display: grid; gap: 1px; background: #1a1c20; padding: 4px; border-radius: 8px; }
 .scell { position: relative; aspect-ratio: 1; border-radius: 2px; display: flex; align-items: center; justify-content: center;
   font-size: clamp(0.5rem, 1.1vw, 0.8rem); font-weight: bold; cursor: pointer; overflow: hidden; }
@@ -260,7 +279,7 @@ main { padding: 12px; }
 .zoom { display: inline-flex; gap: 2px; vertical-align: middle; }
 .zoom button { padding: 4px 10px; font-size: 0.9rem; background: #2c3038; }
 .cell, .scell { font-size: calc(var(--cell, 24px) * 0.32); }
-#smap-wrap { max-height: calc(100svh - var(--topbar-h, 60px) - 110px); }
+
 .field, .smap { max-width: none; }
 
 /* 局地戦の画面: スマホは縦に積む（操作パネルは下に貼り付け）、PC・タブレットは 戦場｜操作・ログ の2列 */
