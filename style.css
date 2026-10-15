@@ -150,7 +150,10 @@ button.go { background: #3f8a4f; }
 .scell.t-浅瀬 { background: #4a7090; }
 .scell.fog { filter: brightness(0.5); }
 .scell.reach { box-shadow: inset 0 0 0 100px rgba(90, 160, 255, 0.45); }
-.scell.target { outline: 3px solid #ff5a4f; outline-offset: -3px; }
+.scell.target { outline: 3px solid #ff5a4f; outline-offset: -3px; cursor: crosshair; animation: tgt-pulse 1s ease-in-out infinite; }
+.scell .tgt-mark { position: absolute; right: 1px; bottom: 1px; z-index: 2; font-size: 0.85em; line-height: 1; padding: 1px 2px; border-radius: 4px; background: #ff5a4f; color: #fff; pointer-events: none; }
+@keyframes tgt-pulse { 50% { outline-color: rgba(255, 90, 79, 0.25); } }
+@media (prefers-reduced-motion: reduce) { .scell.target { animation: none; } }
 .scell.p .glyph { background: #2d5f9c; color: #e0f0ff; }
 .scell.c .glyph { background: #9c2d2d; color: #ffe0dc; }
 .scell .glyph { position: relative; z-index: 1; padding: 1px 3px; border-radius: 4px; }
@@ -167,9 +170,9 @@ button.go { background: #3f8a4f; }
 .smap-log .player, .smap-log .cpu { color: #ddd; }
 .scell.fortcell .fort { font-size: 1.2em; top: auto; right: auto; opacity: 1; }
 .scell.fortcell .glyph { position: absolute; bottom: 1px; }
-.scell.fort-none { box-shadow: inset 0 0 0 2px #bbb; }
-.scell.fort-player { box-shadow: inset 0 0 0 3px #4aa0ff; }
-.scell.fort-cpu { box-shadow: inset 0 0 0 3px #ff5a4f; }
+.scell.fortcell::after { content: ''; position: absolute; inset: 3px; border: 2px dashed #bbb; border-radius: 4px; pointer-events: none; }
+.scell.fort-player::after { border-color: #4aa0ff; }
+.scell.fort-cpu::after { border-color: #ff5a4f; }
 button.go:disabled { background: #555; }
 .cp-over { background: #3a3520; border-radius: 6px; padding: 8px 10px; margin: 6px 0; color: #ffd76f; font-size: 0.9rem; }
 .scell.trapmode { box-shadow: inset 0 0 0 100px rgba(255, 215, 111, 0.45); }

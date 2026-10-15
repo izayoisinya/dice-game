@@ -792,7 +792,8 @@ function renderStratBody() {
       (f ? `<span class="fort ${f.owner ? 'own-' + f.owner : ''}">🏯</span>` : '') +
       (base ? `<span class="base own-${base}">陣</span>` : '') +
       (trapShown ? `<span class="trap ${tr.side === 'player' ? 'own' : 'foe'}">🪤</span>` : '') +
-      (t ? `<span class="glyph">${tokenGlyph(t)}</span>` : '') + `</div>`;
+      (t ? `<span class="glyph">${tokenGlyph(t)}</span>` : '') +
+      (t && targets.has(t.id) ? '<span class="tgt-mark">⚔</span>' : '') + `</div>`;
   }
   grid.innerHTML = html;
   applyZoom('smap');
@@ -815,7 +816,7 @@ function renderStratBody() {
     const q = tokenSquad(sel), opts = stationOptions(sel);
     const hub = hubOf(sel);
     info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
-      <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : ui.moved ? '赤枠の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の赤枠の敵をクリックで攻撃。'}</div>
+      <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : ui.moved ? '点滅する赤枠（⚔）の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の点滅する赤枠（⚔）の敵をクリックで攻撃。'}</div>
       <div class="ap-buttons">
         ${!sel.acted ? '<button id="sm-wait">待機</button>' : ''}
         ${!sel.acted && hasScout(sel) ? `<button id="sm-trap" class="${ui.mode === 'trap' ? 'skill' : ''}" ${trapCells(sel).length ? '' : 'disabled'}>🪤 罠を仕掛ける（残り${trapsLeft('player')}）</button>` : ''}
