@@ -834,7 +834,6 @@ function renderStratBody() {
     ui.anchor = [b.x, b.y];
   }
   if (m.phase === 'player' && !m.battle) {
-    if (!info) hud += '<div class="sub">自軍の隊（青）をクリックして選びます。全部動かしたら「ターン終了」。</div>';
     hud += `<div class="ap-buttons"><button id="sm-end">ターン終了</button></div>`;
   }
   $('strat-hud').innerHTML = hud;
@@ -864,7 +863,12 @@ function renderStratBody() {
       reorg('addpiece', { to: d.to, type: row.querySelector('[data-role=ro-type]').value, size: +row.querySelector('[data-role=ro-size]').value });
     } else reorg('split', { from: d.from, id: d.id });
   });
-  on('sm-end', 'onclick', endPlayerTurn);
+  on('sm-end', 'onclick', () => {
+    // まだ動ける隊があれば確認する
+    const left = liveTokens().filter(t => t.side === 'player' && !t.acted && (tokenMove(t) > 0 || tokenTargets(t).length));
+    if (left.length && !confirm(`まだ行動できる隊があります（${left.map(t => tokenSquad(t).name).join('・')}）。\nターンを終了しますか？`)) return;
+    endPlayerTurn();
+  });
   on('sm-trap', 'onclick', () => { ui.mode = ui.mode === 'trap' ? null : 'trap'; renderStrat(); });
   on('sm-disarm', 'onclick', () => { ui.mode = ui.mode === 'disarm' ? null : 'disarm'; renderStrat(); });
   on('sm-wait', 'onclick', () => { sel.acted = true; ui.selected = null; ui.moved = false; saveCampaign(); renderStrat(); });

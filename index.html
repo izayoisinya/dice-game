@@ -93,10 +93,10 @@
         <div class="strat-stage" id="strat-stage">
           <div class="zoom-wrap" id="smap-wrap"><div id="smap" class="smap"></div></div>
           <div id="strat-hud" class="strat-float strat-hud"></div>
-          <details id="smap-logbox" class="strat-float strat-logbox" open>
-            <summary>ログ</summary>
-            <div id="smap-log" class="smap-log"></div>
-          </details>
+          <div id="smap-logbox" class="strat-float strat-logbox">
+            <div class="log-body"><div class="log-title">ログ</div><div id="smap-log" class="smap-log"></div></div>
+            <button id="smap-logtab" class="log-tab" title="ログを開く・閉じる">◀ ログ</button>
+          </div>
           <details class="strat-float strat-legend">
             <summary>凡例</summary>
             <div class="sub">★本=本隊 ☆=分隊 ◆=小隊 斥=斥候 暗=暗殺者 守=砦の守備隊<br>🏯砦（点線の枠 青=自軍・赤=CPU軍・灰=中立） 陣=本陣<br>点滅する赤枠⚔=攻撃できる敵<br>地形: 平地1 森2 山3 浅瀬2 川×（数字は移動コスト）</div>

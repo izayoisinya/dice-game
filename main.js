@@ -2191,22 +2191,56 @@ function initZoom(kind) {
     e.preventDefault();
     setZoom(kind, zoom[kind] * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
   }, { passive: false });
-  // 2本指のピンチ（タッチ）
-  const pts = new Map();
-  let start = null;
-  wrap.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') pts.set(e.pointerId, e); });
+  // 指の操作は自前で扱う（touch-action: none）。1本指 = スクロール、2本指 = ピンチで拡大縮小しながら移動。
+  // ブラウザのスクロールに任せると、2本目の指を置いた時点でブラウザがスクロールを始めてピンチが途切れるため
+  const pts = new Map();          // pointerId → 直前の位置
+  let pinch = null, dragged = 0, flick = null;
+  // 端まで来てそれ以上動かせない分は、外側（ページ・局地戦の右の列など）をスクロールする
+  const outer = () => { let el = wrap.parentElement; while (el && el !== document.body) { const o = getComputedStyle(el).overflowY; if ((o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight) return el; el = el.parentElement; } return null; };
+  const scrollBy = (dx, dy) => {
+    const [l, t] = [wrap.scrollLeft, wrap.scrollTop];
+    wrap.scrollLeft -= dx; wrap.scrollTop -= dy;
+    const restY = dy - (t - wrap.scrollTop);
+    if (Math.abs(restY) > 0.5) { const o = outer(); if (o) o.scrollTop -= restY; else window.scrollBy(0, -restY); }
+    return [l - wrap.scrollLeft, t - wrap.scrollTop];
+  };
+  wrap.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    if (flick) { cancelAnimationFrame(flick); flick = null; }
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, vx: 0, vy: 0 });
+    if (pts.size === 1) dragged = 0;
+    pinch = null;
+  });
   wrap.addEventListener('pointermove', e => {
-    if (!pts.has(e.pointerId)) return;
-    pts.set(e.pointerId, e);
+    const p = pts.get(e.pointerId);
+    if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y, dt = Math.max(1, e.timeStamp - p.t);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, vx: dx / dt, vy: dy / dt });
+    dragged += Math.abs(dx) + Math.abs(dy);
+    if (pts.size === 1) { scrollBy(dx, dy); return; }
     if (pts.size !== 2) return;
     const [a, b] = [...pts.values()];
-    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    if (!start) start = { dist, z: zoom[kind] };
-    else setZoom(kind, start.z * dist / start.dist, (a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+    const dist = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    if (!pinch) { pinch = { dist, z: zoom[kind], cx, cy }; return; }
+    setZoom(kind, pinch.z * dist / pinch.dist, cx, cy);
+    wrap.scrollLeft -= cx - pinch.cx; wrap.scrollTop -= cy - pinch.cy;   // 2本指のまま動かすと移動も
+    pinch.cx = cx; pinch.cy = cy;
   });
-  const end = e => { pts.delete(e.pointerId); if (pts.size < 2) start = null; };
+  const end = e => {
+    const p = pts.get(e.pointerId);
+    pts.delete(e.pointerId);
+    pinch = null;
+    // 1本指で払ったら、少しだけ慣性で流す
+    if (p && !pts.size && e.type === 'pointerup' && e.timeStamp - p.t < 80 && Math.hypot(p.vx, p.vy) > 0.3) {
+      let vx = p.vx * 16, vy = p.vy * 16;
+      const step = () => { const [mx, my] = scrollBy(vx, vy); vx *= 0.92; vy *= 0.92; flick = (Math.hypot(vx, vy) > 0.5 && (mx || my)) ? requestAnimationFrame(step) : null; };
+      flick = requestAnimationFrame(step);
+    }
+  };
   wrap.addEventListener('pointerup', end);
   wrap.addEventListener('pointercancel', end);
+  // 指で動かした後に指を離したときのクリック（マスの選択）は無視する
+  wrap.addEventListener('click', e => { if (dragged > 12) { e.stopPropagation(); e.preventDefault(); dragged = 0; } }, true);
   document.querySelectorAll(`[data-zoom-for="${kind}"] button`).forEach(b => b.addEventListener('click', () => {
     const d = b.dataset.zoom;
     setZoom(kind, d === '0' ? 1 : zoom[kind] * (d === '+' ? 1.5 : 1 / 1.5));
@@ -3185,6 +3219,12 @@ if (typeof ResizeObserver === 'function') new ResizeObserver(fitTopbar).observe(
 fitTopbar();
 initZoom('field');
 initZoom('smap');
+{ // 戦域図のログの出し入れ（開け閉めは覚えておく）
+  const box = $('smap-logbox'), tab = $('smap-logtab');
+  const set = closed => { box.classList.toggle('closed', closed); tab.textContent = closed ? '▶ ログ' : '◀ ログ'; };
+  try { set(localStorage.getItem('smapLogClosed') === '1'); } catch { set(false); }
+  tab.onclick = () => { const c = !box.classList.contains('closed'); set(c); try { localStorage.setItem('smapLogClosed', c ? '1' : '0'); } catch {} };
+}
 $('smap-wrap').addEventListener('scroll', () => { if (typeof placeStratInfo === 'function') placeStratInfo(); }, { passive: true });   // 操作の箱を選んだマスに付いていかせる
 
 $('field').addEventListener('click', e => {

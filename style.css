@@ -155,8 +155,15 @@ button.go { background: #3f8a4f; }
 .strat-float > summary { cursor: pointer; color: #cfd8e6; font-weight: bold; }
 .strat-hud { top: 8px; right: 8px; max-width: min(320px, calc(100% - 16px)); display: flex; flex-direction: column; gap: 6px; }
 .strat-hud .ap-buttons { margin: 0; }
-.strat-logbox { left: 8px; bottom: 8px; width: min(360px, calc(100% - 16px)); }
+.strat-hud.hidden { display: none; }
+/* ログ: 左端から出し入れする（閉じると右側のつまみだけ残る） */
+.strat-logbox { left: 0; bottom: 8px; padding: 0; display: flex; align-items: stretch; border-left: none; border-radius: 0 8px 8px 0;
+  transition: transform 0.2s ease; max-width: calc(100% - 8px); }
+.strat-logbox .log-body { width: min(340px, calc(100vw - 70px)); padding: 6px 8px; min-width: 0; }
+.strat-logbox .log-title { font-weight: bold; color: #cfd8e6; }
 .strat-logbox .smap-log { background: transparent; padding: 4px 0 0; max-height: 26svh; }
+.strat-logbox .log-tab { writing-mode: vertical-rl; padding: 8px 4px; width: 30px; border-radius: 0 8px 8px 0; background: rgba(60, 70, 90, 0.85); font-size: 0.8rem; letter-spacing: 2px; }
+.strat-logbox.closed { transform: translateX(calc(-100% + 30px)); }
 .strat-legend { left: 8px; top: 8px; max-width: min(320px, calc(100% - 16px)); }
 .strat-legend:not([open]) { opacity: 0.85; }
 .strat-info { width: min(340px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; z-index: 7; border-color: #4a6fa5; }
@@ -275,7 +282,7 @@ main { padding: 12px; }
 .ap-help > summary { cursor: pointer; color: #9fb7d9; }
 
 /* 拡大・縮小 */
-.zoom-wrap { overflow: auto; touch-action: pan-x pan-y; border-radius: 8px; }
+.zoom-wrap { overflow: auto; touch-action: none; border-radius: 8px; }   /* 指での移動・ピンチは自前で扱う（initZoom） */
 .zoom { display: inline-flex; gap: 2px; vertical-align: middle; }
 .zoom button { padding: 4px 10px; font-size: 0.9rem; background: #2c3038; }
 .cell, .scell { font-size: calc(var(--cell, 24px) * 0.32); }
