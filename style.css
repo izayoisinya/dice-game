@@ -124,6 +124,7 @@ button.danger { background: #a14040; margin-left: auto; }
 /* 軍の編成 */
 #campaign-box summary { cursor: pointer; }
 #campaign-box summary h2 { display: inline; }
+#campaign-box { min-height: calc(100svh - var(--topbar-h, 60px) - 24px); box-sizing: border-box; }   /* 隊を開け閉めしても灰色の枠が伸び縮みしない（画面の下まで敷く） */
 .cp-head, .cp-pool, .sq-new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .cp-cols { display: grid; grid-template-columns: 1fr 1fr 0.8fr; gap: 16px; }
 @media (max-width: 900px) { .cp-cols { grid-template-columns: 1fr; } }
@@ -306,7 +307,7 @@ button.off { background: #2c3038; color: #bbb; }
 /* 編成画面の2列 */
 .setup-cols { display: grid; grid-template-columns: 1fr; gap: 0 24px; }
 .setup-cols .setup-dice { max-width: none; }
-.squad-grid { display: grid; grid-template-columns: 1fr; gap: 0 12px; align-items: start; }   /* 隣の隊を開いても、閉じた隊のカードは自分の高さのまま */
+.squad-grid { display: grid; grid-template-columns: 1fr; gap: 0 12px; }
 @media (min-width: 900px) {
   .setup-cols, .squad-grid { grid-template-columns: 1fr 1fr; }
   .cp-cols { grid-template-columns: 1fr 1fr 0.8fr; }
