@@ -496,7 +496,7 @@ function renderReorg() {
     const members = q.members.map(id => { const m = memberById(army, id); return `<span class="chip">${desc(m)}
       <select class="ro" data-op="member" data-from="${q.id}" data-id="${id}">${dests(q)}</select>
       ${!m.kind ? `<button class="small ro-btn" data-op="split" data-from="${q.id}" data-id="${id}">新しい隊に</button>` : ''}</span>`; }).join('') || '<span class="sub">なし</span>';
-    const merge = q.name !== '本隊' && !q.garrison && group.length > 1
+    const merge = q.name !== '本隊' && group.length > 1   // 守備隊も隊ごと合流できる（砦の守りを解いて、副将がほかの隊に戻る）
       ? `<select class="ro" data-op="merge" data-from="${q.id}"><option value="">隊ごと合流…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${o.name}</option>`).join('')}</select>` : '';
     const add = atBase ? `<div class="ro-add">予備から:
       <select data-role="ro-type">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>

@@ -2859,14 +2859,32 @@ function fitPool() {
 /** 戦域図に出たあとの編成（見るだけ） */
 function renderCampaignLocked() {
   const A = campaign.armies, P = A.player;
-  const desc = m => m ? (m.kind ? m.name : `${m.name}（${m.rank || m.type + '長'}）`) : '?';
+  const tok = q => campaign.smap?.tokens.find(t => t.id === q.id);
+  const cards = P.squads.map(q => {
+    const lead = memberById(P, q.leader), open = squadOpen.has(q.id), t = tok(q);
+    const head = `<div class="sq-head" data-act="sqtoggle" data-q="${q.id}"><span class="sq-arrow">${open ? '▼' : '▶'}</span>
+      <b>${nm(q.name)}</b>（${squadKind(P, q)}）隊長 ${lead ? nm(lead.name) : 'なし'}
+      <span class="sq-stats">兵 ${squadTroops(q)}人 ／ 駒 ${q.pieces.length}${t ? ` ／ 戦域図 (${t.x},${t.y})${t.acted ? '・行動済み' : ''}` : ''}</span></div>`;
+    if (!open) {
+      return `<div class="squad closed" data-act="sqtoggle" data-q="${q.id}">${head}
+        <div class="sq-sum"><span class="sub">配下の将</span> ${q.members.map(id => nm(memberById(P, id).name)).join('・') || 'なし'}</div>
+        <div class="sq-sum"><span class="sub">兵士の駒</span> ${q.pieces.map(p => `${p.type.replace('兵', '')}${p.size}`).join('　') || 'なし'}</div></div>`;
+    }
+    // 広げた状態: 行をタップすると、その将・駒の今の状態（人数・ステータス）を表示
+    const memberRows = [q.leader, ...q.members].map(id => { const m = memberById(P, id); return `<tr class="tap" data-act="info" data-id="${id}"><td>${nm(m.name)}${id === q.leader ? ' <span class="sub">隊長</span>' : ''}</td><td>${m.kind || m.rank || m.type + '長'}</td><td>${m.kind ? '—' : memberLdr(m)}</td></tr>`; }).join('');
+    const pieceRows = q.pieces.map((p, i) => `<tr class="tap" data-act="info" data-q="${q.id}" data-i="${i}"><td>${p.type}</td><td>${p.size}人</td></tr>`).join('')
+      || '<tr><td colspan="2" class="sub">なし</td></tr>';
+    return `<div class="squad open">${head}
+      <div class="sq-detail">
+        <div><h4>将</h4><table class="sq-table"><thead><tr><th>名前</th><th>役</th><th>統率</th></tr></thead><tbody>${memberRows}</tbody></table></div>
+        <div><h4>兵士の駒</h4><table class="sq-table"><thead><tr><th>兵種</th><th>人数</th></tr></thead><tbody>${pieceRows}</tbody></table></div>
+      </div><div class="sub">行をタップすると、今の状態を表示します</div></div>`;
+  }).join('');
   $('campaign').innerHTML = `
-    <div class="cp-head"><span class="sub">出陣中はここでは編成を変えられません。戦域図で自軍の砦・本陣の上か隣にいる隊を選ぶと「再編成」できます。</span>
+    <div class="cp-head"><span class="sub">出陣中はここでは編成を変えられません。戦域図で自軍の砦・本陣の上か隣にいる隊を選ぶと「再編成」できます。隊をタップで開き、将・駒をタップで今の状態を確認できます。</span>
       ${P.defeated ? '<b class="warn">自軍は敗北しました</b>' : ''}${A.cpu.defeated ? '<b>🏆 CPU軍に勝利しました</b>' : ''}</div>
     <div class="cp-pool">兵力（残り）: ${TYPE_NAMES.map(t => `<span class="chip">${t} ${P.totals[t]}人</span>`).join('')}</div>
-    ${P.squads.map(q => `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(P, q)}）隊長 ${desc(memberById(P, q.leader))} ／ 兵 ${squadTroops(q)}人</div>
-      <div>配下: ${q.members.map(id => desc(memberById(P, id))).join('・') || 'なし'}</div>
-      <div>兵士の駒: ${q.pieces.map(p => `${p.type}${p.size}`).join('・') || 'なし'}</div></div>`).join('')}`;
+    <div class="squad-grid">${cards}</div>`;
 }
 
 /**
