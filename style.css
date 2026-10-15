@@ -307,7 +307,7 @@ button.off { background: #2c3038; color: #bbb; }
 /* 編成画面の2列 */
 .setup-cols { display: grid; grid-template-columns: 1fr; gap: 0 24px; }
 .setup-cols .setup-dice { max-width: none; }
-.squad-grid { display: grid; grid-template-columns: 1fr; gap: 0 12px; }
+.squad-grid { display: grid; grid-template-columns: 1fr; gap: 0 12px; align-items: start; }   /* 隣の隊を開いても、同じ行のカードは自分の高さのまま */
 @media (min-width: 900px) {
   .setup-cols, .squad-grid { grid-template-columns: 1fr 1fr; }
   .cp-cols { grid-template-columns: 1fr 1fr 0.8fr; }
