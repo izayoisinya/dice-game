@@ -65,7 +65,7 @@ const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
 const FORT_DEF = 0.2;          // 戦域図の砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
 const SERGEANT_SPD = 10;      // 兵長は兵士より SPD +10（隊を率いて一歩先に動く。回避も少し上がる）
-const SERGEANT_SPARE = 0.5;    // 兵長の SPD/ACT 割り戻しの残りのうち HP/ATK に振る割合（全部振ると副将並みになるため半分）
+const SERGEANT_SPARE = 1;    // 兵長の SPD/ACT 割り戻しの残りのうち HP/ATK に振る割合（全部振ると副将並みになるため半分）
 const SERGEANT_BUFF = 0.1;    // 兵長が隊長になっている兵士の駒（同じ兵種）は ATK / DEF +10%
 const COUNTER_MULT = 1.0;     // 反撃の威力倍率（攻撃された側が、相手が自分の射程内なら1回だけ撃ち返す）
 const SURROUND_BONUS = 0.1;   // 包囲ボーナス: 攻撃対象に隣接する味方1体ごとの威力上昇（攻撃者自身は数えない）
@@ -186,24 +186,24 @@ const TYPES = {
             falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
   // 弓を持った将（総大将・副将の武器で選ぶ）。射程が長い分、固定枠が高く（自由枠が減り）脆い。後衛として前衛の後ろから撃つ
   '弓将': { stats: { hp: 70, atk: 100, def: 70, spd: 90, act: 70 }, rng: 4, hit: 85, best: 3, rear: true, commanderOnly: true, traits: ['aim'],
-            weaponDiscount: 55,   // 射程4の分のコストを軽く（全額だと刀の副将に勝率2〜10%。45で32〜42%、60で65%）
+            weaponDiscount: 35,   // 射程4の分のコストを軽く（全額だと刀の副将に勝率2〜10%。45で32〜42%、60で65%）
             falloff: { 1: { hit: 0.6, pow: 1.0 }, 2: { hit: 1.0, pow: 1.0 }, 3: { hit: 1.0, pow: 1.0 },
                        4: { hit: 0.9, pow: 0.9 }, 5: { hit: 0.75, pow: 0.75 }, 6: { hit: 0.6, pow: 0.6 } } },
   // 槍を持った将: 射程2、突き・薙ぎ払いが使える
   '槍将': { stats: { hp: 110, atk: 100, def: 90, spd: 90, act: 70 }, rng: 2, hit: 85, best: 2, commanderOnly: true, traits: ['spear'],
-            weaponDiscount: -15,   // 範囲攻撃・迎え突きの分、少し高く（副将どうし: −10 で 65%、−15 で約50%、−20 で 43%）
+            weaponDiscount: -40,   // 範囲攻撃・迎え突きの分、少し高く（副将どうし: −10 で 65%、−15 で約50%、−20 で 43%）
             falloff: { 1: { hit: 1.0, pow: 0.9 }, 2: { hit: 0.9, pow: 1.0 }, 3: { hit: 0.8, pow: 0.8 } } },
   // 盾を持った将: 受けるダメージを減らす（堅守）。庇うは持たない（将が味方の身代わりになって倒れると負けるので）
   '盾将': { stats: { hp: 120, atk: 110, def: 100, spd: 90, act: 70 }, rng: 1, hit: 85, best: 1, commanderOnly: true, traits: ['guard'],
-            weaponDiscount: -10,   // 堅守の分、少し高く（割引なしだと勝率 63〜71%、−10 で 57%）
+            weaponDiscount: -25,   // 堅守の分、少し高く（割引なしだと勝率 63〜71%、−10 で 57%）
             falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
   // 馬に乗った将: 足が速く（SPD が高い分、固定枠も高い）、一直線に走り込んで突撃できる
   '騎将': { stats: { hp: 100, atk: 90, def: 80, spd: 130, act: 70 }, rng: 1, hit: 85, best: 1, commanderOnly: true, traits: ['charge'],
-            weaponDiscount: 45,    // 足の分を軽く（割引なしだと勝率 5%、+40 で 35%、+45 で 43%、+80 で 88%）
+            weaponDiscount: 20,    // 足の分を軽く（割引なしだと勝率 5%、+40 で 35%、+45 で 43%、+80 で 88%）
             falloff: { 1: { hit: 1.0, pow: 1.0 }, 2: { hit: 0.9, pow: 0.9 } } },
   // レアな副将「二刀流剣士」専用。耐久を削ぎ落とし、足と手数で斬り込む。選べるスキルは持たず、固有能力だけで戦う
   '二刀将': { stats: { hp: 60, atk: 120, def: 40, spd: 130, act: 140 }, rng: 1, hit: 90, best: 1, commanderOnly: true, rare: true,
-            traits: ['dual', 'dash', 'deflect'], weaponDiscount: 40,   // 1対1で通常の副将に勝率82%、剣兵300人と五分くらい（+120 だと強すぎ、0 だと通常の副将と互角）
+            traits: ['dual', 'dash', 'deflect'], weaponDiscount: -40,   // 1対1で通常の副将に勝率約84%、剣兵350人前後と五分（将のSPD/ACTの値段を下げたので 40 → −40）
             falloff: { 1: { hit: 1.0, pow: 1.0 } } },
 };
 
@@ -265,6 +265,9 @@ function scaleStats(type, cost) {
 // ------------------------------------------------------------
 const UPGRADE_MULT = 1.0;
 // 統率力（総大将・副将は振り分けで買う）: 基本値は無料、1上げるごとに LDR_COST ポイント。隊に入れられる兵士の駒の上限になる
+// 将の SPD / ACT（兵士と同じ物差しの値）に払う階級の倍率の重さ。1 = 階級の倍率どおり、0 = 兵士と同じ値段。
+// 兵長と同じく、階級で伸ばさないテンポ系に階級の値段を払わせない（射程・固有能力は階級の倍率どおり払う）
+const GENERAL_TEMPO_RATE = 0;
 const LDR_BASE = 3;
 const LDR_COST = 40;
 const LDR_COST_COMMANDER = 20;   // 総大将は統率力が安い（統率力あってこその総大将）
@@ -351,7 +354,7 @@ function commanderStats(type, cost, build, slots = SKILL_SLOTS['総大将']) {
   for (const k of Object.keys(UPGRADE_CAP)) buy[k] = Math.min(buy[k], UPGRADE_CAP[k]);
   const rng = Math.min(t.rng + buy.rng, maxRng(type));
   // weaponDiscount: 武器（弓など）の射程の分のコストを軽くする（将の武器は単体の殴り合いより用途の違いなので）
-  const fixedCost = (t.stats.spd + t.stats.act + rngCost(t.rng) - (t.weaponDiscount || 0) + traitCost(t)) * f;
+  const fixedCost = (t.stats.spd + t.stats.act) * (1 + (f - 1) * GENERAL_TEMPO_RATE) + (rngCost(t.rng) - (t.weaponDiscount || 0) + traitCost(t)) * f;
   const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
   const skills = [...new Set(b.skills || [])].slice(0, slots);
   const skillCost = skills.slice(1).reduce((s, k) => s + SKILLS[k].cost, 0);   // 1つ目は無料
