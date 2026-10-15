@@ -272,7 +272,8 @@ const LDR_BASE = 3;
 const LDR_COST = 40;
 const LDR_COST_COMMANDER = 20;   // 総大将は統率力が安い（統率力あってこその総大将）
 const LDR_MAX = 15;
-const UPGRADE_CAP = { spd: 50, act: 50 };
+const UPGRADE_CAP = { spd: 100, act: 100 };
+const UPGRADE_STEPS = Array.from({ length: UPGRADE_CAP.spd / 10 + 1 }, (_, i) => i * 10);   // 強化の選択肢 +0〜+100
 const RNG_CAP_RATE = 1.5;     // 剣 1→2 / 槍 2→3 / 弓 5→8 まで
 
 /** 兵種の射程の上限 */
@@ -355,7 +356,8 @@ function commanderStats(type, cost, build, slots = SKILL_SLOTS['総大将']) {
   const rng = Math.min(t.rng + buy.rng, maxRng(type));
   // weaponDiscount: 武器（弓など）の射程の分のコストを軽くする（将の武器は単体の殴り合いより用途の違いなので）
   const fixedCost = (t.stats.spd + t.stats.act) * (1 + (f - 1) * GENERAL_TEMPO_RATE) + (rngCost(t.rng) - (t.weaponDiscount || 0) + traitCost(t)) * f;
-  const upgradeCost = (buy.spd + buy.act + rngCost(rng) - rngCost(t.rng)) * UPGRADE_MULT * f;
+  // SPD / ACT の強化も基本の値と同じ値段（GENERAL_TEMPO_RATE）。射程の強化は階級の倍率どおり
+  const upgradeCost = ((buy.spd + buy.act) * (1 + (f - 1) * GENERAL_TEMPO_RATE) + (rngCost(rng) - rngCost(t.rng)) * f) * UPGRADE_MULT;
   const skills = [...new Set(b.skills || [])].slice(0, slots);
   const skillCost = skills.slice(1).reduce((s, k) => s + SKILLS[k].cost, 0);   // 1つ目は無料
   const ldr = Math.max(LDR_BASE, Math.min(LDR_MAX, b.ldr ?? LDR_BASE));
@@ -2243,7 +2245,7 @@ function renderEditor() {
   if (!show) return;
   if (!ed.dataset.built) {
     const skillOpts = Object.entries(SKILLS).map(([k, s]) => `<option value="${k}">${k}（${s.cost}）</option>`).join('');
-    const upOpts = [0, 10, 20, 30, 40, 50].map(n => `<option value="${n}">+${n}</option>`).join('');
+    const upOpts = UPGRADE_STEPS.map(n => `<option value="${n}">+${n}</option>`).join('');
     ed.innerHTML = `
       <h2>総大将の振り分け</h2>
       <div class="ed-grid">
@@ -2911,7 +2913,7 @@ function renderGeneralEditor() {
   const b = g.build;
   const slots = SKILL_SLOTS[g.rank];
   const skillOpts = sel => Object.entries(SKILLS).map(([k, sk]) => `<option value="${k}" ${sel === k ? 'selected' : ''}>${k}（${sk.cost}）</option>`).join('');
-  const upOpts = sel => [0, 10, 20, 30, 40, 50].map(n => `<option value="${n}" ${sel === n ? 'selected' : ''}>+${n}</option>`).join('');
+  const upOpts = sel => UPGRADE_STEPS.map(n => `<option value="${n}" ${sel === n ? 'selected' : ''}>+${n}</option>`).join('');
   // bar が空なら、振り分けの欄（選択肢）をバーの欄まで広げる
   const row = (label, alloc, bar, real) => `<div class="ge-row"><div class="ge-label">${label}</div>${
     bar === '' && alloc.includes('<select') ? `<div class="ge-alloc wide">${alloc}</div>` : `<div class="ge-alloc">${alloc}</div><div class="ge-bar">${bar}</div>`}<div class="ge-real">${real}</div></div>`;
