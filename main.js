@@ -2010,14 +2010,15 @@ function renderField(acting) {
       if (chargeSet.has(`${x},${y}`)) cell.title = '🐎 ここへ一直線に走ると突撃（初撃の威力アップ）';
       if (u) {
         cell.title = `${nm(u.name)} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
-        cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>`;
+        cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>` +
+          (targets.has(u.id) ? '<span class="tgt-mark">⚔</span>' : '');
       }
       cells.appendChild(cell);
     }
   }
   field.replaceChildren(cells);
   applyZoom('field');
-  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者 / 青=プレイヤー 赤=CPU' +
+  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者 / 青=プレイヤー 赤=CPU / 点滅する赤枠⚔=攻撃できる敵' +
     (state.fog ? ' / 暗いマス=視界の外' : '');
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
@@ -2043,14 +2044,14 @@ function renderActionPanel() {
   panel.classList.remove('hidden');
   const gauge = state.manual.gaugeAdded ? unit.gauge : chargedGauge(unit);
   const hint = {
-    move: '青いマスをクリックで移動（移動しないで攻撃も可）。赤枠の敵をクリックで攻撃。',
+    move: '青いマスをクリックで移動（移動しないで攻撃も可）。点滅する赤枠（⚔）の敵をクリックで攻撃。',
     attack: unit.pursuitMove > 0
-      ? `⚔ 追撃: 青いマスへ${unit.pursuitMove}マスまで踏み込める（攻撃は続けられる）。赤枠の敵をクリックで攻撃。`
+      ? `⚔ 追撃: 青いマスへ${unit.pursuitMove}マスまで踏み込める（攻撃は続けられる）。点滅する赤枠（⚔）の敵をクリックで攻撃。`
       : state.manual && unit.hitAndRun && state.manual.attacked > 0
-      ? '赤枠の敵をクリックで攻撃。青いマスをクリックで離脱して終了（移動力いっぱい）。'
+      ? '点滅する赤枠（⚔）の敵をクリックで攻撃。青いマスをクリックで離脱して終了（移動力いっぱい）。'
       : state.manual && !state.manual.moved && state.manual.attacked > 0
-      ? '赤枠の敵をクリックで攻撃。青いマスをクリックで間合いを取って終了（移動力の半分まで）。'
-      : '赤枠の敵をクリックで攻撃。終わったら「行動終了」。',
+      ? '点滅する赤枠（⚔）の敵をクリックで攻撃。青いマスをクリックで間合いを取って終了（移動力の半分まで）。'
+      : '点滅する赤枠（⚔）の敵をクリックで攻撃。終わったら「行動終了」。',
     retreat: '一撃離脱: 青いマスをクリックで離脱先を選ぶ。',
   }[state.phase] || '';
   const skills = unit.skills.map(name => {

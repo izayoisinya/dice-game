@@ -98,7 +98,8 @@ tr.rank-兵長 td:first-child { color: #9fe39f; }
 /* 手動プレイ */
 .cell { cursor: default; }
 .cell.reach { background: #3f6a8f; cursor: pointer; }
-.cell.target { outline: 3px solid #ff5a4f; outline-offset: -3px; cursor: crosshair; }
+.cell.target { outline: 3px solid #ff5a4f; outline-offset: -3px; cursor: crosshair; animation: tgt-pulse 1s ease-in-out infinite; }
+.cell .tgt-mark { position: absolute; right: 1px; bottom: 4px; z-index: 2; font-size: 0.85em; line-height: 1; padding: 1px 2px; border-radius: 4px; background: #ff5a4f; color: #fff; pointer-events: none; }
 .panel { background: #262930; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
 .panel h2 { margin-top: 0; }
 .action-panel { position: sticky; top: 0; z-index: 2; border: 1px solid #4a6fa5; }
@@ -153,7 +154,7 @@ button.go { background: #3f8a4f; }
 .scell.target { outline: 3px solid #ff5a4f; outline-offset: -3px; cursor: crosshair; animation: tgt-pulse 1s ease-in-out infinite; }
 .scell .tgt-mark { position: absolute; right: 1px; bottom: 1px; z-index: 2; font-size: 0.85em; line-height: 1; padding: 1px 2px; border-radius: 4px; background: #ff5a4f; color: #fff; pointer-events: none; }
 @keyframes tgt-pulse { 50% { outline-color: rgba(255, 90, 79, 0.25); } }
-@media (prefers-reduced-motion: reduce) { .scell.target { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .scell.target, .cell.target { animation: none; } }
 .scell.p .glyph { background: #2d5f9c; color: #e0f0ff; }
 .scell.c .glyph { background: #9c2d2d; color: #ffe0dc; }
 .scell .glyph { position: relative; z-index: 1; padding: 1px 3px; border-radius: 4px; }
