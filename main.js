@@ -1986,6 +1986,20 @@ function renderField(acting) {
   const cur = currentUnit();
   const reach = new Set(cur ? manualReach(cur, true).map(([x, y]) => `${x},${y}`) : []);
   const targets = new Set(cur ? manualTargets(cur).map(u => u.id) : []);
+  // 攻撃範囲: 今の位置と移動できるマスから届くマス（移動できるマスは青のまま、その外側を点線＋対角線で示す）
+  const atkRange = new Set();
+  if (cur && (state.phase === 'move' || state.phase === 'attack')
+    && (state.manual.gaugeAdded ? cur.gauge : chargedGauge(cur)) >= ACT_PER_ATTACK) {
+    const rng = effRng(cur);
+    for (const [ox, oy] of [[cur.x, cur.y], ...reach].map(k => typeof k === 'string' ? k.split(',').map(Number) : k)) {
+      for (let dx = -rng; dx <= rng; dx++) for (let dy = -(rng - Math.abs(dx)); dy <= rng - Math.abs(dx); dy++) {
+        const x = ox + dx, y = oy + dy;
+        if (x >= 0 && y >= 0 && x < w && y < h && !(dx === 0 && dy === 0 && ox === cur.x && oy === cur.y)) atkRange.add(`${x},${y}`);
+      }
+    }
+    for (const k of reach) atkRange.delete(k);
+    atkRange.delete(`${cur.x},${cur.y}`);
+  }
   // プレイヤー軍の視界。手動プレイでは見えない敵を描かない（オート観戦では半透明で描く）
   const eyes = state.player.units.filter(u => u.alive);
   const inSight = (x, y) => !state.fog || eyes.some(o => Math.abs(o.x - x) + Math.abs(o.y - y) <= (o.vision ?? VISION_DEFAULT));
@@ -1998,6 +2012,7 @@ function renderField(acting) {
       cell.className = 'cell' + (u ? ` ${u.side === 'player' ? 'p' : 'c'}` : '') +
         (u && u === acting ? ' acting' : '') +
         (reach.has(`${x},${y}`) ? ' reach' : '') +
+        (atkRange.has(`${x},${y}`) && !(u && u.side === 'player') ? ' atkrange' : '') +   // 味方のいるマスには出さない
         (u && targets.has(u.id) ? ' target' : '') +
         (inSight(x, y) ? '' : ' fog') + (u && ghost ? ' ghost' : '') +
         (chargeSet.has(`${x},${y}`) ? ' charge' : '') +
@@ -2018,7 +2033,7 @@ function renderField(acting) {
   }
   field.replaceChildren(cells);
   applyZoom('field');
-  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者 / 青=プレイヤー 赤=CPU / 点滅する赤枠⚔=攻撃できる敵' +
+  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者 / 青=プレイヤー 赤=CPU / 点滅する赤枠⚔=攻撃できる敵 / 点線＋斜線=移動して攻撃が届く範囲' +
     (state.fog ? ' / 暗いマス=視界の外' : '');
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
