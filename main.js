@@ -59,7 +59,8 @@ const MIN_DAMAGE_RATE = 0.15; // 最低でも ATK のこの割合は通る（DEF
 //   1回の威力と手数（行動ゲージのたまり方）はそれぞれ √(人数比) 倍 → 総火力は人数に比例。
 //   人数が多いほど心強く DEF が上がる（倍になるごとに +SIZE_DEF_BONUS、上下限あり）。
 const BASE_TROOPS = 50;
-const MIN_TROOPS = 10;
+const MIN_TROOPS = 10;        // 駒が残る最低人数（戦闘で減ってもこれ以上なら残る）
+const MIN_PIECE = 100;        // 新しく駒を作る（編成・再編成で足す）ときの最低人数
 const SIZE_DEF_BONUS = 0.05;
 const SIZE_DEF_CAP = 0.1;
 const FORT_DEF = 0.2;          // 戦域図の砦の守り: 自軍の砦の上か隣で戦う隊は DEF +20%
@@ -2302,7 +2303,7 @@ function confirmEditor() {
 //   編成した隊どうしを局地戦で戦わせ、損害（兵の人数・倒れた将）を持ち帰る。
 // ============================================================
 
-const TROOP_DICE = { sides: 10, unit: 100 };            // 各兵種の総数 = 1d10 × 100（100〜1000人）
+const TROOP_DICE = { sides: 20, unit: 100 };            // 各兵種の総数 = 1d20 × 100（100〜2000人）
 const GENERAL_DICE = { n: 2, sides: 4, plus: 2 };       // 副将の人数 2d4+2（4〜10人）
 const SERGEANT_DICE = { n: 1, sides: 3, plus: 1 };      // 兵長の人数（兵種ごと）1d3+1（2〜4人）
 const SERGEANT_LDR_DICE = { n: 1, sides: 5, plus: 1 };  // 兵長の統率力 1d5+1（2〜6）
@@ -2385,11 +2386,11 @@ function poolLeft(army, type) {
 
 /**
  * 統率力で決まる2つの上限:
- *   率いる人数（指揮量）= 統率力 × 100人分。兵士は1人 = 1、配下の兵長 = 100人分・副将 = 150人分（階級のコストで換算: 兵長 1000 / 副将 1500 ÷ 兵士1人 10）。
+ *   率いる人数（指揮量）= 統率力 × LDR_MEN（200）人分。兵士は1人 = 1、配下の兵長 = 100人分・副将 = 150人分（階級のコストで換算: 兵長 1000 / 副将 1500 ÷ 兵士1人 10）。
  *     斥候・暗殺者は単独で動く者なので 0
  *   駒の数 = 統率力（細かく分けすぎないように）
  */
-const LDR_MEN = 100;
+const LDR_MEN = 200;   // 統率1あたり率いられる人数（兵士の数を 1d20×100 に増やしたので 100 → 200）
 const MEMBER_MEN = { '兵長': 100, '副将': 150 };
 function memberUse(m) {
   if (!m || m.kind) return 0;
@@ -2446,7 +2447,7 @@ function shuffled(arr) {
 
 /** 兵の人数を、目安 target 人前後の駒に分ける（10人単位） */
 function splitPieces(type, n, target) {
-  const k = Math.max(1, Math.round(n / target));
+  const k = Math.max(1, Math.min(Math.round(n / target), Math.floor(n / MIN_PIECE)));   // 1駒が MIN_PIECE を割らない数に
   const base = Math.floor(n / k / 10) * 10;
   let rest = n - base * k;
   const pieces = [];
@@ -2455,7 +2456,7 @@ function splitPieces(type, n, target) {
     rest -= extra;
     pieces.push({ type, size: base + extra });
   }
-  return pieces.filter(p => p.size >= MIN_TROOPS);
+  return pieces.filter(p => p.size >= MIN_PIECE);
 }
 
 /** おまかせ編成: 副将の半分を分隊長にして隊を作り直し、自動配置する */
@@ -2472,14 +2473,14 @@ function autoForm(army) {
   // 率いきれずに余った兵士は、予備の兵長が小隊を組んで率いる（同じ兵種の兵長を優先。最大 AUTO_SMALL_SQUADS 隊）
   for (let n = 0; n < AUTO_SMALL_SQUADS; n++) {
     const free = army.sergeants.filter(sg => !squadOf(army, sg.id));
-    const types = TYPE_NAMES.filter(t => poolLeft(army, t) >= 50).sort((a, b) => poolLeft(army, b) - poolLeft(army, a));
+    const types = TYPE_NAMES.filter(t => poolLeft(army, t) >= MIN_PIECE).sort((a, b) => poolLeft(army, b) - poolLeft(army, a));
     if (!free.length || !types.length) break;
     const sg = free.find(x => x.type === types[0]) || free.sort((a, b) => b.ldr - a.ldr)[0];
     const q = { id: `${army.side}-Q${army.seq++}`, name: `${sg.name}隊`, leader: sg.id, members: [], pieces: [] };
     army.squads.push(q);
     for (const t of [sg.type, ...types.filter(x => x !== sg.type)]) {
       const size = Math.floor(Math.min(poolLeft(army, t), squadRoom(army, q)) / 10) * 10;
-      if (size >= 50 && !pieceBlock(army, q, size)) q.pieces.push({ type: t, size });
+      if (size >= MIN_PIECE && !pieceBlock(army, q, size)) q.pieces.push({ type: t, size });
     }
     if (!q.pieces.length) { army.squads.pop(); break; }
   }
@@ -2509,6 +2510,7 @@ function autoFill(army) {
     const sh = share.get(q), sum = Object.values(sh).reduce((a, n) => a + n, 0);
     const limit = Math.floor(squadMenCap(army, q) * AUTO_TROOP_SHARE);
     if (sum > limit) for (const t of Object.keys(sh)) sh[t] = Math.floor(sh[t] * limit / sum / 10) * 10;
+    for (const t of Object.keys(sh)) if (sh[t] < MIN_PIECE) delete sh[t];   // 1駒に満たない端数は配らず予備に（③で他の隊に回す）
   }
   const planned = q => Object.values(share.get(q)).reduce((a, n) => a + n, 0);
   const fits = (q, m) => squadMenCap(army, q) - planned(q) - q.members.reduce((a, id) => a + memberUse(memberById(army, id)), 0) >= memberUse(m);
@@ -2532,14 +2534,14 @@ function autoFill(army) {
     for (const t of focus.get(q)) {
       const room = squadMenCap(army, q) - planned(q) - q.members.reduce((a, id) => a + memberUse(memberById(army, id)), 0);
       const add = Math.floor(Math.min(room, left[t]) / 10) * 10;
-      if (add > 0) { share.get(q)[t] = (share.get(q)[t] || 0) + add; left[t] -= add; }
+      if (add > 0 && (share.get(q)[t] || 0) + add >= MIN_PIECE) { share.get(q)[t] = (share.get(q)[t] || 0) + add; left[t] -= add; }
     }
   }
   // ④ 駒に分ける（駒の数は統率力まで。収まらなければ駒を大きくする）
   for (const q of army.squads) {
     const cap = Math.max(1, squadCap(army, q));
     for (let target = AUTO_PIECE; ; target += 50) {
-      q.pieces = Object.entries(share.get(q)).filter(([, n]) => n >= MIN_TROOPS).flatMap(([t, n]) => splitPieces(t, n, target));
+      q.pieces = Object.entries(share.get(q)).filter(([, n]) => n >= MIN_PIECE).flatMap(([t, n]) => splitPieces(t, n, target));
       if (q.pieces.length <= cap || target > 5000) break;
     }
   }
@@ -2744,7 +2746,7 @@ const squadOpen = new Set();   // 広げている隊（編成の詳細を表で�
 /** 駒を追加するときの人数の初期値: 100人。予備かあと率いられる人数がそれより少なければ、その最大 */
 function pieceDefault(P, q, type) {
   const n = Math.floor(Math.min(PIECE_DEFAULT, poolLeft(P, type), Math.max(0, squadRoom(P, q))) / 10) * 10;
-  return Math.max(MIN_TROOPS, n);
+  return Math.max(MIN_PIECE, n);
 }   // 縦向きの画面で、将・兵長の一覧を開いているか
 
 function renderCampaign() {
@@ -2806,8 +2808,8 @@ function renderCampaign() {
         <div><h4>兵士の駒</h4><table class="sq-table"><thead><tr><th>兵種</th><th>人数</th><th></th></tr></thead><tbody>${pieceRows}</tbody></table>
           <div class="sq-add">
             <select data-role="ptype" data-q="${q.id}">${TYPE_NAMES.map(t => `<option ${t === firstType ? 'selected' : ''}>${t}</option>`).join('')}</select>
-            <input type="number" data-role="psize" data-q="${q.id}" min="${MIN_TROOPS}" step="10" value="${pieceDefault(P, q, firstType)}">人
-            <button class="small" data-act="addpiece" data-q="${q.id}" ${pieceBlock(P, q, MIN_TROOPS) ? 'disabled' : ''}>＋ 駒を追加</button>
+            <input type="number" data-role="psize" data-q="${q.id}" min="${MIN_PIECE}" step="10" value="${pieceDefault(P, q, firstType)}">人
+            <button class="small" data-act="addpiece" data-q="${q.id}" ${pieceBlock(P, q, MIN_PIECE) ? 'disabled' : ''}>＋ 駒を追加</button>
           </div></div>
       </div>
       <div class="sub">★=同じ兵種の兵長がこの隊にいる駒（戦闘中その兵長が生きている間 ATK/DEF+${SERGEANT_BUFF * 100}%）。率いる人数 = 統率力×${LDR_MEN}人分（兵士1人 = 1・兵長 ${MEMBER_MEN['兵長']}・副将 ${MEMBER_MEN['副将']}・斥候/暗殺者 0）、駒は統率力の数まで</div>
@@ -3050,7 +3052,7 @@ function onCampaignClick(e) {
     case 'addpiece': {
       const type = $('campaign').querySelector(`[data-role="ptype"][data-q="${q.id}"]`).value;
       const size = Math.floor(+$('campaign').querySelector(`[data-role="psize"][data-q="${q.id}"]`).value / 10) * 10;
-      if (size < MIN_TROOPS) return alert(`1駒は${MIN_TROOPS}人以上です。`);
+      if (size < MIN_PIECE) return alert(`新しい駒は${MIN_PIECE}人以上です。`);
       if (size > poolLeft(P, type)) return alert(`${type}の予備は${poolLeft(P, type)}人しかいません。`);
       const why = pieceBlock(P, q, size);
       if (why) return alert(why);

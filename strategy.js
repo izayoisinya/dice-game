@@ -461,7 +461,7 @@ function reorg(op, a) {
     }
     case 'addpiece': {  // 予備から兵士の駒を足す（本陣だけ）
       const size = Math.floor(a.size / 10) * 10;
-      if (size < MIN_TROOPS) return fail(`1駒は${MIN_TROOPS}人以上です。`);
+      if (size < MIN_PIECE) return fail(`新しい駒は${MIN_PIECE}人以上です。`);
       if (size > poolLeft(army, a.type)) return fail(`${a.type}の予備は${poolLeft(army, a.type)}人です。`);
       const why = pieceBlock(army, to, size);
       if (why) return fail(why);
@@ -500,7 +500,7 @@ function renderReorg() {
       ? `<select class="ro" data-op="merge" data-from="${q.id}"><option value="">隊ごと合流…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${o.name}</option>`).join('')}</select>` : '';
     const add = atBase ? `<div class="ro-add">予備から:
       <select data-role="ro-type">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
-      <input type="number" data-role="ro-size" value="${PIECE_DEFAULT}" step="10" min="${MIN_TROOPS}">人
+      <input type="number" data-role="ro-size" value="${PIECE_DEFAULT}" step="10" min="${MIN_PIECE}">人
       <button class="small ro-btn" data-op="addpiece" data-to="${q.id}">駒を足す</button>
       <select class="ro" data-op="addmember" data-to="${q.id}"><option value="">将などを入れる…</option>${
         [...army.generals.filter(g => g.rank === '副将'), ...army.sergeants, ...army.specials].filter(m => !squadOf(army, m.id)).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('')}</select></div>` : '';
