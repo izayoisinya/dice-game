@@ -793,9 +793,9 @@ function tokenGlyph(t) {
 /** 描き直しでスクロール位置が先頭に戻されないよう、覚えておいて描き直した後に戻す */
 function renderStrat() {
   const wrap = $('smap-wrap'), keep = [wrap.scrollTop, wrap.scrollLeft, window.scrollY];
-  const centering = !ui.scrolled;
+  ui.justCentered = false;
   renderStratBody();
-  if (!(centering && ui.scrolled)) [wrap.scrollTop, wrap.scrollLeft] = keep;   // 真ん中に合わせた直後は戻さない
+  if (!ui.justCentered) [wrap.scrollTop, wrap.scrollLeft] = keep;   // 真ん中に合わせた直後は戻さない
   if (window.scrollY !== keep[2]) window.scrollTo(window.scrollX, keep[2]);
 }
 
@@ -818,10 +818,12 @@ function renderStratBody() {
   // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。外側の段数は、全体表示で画面が埋まる分
   const wrap = $('smap-wrap');
   const fit = Math.min((wrap.clientWidth - 12) / (m.w + 2), (wrap.clientHeight - 12) / (m.h + 2));   // 全体表示で、マップと外側1段が収まる大きさ
+  const oldPad = ui.pad ? `${ui.pad.x},${ui.pad.y}` : '';
   ui.pad = wrap.clientWidth && fit > 0
     ? { x: Math.max(1, Math.ceil(((wrap.clientWidth - 12) / fit - m.w) / 2) + 1), y: Math.max(1, Math.ceil(((wrap.clientHeight - 12) / fit - m.h) / 2) + 1) }
     : { x: 0, y: 0 };
   const P = ui.pad;
+  if (oldPad && oldPad !== `${P.x},${P.y}`) ui.scrolled = false;   // 外側の段数が変わったら（画面の大きさが変わった）真ん中に合わせ直す
   grid.style.gridTemplateColumns = `repeat(${m.w + P.x * 2}, minmax(0, 1fr))`;
   let html = '';
   for (let y = -P.y; y < m.h + P.y; y++) for (let x = -P.x; x < m.w + P.x; x++) {
@@ -863,6 +865,7 @@ function renderStratBody() {
     wrap.scrollLeft = (wrap.scrollWidth - wrap.clientWidth) / 2;
     wrap.scrollTop = (wrap.scrollHeight - wrap.clientHeight) / 2;
     ui.scrolled = true;
+    ui.justCentered = true;
   }
   const forts = side => m.forts.filter(f => f.owner === side).length;
   $('strat-label').textContent = `${m.w}×${m.h}　ターン ${m.turn}（${m.phase === 'setbase' ? '本陣を置く' : m.phase === 'player' ? '自軍の番' : m.phase === 'cpu' ? 'CPU軍の番' : '決着'}）　砦 自軍${forts('player')} / CPU${forts('cpu')} / 中立${m.forts.length - forts('player') - forts('cpu')}`;

@@ -2011,8 +2011,10 @@ function renderField(acting) {
   // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。戦域図と同じ
   const fw = $('field-wrap');
   const fit = Math.min((fw.clientWidth - 12) / (w + 2), (fw.clientHeight - 12) / (h + 2));
+  const oldPad = `${fieldPad.x},${fieldPad.y}`;
   fieldPad.x = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientWidth - 12) / fit - w) / 2) + 1) : 0;
   fieldPad.y = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientHeight - 12) / fit - h) / 2) + 1) : 0;
+  if (oldPad !== `${fieldPad.x},${fieldPad.y}`) fieldCentered = null;   // 外側の段数が変わったら（画面の大きさが変わった）真ん中に合わせ直す
   field.style.gridTemplateColumns = `repeat(${w + fieldPad.x * 2}, minmax(0, 1fr))`;
   for (let y = -fieldPad.y; y < h + fieldPad.y; y++) {
     for (let x = -fieldPad.x; x < w + fieldPad.x; x++) {
@@ -2056,6 +2058,7 @@ function renderField(acting) {
     fw.scrollLeft = (fw.scrollWidth - fw.clientWidth) / 2;
     fw.scrollTop = (fw.scrollHeight - fw.clientHeight) / 2;
     fieldCentered = state.map;
+    fieldJustCentered = true;
   }
   $('field-legend').innerHTML = '★将=総大将 ☆将=副将 ◆兵長<br>剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者<br>青=プレイヤー 赤=CPU<br>点滅する赤枠⚔=攻撃できる敵<br>点線＋斜線=移動して攻撃が届く範囲' +
     (state.fog ? '<br>暗いマス=視界の外' : '');
@@ -2158,13 +2161,13 @@ function render(acting = null) {
   // 描き直しの途中で中身が一瞬空になり、スクロール位置が先頭に戻されるので、覚えておいて戻す
   const scrollers = [...document.querySelectorAll('#field-wrap, #log')];
   const pos = scrollers.map(el => [el.scrollTop, el.scrollLeft]);
-  const wasCentered = fieldCentered === state.map;   // 真ん中に合わせた直後はスクロールを戻さない
+  fieldJustCentered = false;
   renderArmy(state.player, 'player', acting);
   renderArmy(state.cpu, 'cpu', acting);
   fitArmies();
   renderField(acting);
   renderActionPanel();
-  if (wasCentered) scrollers.forEach((el, i) => { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; });
+  if (!fieldJustCentered) scrollers.forEach((el, i) => { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; });
   placeActionPanel();
 }
 
@@ -2190,6 +2193,7 @@ function placeActionPanel() {
 const zoom = { field: 1, smap: 1 };
 const fieldPad = { x: 0, y: 0 };   // 局地戦のマップの外側に描く段数（戦域図は ui.pad）
 let fieldCentered = null;          // 真ん中に合わせ済みの戦場
+let fieldJustCentered = false;     // この描き直しで真ん中に合わせた（スクロールを戻さない）
 const ZOOM_MIN = 1, ZOOM_MAX = 4;
 
 function applyZoom(kind) {
@@ -3250,6 +3254,19 @@ function fitTopbar() {
 // スマホ・タブレットではスクロールのたびにアドレスバーが出入りして高さだけが変わる。
 // そのたびにマップの大きさを変えると表示がずれて上に戻されるので、幅が変わったとき（回転など）だけ合わせ直す
 let lastW = window.innerWidth;
+// マップ（戦域図・局地戦）は画面の大きさでマップの外側の段数が決まるので、高さだけ変わったときも描き直す。
+// 別のアプリから戻ったとき（一時的に大きさが変わることがある）も描き直す
+let mapRefresh = null;
+function refreshMaps() {
+  clearTimeout(mapRefresh);
+  mapRefresh = setTimeout(() => {
+    if (state.player && !$('battle').classList.contains('hidden')) render();
+    else if (campaign.smap && !$('view-map').classList.contains('hidden')) renderStrat();
+  }, 150);
+}
+window.addEventListener('resize', refreshMaps);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshMaps(); });
+window.addEventListener('pageshow', refreshMaps);
 window.addEventListener('resize', () => {
   fitTopbar();
   if (window.innerWidth === lastW) return;
