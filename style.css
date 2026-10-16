@@ -334,7 +334,7 @@ button.off { background: #2c3038; color: #bbb; }
 /* 編成画面の2列 */
 .setup-cols { display: grid; grid-template-columns: 1fr; gap: 0 24px; }
 .setup-cols .setup-dice { max-width: none; }
-.squad-grid { display: flex; flex-direction: column; }   /* 1列: 列の入れ物は消して order で元の順に */
+.squad-grid { display: flex; flex-direction: column; align-items: stretch; }   /* 1列: 列の入れ物は消して order で元の順に */
 .squad-grid > .sq-col { display: contents; }
 @media (min-width: 900px) {
   .setup-cols { grid-template-columns: 1fr 1fr; }
@@ -387,7 +387,7 @@ button.skill.armed { background: #b8860b; }
   .cp-side .cp-cols > div { max-height: none; overflow: visible; }
   .cp-side table { font-size: 0.85rem; }
   .cp-side table button.small { padding: 2px 6px; font-size: 0.75rem; }
-  .cp-body .squad-grid { display: flex; }
+  .cp-body .squad-grid { display: flex; align-items: stretch; }   /* 2列用の上揃え（start）を引き継ぐとカードが中身の幅に縮むので戻す */
   .cp-body .squad-grid > .sq-col { display: contents; }
 }
 @media (min-width: 1400px) {
