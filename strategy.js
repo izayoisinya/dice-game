@@ -21,7 +21,9 @@ const ASSASSIN_VISION_MAP = 2;            // 単独の暗殺者の視界
 const FORT_VISION = 3;                    // 守備隊のいる砦の視界
 const SCOUT_MOVE_MAP = 6;
 const ASSASSIN_MOVE_MAP = 4;
-const CPU_ATTACK_RATIO = 0.7;             // CPU は相手を囲む自軍の戦力の合計が相手の 0.7 倍以上なら攻撃する
+const CPU_ATTACK_RATIO = 0.7;             // CPU は相手を囲む自軍の戦力の合計が、見積もった相手の戦力の 0.7 倍以上なら攻撃する
+const CPU_GUESS = 0.3;                     // CPU は相手の戦力を正確には知らない: 見積もりは ±30% ずれる（相手ごと・ターンごとに振る）
+const CPU_STARE_TURNS = 2;                 // 隣で睨み合ったまま、このターン数たったら戦力に関係なく攻めかかる
 const HUB_RANGE = 2;                      // 砦・本陣から何マス以内の隊が再編成できるか
 const FORT_NAMES = ['東砦', '西砦', '南砦', '北砦', '中砦', '旧砦'];
 // 罠（落とし穴）: 斥候が仕掛ける。仕掛けたマスに乗るまで相手には分からない
@@ -701,8 +703,15 @@ function cpuTarget(t) {
   // 相手を囲んでいる味方（隣接しているCPUの隊）の戦力も合わせて考える（順に攻めかかれば削り切れる）
   const around = o => liveTokens().filter(x => x.side === t.side && distance(x, o) === 1 && tokenKind(x) !== '斥候')
     .reduce((a, x) => a + tokenStrength(x), 0);
+  // 相手の戦力は見積もり（プレイヤーと同じく正確には分からない）。同じターンのうちは同じ見積もりを使う
+  const m = smap();
+  const guess = o => {
+    if (!o.guess || o.guess.turn !== m.turn) o.guess = { turn: m.turn, k: 1 + (Math.random() * 2 - 1) * CPU_GUESS };
+    return tokenStrength(o) * o.guess.k;
+  };
   return tokenTargets(t)
-    .filter(o => ['守備隊', '斥候'].includes(tokenKind(o)) || tokenKind(t) === '暗殺者' || around(o) >= tokenStrength(o) * CPU_ATTACK_RATIO)
+    .filter(o => ['守備隊', '斥候'].includes(tokenKind(o)) || tokenKind(t) === '暗殺者' || (t.stare || 0) >= CPU_STARE_TURNS
+      || around(o) >= guess(o) * CPU_ATTACK_RATIO)
     .sort((a, b) => tokenStrength(a) - tokenStrength(b))[0] || null;
 }
 
@@ -711,7 +720,7 @@ function cpuAct(t) {
   const m = smap(), kind = tokenKind(t);
   if (kind === '守備隊') return false;
   let target = cpuTarget(t);
-  if (target) { attackToken(t, target); return true; }
+  if (target) { t.stare = 0; attackToken(t, target); return true; }
   // 総大将は本陣で待つ（砦をすべて押さえたか、ほかに動ける隊がいなくなったら自ら出る）
   if (kind === '本隊' && m.forts.some(f => f.owner !== 'cpu') &&
       liveTokens().some(o => o.side === 'cpu' && o !== t && !['守備隊', '斥候'].includes(tokenKind(o)))) return false;
@@ -756,7 +765,9 @@ function cpuAct(t) {
   }
   // 見えている敵を目指して隣まで来たなら、戦力で劣っていても攻めかかる（隣で睨み合ったまま動かなくなるのを防ぐ）
   target = cpuTarget(t) || (goal && goal.side === 'player' && tokenTargets(t).includes(goal) ? goal : null);
-  if (target) { attackToken(t, target); return true; }
+  if (target) { t.stare = 0; attackToken(t, target); return true; }
+  // 隣に敵がいるのに攻めなかったターンを数える（CPU_STARE_TURNS で攻めかかる）
+  t.stare = tokenTargets(t).length ? (t.stare || 0) + 1 : 0;
   t.acted = true;
   return false;
 }
