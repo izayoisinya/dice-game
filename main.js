@@ -108,6 +108,8 @@ const VOLLEY_TAKEN = 0.3;                        // 長柄の弱み（槍兵）:
 const DUAL_MULT = 0.6;                           // 二刀流: 1回の攻撃で2回斬る（それぞれ ATK ×0.6）
 const DEFLECT_CHANCE = 35;                       // 剣弾き: 攻撃が当たったとき弾いてダメージ 0 にする確率（%）
 const DEFLECT_CHARGE = 100;   // 突撃（一直線に走ってくる勢いのある一撃）は、素早さで見切って必ず弾く
+const DEFLECT_BLADE = 45;     // 刀・剣の太刀筋は剣技で見切りやすい（刀の将・剣兵・二刀流からの攻撃）
+const BLADE_TYPES = ['将', '剣兵', '二刀将'];
 const BRACE_TARGETS = ['剣兵', '騎兵', '将', '騎将'];   // 迎え突きが効く相手（剣・騎兵と、刀・馬の将。盾兵は盾で受けるので効かない）
 const BRACE_MULT = [0.3, 0.4];                  // 迎え突き（槍兵）: 隣に踏み込んできた敵への一撃の威力（兵士の駒 / 兵長）
 const THRUST_MULT = [[0.8, 0.5], [0.9, 0.6]];   // 突き: 縦に並んだ敵2体（手前 / 奥）
@@ -132,7 +134,7 @@ const TRAIT_HELP = {
   charge: `上下左右のどれか一方向へ曲がらずに2マス以上まっすぐ走り、その先にいる敵を攻撃すると、走ったマス数×${pct(CHARGE_BONUS_LV[0])}%（兵長 ×${pct(CHARGE_BONUS_LV[1])}%）だけ初撃の威力が上がる。奇襲の一撃なので相手の回避を無視し、命中 +${CHARGE_HIT}%（曲がると突撃にならない）。突撃になる移動先はオレンジ色で表示`,
   dual: `1回の攻撃で2回斬る（それぞれ ATK ×${pct(DUAL_MULT)}%、別々に命中判定）`,
   dash: '隣の敵の向こう側（2マス先）へ駆け抜けながら、その敵を斬る（攻撃1回分・1行動に1回）。囲みを抜けたり、後ろの敵に回り込んだりできる',
-  deflect: `攻撃が当たったとき ${DEFLECT_CHANCE}% の確率で剣で弾いてダメージ 0（突撃は素早さで見切って必ず弾く）。相手が自分の間合いにいれば反撃もする`,
+  deflect: `攻撃が当たったとき ${DEFLECT_CHANCE}% の確率で剣で弾いてダメージ 0（刀・剣の攻撃は太刀筋を読んで ${DEFLECT_BLADE}%、突撃は素早さで見切って必ず弾く）。相手が自分の間合いにいれば反撃もする`,
   scout: '視界が広い。隠密の敵も2マスまで見つけられる',
   stealth: '敵からは2マス以内（斥候からは3マス以内）まで近づかないと見えない（攻撃すると次の自分の行動まで見える）',
   assassin: '将（兵長以上）への攻撃 ×1.6、兵士の駒への攻撃 ×0.5',
@@ -836,7 +838,7 @@ function calcAttack(attacker, defender, bonus = 1, atkMult = 1) {
   // 受け流し（盾）: 一定の確率でダメージを大きく減らす
   const parry = defender.traits.includes('guard') && d(100) <= PARRY_CHANCE[lv(defender)];
   // 剣弾き（二刀流剣士）: 一定の確率で攻撃を剣で弾き、ダメージ 0
-  if (defender.traits.includes('deflect') && d(100) <= (bonus > 1 ? DEFLECT_CHARGE : DEFLECT_CHANCE)) return { hit: true, hitRate, hitRoll, evade, dmg: 0, die, crit: false, surround, deflected: true };
+  if (defender.traits.includes('deflect') && d(100) <= (bonus > 1 ? DEFLECT_CHARGE : BLADE_TYPES.includes(attacker.type) ? DEFLECT_BLADE : DEFLECT_CHANCE)) return { hit: true, hitRate, hitRoll, evade, dmg: 0, die, crit: false, surround, deflected: true };
   const dmg = Math.max(MIN_DAMAGE, Math.round(base * mult * (parry ? 1 - PARRY_CUT : 1)));
   return { hit: true, hitRate, hitRoll, evade, dmg, die, crit, surround, parry };
 }
