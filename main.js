@@ -1194,6 +1194,30 @@ function counterAttack(defender, attacker) {
  * さらに、すでに味方が張り付いている敵を囲みに行く位置を少し優先し、
  * 同じ評価のマスは少しランダムに選ぶ（毎回同じ向きに寄って列がそろうのを防ぐ）。
  */
+/** 距離 d での攻撃の強さ（命中倍率 × 威力倍率）。届かなければ 0 */
+function reachPower(u, d) {
+  if (d > effRng(u)) return 0;
+  const f = u.falloff[d] ?? u.falloff[Math.max(...Object.keys(u.falloff).map(Number))];
+  return f.hit * f.pow;
+}
+
+/**
+ * この相手と戦うのにいちばん得な距離: 自分の強さ ÷ 相手の（反撃の）強さ が最大の距離。
+ * 例: 槍が弓を相手にするときは、弓が引ききれない隣（1マス）に詰める。弓は槍の届かない3マス
+ */
+function bestVs(unit, target) {
+  if (!target) return unit.best;
+  let best = unit.best, bestScore = -1;
+  for (let d = 1; d <= effRng(unit); d++) {
+    const mine = reachPower(unit, d);
+    if (!mine) continue;
+    const theirs = reachPower(target, d);
+    const score = (theirs ? mine / theirs : 100 + mine) - Math.abs(d - unit.best) * 0.001;   // 同じなら元の得意な距離
+    if (score > bestScore) { bestScore = score; best = d; }
+  }
+  return best;
+}
+
 function advanceScorer(unit, target) {
   const enemies = seenEnemies(unit);
   const free = (x, y) => {
@@ -1204,7 +1228,7 @@ function advanceScorer(unit, target) {
   // 攻撃位置の候補: 各敵からちょうど best マスのリング上で、空いていて、他の敵にそれより近くないマス
   const ideal = [];
   const seen = new Set();
-  const b = unit.best;
+  const b = bestVs(unit, target);
   for (const e of enemies) {
     for (let dx = -b; dx <= b; dx++) {
       const r = b - Math.abs(dx);
@@ -1305,7 +1329,7 @@ function actUnit(unit) {
       target = nearestEnemy(unit);
     }
   }
-  if (!charge && !movedBefore && !holding && !unit.rooted && distance(unit, target) > unit.best) {
+  if (!charge && !movedBefore && !holding && !unit.rooted && distance(unit, target) > bestVs(unit, target)) {
     const before = unit.posText, [fx, fy] = [unit.x, unit.y];
     // 「敵を最適距離で攻撃できる空きマス」（側面・背後を含む）に近づく。後衛は前衛より前に出ない
     const moved = moveUnit(unit, unit.move, advanceScorer(unit, target));
