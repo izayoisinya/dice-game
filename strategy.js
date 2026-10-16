@@ -878,6 +878,7 @@ function renderStratBody() {
     const q = tokenSquad(sel), opts = stationOptions(sel);
     const hub = hubOf(sel);
     info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
+      ${squadDetail(sel, ui.detailOpen)}
       <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : sel.moved ? '点滅する赤枠（⚔）の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の点滅する赤枠（⚔）の敵をクリックで攻撃。'}</div>
       <div class="ap-buttons">
         ${!sel.acted ? '<button id="sm-wait">待機</button>' : ''}
@@ -887,6 +888,14 @@ function renderStratBody() {
         ${hub ? `<button id="sm-reorg">🏯 ${hub.name}で再編成</button>` : ''}
       </div>
       ${hub ? `<div class="sub">${hub.name}の近く（${HUB_RANGE}マス以内）にいるので、再編成できます${m.forts.some(f => f.owner === 'player' && distance(f, sel) <= 1) ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
+  } else if (ui.info && ui.info.startsWith('tok:')) {
+    // 見えている敵の隊の詳細
+    const e = liveTokens().find(o => o.id === ui.info.slice(4));
+    if (e && tokenVisibleTo('player', e)) {
+      const q = tokenSquad(e);
+      info = `<div><b class="nm-c">${q.name}</b>（CPU軍・${tokenKind(e)}）兵 ${tokenTroops(e)}人 ／ 移動 ${tokenMove(e)}</div>${squadDetail(e, true)}`;
+      ui.anchor = [e.x, e.y];
+    } else ui.info = null;
   } else if (ui.info) {
     info = placeInfo(ui.info);
     const f = m.forts.find(f => f.id === ui.info), b = f || m.bases[ui.info === 'base-player' ? 'player' : 'cpu'];
@@ -904,6 +913,8 @@ function renderStratBody() {
   placeStratInfo();
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
+  const det = $('strat-info').querySelector('.sq-detail');
+  if (det && sel) det.ontoggle = () => { ui.detailOpen = det.open; placeStratInfo(); };
   on('sm-basego', 'onclick', () => {
     m.phase = 'player';
     smapLog('--- ターン 1（自軍） ---', 'turn');
@@ -980,6 +991,20 @@ function placeStratInfo() {
   if (cell) placeFloat(box, stage, cell, document.querySelectorAll('#smap .scell.reach, #smap .scell.target, #smap .scell.trapmode'));
 }
 
+/** 隊の中身（隊長・配下の将・兵士の駒・位置）。open = 最初から開いておく */
+function squadDetail(t, open) {
+  const A = campaign.armies[t.side], q = tokenSquad(t);
+  const lead = memberById(A, q.leader);
+  const who = m => `${nm(m.name)}<span class="sub">（${m.kind || m.rank || m.type + '長'}）</span>`;
+  const members = q.members.map(id => memberById(A, id)).filter(m => m && !(t.side === 'cpu' && m.kind === '暗殺者'));   // 敵の暗殺者は隠れているので出さない
+  const pieces = q.pieces.map(p => `${p.type.replace('兵', '')}${p.size}`).join('　');
+  return `<details class="sq-detail" ${open ? 'open' : ''}><summary>隊の中身</summary>
+    <div>隊長: ${lead ? who(lead) : '—'}</div>
+    <div>配下: ${members.length ? members.map(who).join('・') : 'なし'}</div>
+    <div>兵士の駒: ${pieces || 'なし'}</div>
+    <div class="sub">位置 (${t.x},${t.y})　※座標は左上が (0,0)、右へ x・下へ y が増える</div></details>`;
+}
+
 /** 砦・本陣の説明 */
 function placeInfo(key) {
   const m = smap();
@@ -1047,7 +1072,7 @@ function onSmapClick(x, y) {
   ui.selected = t && t.side === 'player' ? t.id : null;
   // 砦・本陣のマス（隊がいない）をクリックしたら説明を出す
   const f = fortAt(x, y);
-  ui.info = !ui.selected ? (f ? f.id : m.bases.player.x === x && m.bases.player.y === y ? 'base-player' : cpuBaseShown() && m.bases.cpu.x === x && m.bases.cpu.y === y ? 'base-cpu' : null) : null;
+  ui.info = !ui.selected && t && t.side === 'cpu' ? `tok:${t.id}` : !ui.selected ? (f ? f.id : m.bases.player.x === x && m.bases.player.y === y ? 'base-player' : cpuBaseShown() && m.bases.cpu.x === x && m.bases.cpu.y === y ? 'base-cpu' : null) : null;
   renderStrat();
 }
 
