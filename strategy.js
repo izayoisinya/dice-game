@@ -5,9 +5,9 @@
 //   main.js より先に読み込む（関数と定数の定義だけ。画面のイベントは initStrategy で登録する）
 // ============================================================
 
-const SMAP_MIN_W = 12;
-const SMAP_MIN_H = 12;
-const SMAP_DICE = { n: 2, sides: 4 };     // 幅・高さ = 最低値 + 2d4（14〜20）
+const SMAP_MIN_W = 14;
+const SMAP_MIN_H = 14;
+const SMAP_DICE = { n: 2, sides: 4 };     // 幅・高さ = 最低値 + 2d4（16〜22）
 const TERRAIN = {
   '平地': { cost: 1 },
   '森':   { cost: 2 },
@@ -20,6 +20,7 @@ const SCOUT_VISION_MAP = 6;               // 単独の斥候の視界
 const ASSASSIN_VISION_MAP = 2;            // 単独の暗殺者の視界
 const FORT_VISION = 3;                    // 守備隊のいる砦の視界
 const SCOUT_MOVE_MAP = 6;
+const TOKEN_MOVE_MIN = 2;                 // 戦域図の隊の最低移動力（兵が多くても・統率オーバーでも）
 const ASSASSIN_MOVE_MAP = 4;
 const CPU_ATTACK_RATIO = 0.7;             // CPU は相手を囲む自軍の戦力の合計が、見積もった相手の戦力の 0.7 倍以上なら攻撃する
 const CPU_GUESS = 0.3;                     // CPU は相手の戦力を正確には知らない: 見積もりは ±30% ずれる（相手ごと・ターンごとに振る）
@@ -178,7 +179,7 @@ function tokenStrength(t) {
   return squadTroops(q) + 150 * (1 + q.members.length);
 }
 
-/** 移動力: 兵数が多いほど遅い。統率オーバーなら −1。単独の斥候・暗殺者は固定、守備隊は動かない */
+/** 移動力: 兵数が多いほど遅い（〜400人 4・〜800人 3・それ以上 2）。統率オーバーなら −1。最低 TOKEN_MOVE_MIN。単独の斥候・暗殺者は固定、守備隊は動かない */
 function tokenMove(t) {
   const kind = tokenKind(t);
   if (kind === '守備隊') return 0;
@@ -186,8 +187,9 @@ function tokenMove(t) {
   if (kind === '暗殺者') return ASSASSIN_MOVE_MAP;
   const army = campaign.armies[t.side], q = tokenSquad(t);
   const n = squadTroops(q);
-  const base = n <= 200 ? 4 : n <= 500 ? 3 : n <= 1000 ? 2 : 1;
-  return Math.max(1, base - (overCommand(army, q) ? 1 : 0));
+  // 兵数が多いほど遅い（兵士が 1d20×100 になったので段階も広げた）。どんな隊でも最低 TOKEN_MOVE_MIN は動ける
+  const base = n <= 400 ? 4 : n <= 800 ? 3 : 2;
+  return Math.max(TOKEN_MOVE_MIN, base - (overCommand(army, q) ? 1 : 0));
 }
 
 function tokenVision(t) {
