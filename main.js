@@ -377,6 +377,7 @@ for (const [name, t] of Object.entries(TYPES)) {
 }
 
 const HIT_SPREAD = 5;   // 命中率の個体差 ±5%
+const HIT_BONUS = 8;    // 全員の命中率の底上げ（回避込みで近接でも70%台が多く、2〜3回続けて外れることが多かったため）
 // 回避: 狙われた側の SPD が基準（100）より高いほど当たりにくく、低いほど当たりやすい
 // （SPD 10 ごとに 1.5%。避ける側は最大 −10%、鈍くて当たりやすい側は最大 +5%。盾兵が弓に弱くなりすぎないように）
 const EVADE_BASE_SPD = 100;
@@ -456,7 +457,7 @@ class Unit {
     this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV)) + MOVE_BONUS;
     this.actRate = st.act / tempoDiv;      // 1行動ごとに行動ゲージにたまる量
     this.gauge = (d(5) - 1) * 10;          // 初期ゲージ 0〜40（全員が同じタイミングで動かないようずらす）
-    this.hit = t.hit + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
+    this.hit = t.hit + HIT_BONUS + d(HIT_SPREAD * 2 + 1) - HIT_SPREAD - 1;   // 個体差 ±HIT_SPREAD
     this.best = t.best;
     this.falloff = t.falloff;
     this.rear = !!t.rear;
