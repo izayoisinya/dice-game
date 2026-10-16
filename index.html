@@ -119,20 +119,23 @@
       <button id="btn-start" disabled>⚔ 戦闘開始</button>
       <button id="btn-battle-close" class="hidden">🗺 戦域図に戻る</button>
     </div>
-    <div class="battle-body">
-      <div class="battle-main">
-        <div id="result" class="result hidden"></div>
-        <section id="cmd-editor" class="panel hidden"></section>
-        <div class="zoom-wrap" id="field-wrap"><div id="field" class="field"></div></div>
+    <!-- マップを画面いっぱいに。操作・ログ・部隊の一覧・凡例はマップの上に重ねる半透明の箱（戦域図と同じ） -->
+    <div class="battle-body" id="battle-stage">
+      <div class="zoom-wrap" id="field-wrap"><div id="field" class="field"></div></div>
+      <div id="result" class="result strat-float battle-result hidden"></div>
+      <section id="cmd-editor" class="panel strat-float battle-center hidden"></section>
+      <details class="strat-float strat-legend">
+        <summary>凡例</summary>
+        <div class="sub" id="field-legend"></div>
+      </details>
+      <div id="action-panel" class="panel action-panel strat-float hidden"></div>
+      <div id="battle-logbox" class="strat-float strat-logbox">
+        <div class="log-body"><div class="log-title">バトルログ</div><div id="log" class="log"></div></div>
+        <button id="battle-logtab" class="log-tab" title="ログを開く・閉じる">◀ ログ</button>
       </div>
-      <div class="battle-side">
-        <div id="action-panel" class="panel action-panel hidden"></div>
-        <details class="battle-more" open>
-          <summary>バトルログ</summary>
-          <div id="log" class="log"></div>
-        </details>
-        <details class="battle-more">
-          <summary>部隊の一覧</summary>
+      <div id="armies-box" class="strat-float armies-box closed">
+        <button id="armies-tab" class="log-tab" title="部隊の一覧を開く・閉じる">◀ 部隊</button>
+        <div class="armies-body">
           <section class="armies">
             <div class="army player">
               <h2>プレイヤー軍 <span id="player-dice" class="dice"></span></h2>
@@ -151,7 +154,7 @@
               </table>
             </div>
           </section>
-        </details>
+        </div>
       </div>
     </div>
   </div>

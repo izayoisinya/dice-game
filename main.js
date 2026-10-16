@@ -1979,7 +1979,6 @@ function renderField(acting) {
   const field = $('field');
   // 新しいマスは別の入れ物に作ってから一度に差し替える（途中で空になると、スクロール位置が先頭に戻されるため）
   const cells = document.createDocumentFragment();
-  field.style.gridTemplateColumns = `repeat(${w}, minmax(0, 1fr))`;
   const short = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '') + u.type[0];
   // 突撃になる移動先（騎兵など）と、一斉指揮の範囲
   const curU = currentUnit();
@@ -2009,8 +2008,21 @@ function renderField(acting) {
   // プレイヤー軍の視界。手動プレイでは見えない敵を描かない（オート観戦では半透明で描く）
   const eyes = state.player.units.filter(u => u.alive);
   const inSight = (x, y) => !state.fog || eyes.some(o => Math.abs(o.x - x) + Math.abs(o.y - y) <= (o.vision ?? VISION_DEFAULT));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
+  // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。戦域図と同じ
+  const fw = $('field-wrap');
+  const fit = Math.min((fw.clientWidth - 12) / (w + 2), (fw.clientHeight - 12) / (h + 2));
+  fieldPad.x = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientWidth - 12) / fit - w) / 2) + 1) : 0;
+  fieldPad.y = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientHeight - 12) / fit - h) / 2) + 1) : 0;
+  field.style.gridTemplateColumns = `repeat(${w + fieldPad.x * 2}, minmax(0, 1fr))`;
+  for (let y = -fieldPad.y; y < h + fieldPad.y; y++) {
+    for (let x = -fieldPad.x; x < w + fieldPad.x; x++) {
+      if (x < 0 || y < 0 || x >= w || y >= h) {
+        const oob = document.createElement('div');
+        oob.className = 'cell oob';
+        oob.style.setProperty('--far', Math.min(6, Math.max(-x, -y, x - w + 1, y - h + 1)));
+        cells.appendChild(oob);
+        continue;
+      }
       let u = unitAt(x, y);
       const ghost = u && u.side === 'cpu' && !visibleTo('player', u);
       if (ghost && state.mode === 'manual') u = null;
@@ -2039,11 +2051,18 @@ function renderField(acting) {
   }
   field.replaceChildren(cells);
   applyZoom('field');
-  const legend = '★将=総大将 ☆将=副将 ◆兵長 / 剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者 / 青=プレイヤー 赤=CPU / 点滅する赤枠⚔=攻撃できる敵 / 点線＋斜線=移動して攻撃が届く範囲' +
-    (state.fog ? ' / 暗いマス=視界の外' : '');
+  // 新しい戦場を開いたときは、マップが真ん中に来るようにスクロールしておく
+  if (fieldCentered !== state.map && fw.clientWidth) {
+    fw.scrollLeft = (fw.scrollWidth - fw.clientWidth) / 2;
+    fw.scrollTop = (fw.scrollHeight - fw.clientHeight) / 2;
+    fieldCentered = state.map;
+  }
+  $('field-legend').innerHTML = '★将=総大将 ☆将=副将 ◆兵長<br>剣 槍 弓 盾 騎 斥=斥候 暗=暗殺者<br>青=プレイヤー 赤=CPU<br>点滅する赤枠⚔=攻撃できる敵<br>点線＋斜線=移動して攻撃が届く範囲' +
+    (state.fog ? '<br>暗いマス=視界の外' : '');
+  const legend = '';
   $('turn-label').textContent =
     `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
-    (state.turn ? `　ターン ${state.turn}` : '') + `　${legend}`;
+    (state.turn ? `　ターン ${state.turn}` : '') + legend;
 }
 
 /** 手動プレイの操作パネル */
@@ -2137,13 +2156,26 @@ function render(acting = null) {
   const cur = currentUnit();
   if (cur) acting = cur;
   // 描き直しの途中で中身が一瞬空になり、スクロール位置が先頭に戻されるので、覚えておいて戻す
-  const scrollers = [...document.querySelectorAll('#battle .battle-body, #battle .battle-side, #field-wrap')];
+  const scrollers = [...document.querySelectorAll('#field-wrap, #log')];
   const pos = scrollers.map(el => [el.scrollTop, el.scrollLeft]);
+  const wasCentered = fieldCentered === state.map;   // 真ん中に合わせた直後はスクロールを戻さない
   renderArmy(state.player, 'player', acting);
   renderArmy(state.cpu, 'cpu', acting);
   renderField(acting);
   renderActionPanel();
-  scrollers.forEach((el, i) => { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; });
+  if (wasCentered) scrollers.forEach((el, i) => { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; });
+  placeActionPanel();
+}
+
+/** 操作パネルを、行動中の駒の近く（移動・攻撃できるマスにかぶらない所）に置く。布陣のときは右上 */
+function placeActionPanel() {
+  const panel = $('action-panel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const cur = currentUnit();
+  const cell = cur && !deployMode() ? document.querySelector(`#field .cell[data-x="${cur.x}"][data-y="${cur.y}"]`) : null;
+  panel.classList.toggle('corner', !cell);
+  if (!cell) { panel.style.left = panel.style.top = ''; return; }
+  placeFloat(panel, $('battle-stage'), cell, document.querySelectorAll('#field .cell.reach, #field .cell.target, #field .cell.charge'));
 }
 
 // ------------------------------------------------------------
@@ -2155,6 +2187,8 @@ function render(acting = null) {
 // ------------------------------------------------------------
 
 const zoom = { field: 1, smap: 1 };
+const fieldPad = { x: 0, y: 0 };   // 局地戦のマップの外側に描く段数（戦域図は ui.pad）
+let fieldCentered = null;          // 真ん中に合わせ済みの戦場
 const ZOOM_MIN = 1, ZOOM_MAX = 4;
 
 function applyZoom(kind) {
@@ -2164,10 +2198,11 @@ function applyZoom(kind) {
   // 戦域図の枠は中身に合わせて伸びる（max-height だけ決まっている）ので、今の高さではなく上限の高さに合わせる
   const maxH = parseFloat(getComputedStyle(wrap).maxHeight);
   const availH = Math.max(160, Number.isFinite(maxH) ? maxH : (wrap.clientHeight || window.innerHeight * 0.6));
-  const edge = kind === 'smap' ? 2 : 0;   // 戦域図はマップの外側1段も入れて収める
+  const edge = 2;   // マップの外側1段も入れて収める
   const fit = Math.min((wrap.clientWidth - 12) / (map.w + edge), (availH - 12) / (map.h + edge));   // 全体が収まるマスの大きさ
   const cell = Math.max(8, fit * zoom[kind]);
-  const cols = map.w + (kind === 'smap' && typeof ui !== 'undefined' && ui.pad ? ui.pad.x * 2 : 0);   // 戦域図はマップの外側の分も
+  const pad = kind === 'smap' ? (typeof ui !== 'undefined' && ui.pad) : fieldPad;
+  const cols = map.w + (pad ? pad.x * 2 : 0);   // マップの外側の分も
   el.style.width = `${Math.floor(cell * cols)}px`;
   el.style.maxWidth = 'none';
   el.style.setProperty('--cell', `${cell}px`);
@@ -2263,7 +2298,7 @@ function setBattleOpen(open) {
   $('battle').classList.toggle('hidden', !open);
   document.body.classList.toggle('battle-open', open);
   updateButtons();
-  if (open) { fitTopbar(); requestAnimationFrame(() => applyZoom('field')); }
+  if (open) { fitTopbar(); requestAnimationFrame(() => (state.player ? render() : applyZoom('field'))); }   // 画面の大きさでマップの外側の段数が決まるので描き直す
 }
 
 /** 局地戦の画面の「戻る」ボタン: 決着後は結果を戦域図に反映して閉じる。戦闘中はマップを見るだけ */
@@ -3216,6 +3251,7 @@ window.addEventListener('resize', () => {
   fitPool();
   applyZoom('field');
   if (campaign.smap && !$('view-map').classList.contains('hidden')) renderStrat(); else applyZoom('smap');
+  if (state.player && !$('battle').classList.contains('hidden')) render();
   if (typeof placeStratInfo === 'function') placeStratInfo();
 });
 if (typeof ResizeObserver === 'function') new ResizeObserver(fitTopbar).observe(document.querySelector('.topbar'));
@@ -3225,15 +3261,30 @@ initZoom('smap');
 { // 戦域図のログの出し入れ（開け閉めは覚えておく）
   const box = $('smap-logbox'), tab = $('smap-logtab');
   const set = closed => { box.classList.toggle('closed', closed); tab.textContent = closed ? '▶ ログ' : '◀ ログ'; };
-  try { set(localStorage.getItem('smapLogClosed') === '1'); } catch { set(false); }
+  let saved = null;
+  try { saved = localStorage.getItem('smapLogClosed'); } catch {}
+  set(saved == null ? window.innerWidth < 600 : saved === '1');   // スマホ縦では最初は閉じておく
   tab.onclick = () => { const c = !box.classList.contains('closed'); set(c); try { localStorage.setItem('smapLogClosed', c ? '1' : '0'); } catch {} };
 }
 $('smap-wrap').addEventListener('scroll', () => { if (typeof placeStratInfo === 'function') placeStratInfo(); }, { passive: true });   // 操作の箱を選んだマスに付いていかせる
 
 $('field').addEventListener('click', e => {
   const cell = e.target.closest('.cell');
-  if (cell) onCellClick(Number(cell.dataset.x), Number(cell.dataset.y));
+  if (cell && cell.dataset.x != null) onCellClick(Number(cell.dataset.x), Number(cell.dataset.y));   // マップの外のマスは無視
 });
+$('field-wrap').addEventListener('scroll', placeActionPanel, { passive: true });
+// 局地戦のログ・部隊の一覧の出し入れ（開け閉めは覚えておく）
+for (const [boxId, tabId, key, label, closedDefault, openArrow, closedArrow] of [
+  ['battle-logbox', 'battle-logtab', 'battleLogClosed', 'ログ', window.innerWidth < 600, '◀', '▶'],   // スマホ縦では最初は閉じておく
+  ['armies-box', 'armies-tab', 'armiesClosed', '部隊', true, '▶', '◀'],
+]) {
+  const box = $(boxId), tab = $(tabId);
+  const set = closed => { box.classList.toggle('closed', closed); tab.textContent = `${closed ? closedArrow : openArrow} ${label}`; };
+  let saved = null;
+  try { saved = localStorage.getItem(key); } catch {}
+  set(saved == null ? closedDefault : saved === '1');
+  tab.onclick = () => { const c = !box.classList.contains('closed'); set(c); try { localStorage.setItem(key, c ? '1' : '0'); } catch {} };
+}
 
 for (const id of ['advance-player', 'advance-cpu']) $(id).addEventListener('change', saveGame);
 $('fog').addEventListener('change', () => {

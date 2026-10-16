@@ -157,6 +157,8 @@ button.go { background: #3f8a4f; }
 .strat-hud .ap-buttons { margin: 0; }
 .strat-hud.hidden { display: none; }
 /* ログ: 左端から出し入れする（閉じると右側のつまみだけ残る） */
+.strat-logbox, .armies-box { z-index: 8 !important; }
+body.battle-open .side-toggle { display: none !important; }   /* 編成画面のメニューのつまみは局地戦の上に出さない */   /* つまみは操作の箱より手前（いつでも押せる） */
 .strat-logbox { left: 0; bottom: 8px; padding: 0; display: flex; align-items: stretch; border-left: none; border-radius: 0 8px 8px 0;
   transition: transform 0.2s ease; max-width: calc(100% - 8px); }
 .strat-logbox .log-body { width: min(340px, calc(100vw - 70px)); padding: 6px 8px; min-width: 0; }
@@ -268,15 +270,25 @@ main { padding: 12px; }
 .battle-bar small { color: #999; font-size: 0.75rem; }
 .battle-bar .spacer { flex: 1; }
 .battle-bar button { padding: 6px 12px; font-size: 0.95rem; }
-.battle-body { flex: 1; overflow-y: auto; padding: 8px 12px 16px; }
-.battle-body .field { margin: 0 auto; }
-.battle-body .result { margin: 0 0 8px; }
-.battle-more { margin-top: 10px; }
-.battle-more > summary { cursor: pointer; color: #ccc; padding: 4px 0; }
-.battle .action-panel {
-  position: relative; top: auto; margin: 0; border-radius: 0;
-  max-height: 40dvh; overflow-y: auto; border: none; border-top: 2px solid #4a6fa5;
-}
+/* 局地戦: マップを画面いっぱいにし、ほかはマップの上に重ねる（戦域図と同じ） */
+.battle-body { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.battle-body #field-wrap { position: absolute; inset: 0; border-radius: 0; }
+.battle-body .field { margin: 0 auto; border-radius: 0; }
+.battle .action-panel { position: absolute; margin: 0; width: min(380px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; z-index: 7; border: 1px solid #4a6fa5; }
+.battle .action-panel.corner { top: 8px; right: 8px; left: auto !important; }
+.battle-result { top: 8px; left: 50%; transform: translateX(-50%); margin: 0; z-index: 8; width: max-content; max-width: calc(100% - 16px); }
+.battle-result.hidden { display: none; }
+.battle-center { left: 50%; top: 8px; transform: translateX(-50%); margin: 0; width: min(720px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; z-index: 9; background: rgba(20, 22, 27, 0.96); }
+.battle-center.hidden { display: none; }
+#battle-logbox .log { height: auto; max-height: 30svh; background: transparent; padding: 4px 0 0; font-size: 0.8rem; }
+/* 部隊の一覧: 右端から出し入れ（閉じると左側のつまみだけ残る） */
+.armies-box { right: 0; top: 56px; padding: 0; display: flex; align-items: stretch; border-right: none; border-radius: 8px 0 0 8px;
+  transition: transform 0.2s ease; max-width: calc(100% - 8px); max-height: calc(100% - 64px); }
+.armies-box .log-tab { writing-mode: vertical-rl; padding: 8px 4px; width: 30px; border-radius: 8px 0 0 8px; background: rgba(60, 70, 90, 0.85); font-size: 0.8rem; letter-spacing: 2px; flex-shrink: 0; }
+.armies-box .armies-body { width: min(560px, calc(100vw - 60px)); overflow: auto; padding: 6px 8px; }
+.armies-box .armies { grid-template-columns: 1fr; }
+.armies-box.closed { transform: translateX(calc(100% - 30px)); }
+.cell.oob { pointer-events: none; background: #2a3326; filter: brightness(calc(0.5 - var(--far, 1) * 0.05)) saturate(0.6); }
 @media (max-width: 600px) {
   .topbar h1 { font-size: 1rem; }
   .tab, .topbar .controls > button, .settings > summary { padding: 5px 8px; font-size: 0.85rem; }
@@ -291,21 +303,6 @@ main { padding: 12px; }
 
 .field, .smap { max-width: none; }
 
-/* 局地戦の画面: スマホは縦に積む（操作パネルは下に貼り付け）、PC・タブレットは 戦場｜操作・ログ の2列 */
-.battle-body { display: flex; flex-direction: column; }
-#field-wrap { height: 58svh; }
-.battle-side .action-panel { position: sticky; bottom: 0; z-index: 2; }
-.battle-side .log { height: 220px; }
-@media (min-width: 900px) {
-  .battle-body { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 12px; overflow: hidden; padding-bottom: 8px; }
-  .battle-main { display: flex; flex-direction: column; min-height: 0; }
-  #field-wrap { flex: 1; height: auto; min-height: 0; }
-  .battle-side { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-  .battle-side > * { flex-shrink: 0; }   /* ログ・部隊の一覧を開いても操作パネルが縮まない（はみ出た分は列ごとスクロール） */
-  .battle-side .action-panel { position: static; max-height: none; border: 1px solid #4a6fa5; border-radius: 8px; }
-  .battle-side .log { height: 40dvh; }
-  .battle-side .armies { grid-template-columns: 1fr; }
-}
 
 /* タイトル */
 .title-box { max-width: 560px; margin: 8vh auto 0; text-align: center; }
