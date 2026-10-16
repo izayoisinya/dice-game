@@ -285,7 +285,9 @@ main { padding: 12px; }
 .armies-box { right: 0; top: 56px; padding: 0; display: flex; align-items: stretch; border-right: none; border-radius: 8px 0 0 8px;
   transition: transform 0.2s ease; max-width: calc(100% - 8px); max-height: calc(100% - 64px); }
 .armies-box .log-tab { writing-mode: vertical-rl; padding: 8px 4px; width: 30px; border-radius: 8px 0 0 8px; background: rgba(60, 70, 90, 0.85); font-size: 0.8rem; letter-spacing: 2px; flex-shrink: 0; }
-.armies-box .armies-body { width: min(560px, calc(100vw - 60px)); overflow: auto; padding: 6px 8px; }
+.armies-box .armies-body { width: min(560px, calc(100vw - 60px)); max-width: calc(100vw - 60px); overflow: auto; padding: 6px 8px; box-sizing: border-box; }
+.armies-box.wide .armies-body { width: max-content !important; }   /* 全部見る: 表が全部収まる幅（画面まで） */
+.armies-head { position: sticky; left: 0; display: flex; justify-content: flex-end; }
 .armies-box .armies { grid-template-columns: 1fr; }
 .armies-box.closed { transform: translateX(calc(100% - 30px)); }
 .cell.oob { pointer-events: none; background: #2a3326; filter: brightness(calc(0.5 - var(--far, 1) * 0.05)) saturate(0.6); }

@@ -2161,6 +2161,7 @@ function render(acting = null) {
   const wasCentered = fieldCentered === state.map;   // 真ん中に合わせた直後はスクロールを戻さない
   renderArmy(state.player, 'player', acting);
   renderArmy(state.cpu, 'cpu', acting);
+  fitArmies();
   renderField(acting);
   renderActionPanel();
   if (wasCentered) scrollers.forEach((el, i) => { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; });
@@ -3285,6 +3286,22 @@ for (const [boxId, tabId, key, label, closedDefault, openArrow, closedArrow] of 
   set(saved == null ? closedDefault : saved === '1');
   tab.onclick = () => { const c = !box.classList.contains('closed'); set(c); try { localStorage.setItem(key, c ? '1' : '0'); } catch {} };
 }
+// 部隊の一覧の幅: ふだんは HP の列まで、「全部見る」で表が全部収まる幅
+function fitArmies() {
+  const box = $('armies-box'), body = box.querySelector('.armies-body'), th = body.querySelector('th.hp');
+  $('armies-wide').textContent = box.classList.contains('wide') ? '⇤ HPまで' : '⇔ 全部見る';
+  if (box.classList.contains('wide') || !th) { body.style.width = ''; return; }
+  body.style.width = '';
+  const right = th.getBoundingClientRect().right - body.getBoundingClientRect().left + body.scrollLeft;
+  body.style.width = `${Math.ceil(right + 12)}px`;
+}
+try { $('armies-box').classList.toggle('wide', localStorage.getItem('armiesWide') === '1'); } catch {}
+$('armies-wide').onclick = () => {
+  const w = !$('armies-box').classList.contains('wide');
+  $('armies-box').classList.toggle('wide', w);
+  try { localStorage.setItem('armiesWide', w ? '1' : '0'); } catch {}
+  fitArmies();
+};
 
 for (const id of ['advance-player', 'advance-cpu']) $(id).addEventListener('change', saveGame);
 $('fog').addEventListener('change', () => {
