@@ -2228,8 +2228,13 @@ function initZoom(kind) {
   wrap.addEventListener('wheel', e => {
     if (!e.ctrlKey) return;   // Ctrl（トラックパッドのピンチ）+ ホイール
     e.preventDefault();
-    setZoom(kind, zoom[kind] * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
+    setZoom(kind, zoom[kind] * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);   // 指の動きの量に合わせてなめらかに
   }, { passive: false });
+  // Safari のトラックパッドのピンチ（gesture イベント）。タッチのピンチは下の pointer で扱うので、そのときは使わない
+  let gz = null;
+  wrap.addEventListener('gesturestart', e => { e.preventDefault(); gz = pts.size >= 2 ? null : zoom[kind]; }, { passive: false });
+  wrap.addEventListener('gesturechange', e => { e.preventDefault(); if (gz != null && pts.size < 2) setZoom(kind, gz * e.scale, e.clientX, e.clientY); }, { passive: false });
+  wrap.addEventListener('gestureend', e => { e.preventDefault(); gz = null; }, { passive: false });
   // 指の操作は自前で扱う（touch-action: none）。1本指 = スクロール、2本指 = ピンチで拡大縮小しながら移動。
   // ブラウザのスクロールに任せると、2本目の指を置いた時点でブラウザがスクロールを始めてピンチが途切れるため
   const pts = new Map();          // pointerId → 直前の位置
@@ -3259,6 +3264,10 @@ if (typeof ResizeObserver === 'function') new ResizeObserver(fitTopbar).observe(
 fitTopbar();
 initZoom('field');
 initZoom('smap');
+// 画面全体の拡大を止める（マップの外でのピンチ・Ctrl+ホイール・Safari のジェスチャー）。マップの上ではマップの拡大になる
+document.addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 { // 戦域図のログの出し入れ（開け閉めは覚えておく）
   const box = $('smap-logbox'), tab = $('smap-logtab');
   const set = closed => { box.classList.toggle('closed', closed); tab.textContent = closed ? '▶ ログ' : '◀ ログ'; };
