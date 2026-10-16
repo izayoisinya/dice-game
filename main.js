@@ -89,7 +89,7 @@ const TRAITS = {
   pursuit: { name: '追撃',  cost: 0 },   // 剣兵: 敵を倒すと行動ゲージがたまる   // 敵と味方の間（同じ縦・横の直線上）にいると、その攻撃を代わりに受ける
   charge: { name: '突撃',   cost: 20 },  // 一直線に走ってそのまま攻撃すると、走ったマス数に応じて威力が上がる
   scout:  { name: '索敵',   cost: 100 }, // 視界が広い。隠密の敵も2マスまで見つけられる
-  stealth: { name: '隠密',  cost: 50 },  // 敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで姿が見える）
+  stealth: { name: '隠密',  cost: 50 },  // 敵からは2マス（斥候は3マス）まで近づかないと見えない（攻撃すると次の自分の行動まで姿が見える）
   assassin: { name: '暗殺', cost: 0 },
   dual:   { name: '二刀流', cost: 0 },       // 二刀流剣士: 1回の攻撃で2回斬る
   dash:   { name: 'すれ違い斬り', cost: 0 }, // 二刀流剣士: 隣の敵の向こうへ駆け抜けながら斬る
@@ -133,7 +133,7 @@ const TRAIT_HELP = {
   dash: '隣の敵の向こう側（2マス先）へ駆け抜けながら、その敵を斬る（攻撃1回分・1行動に1回）。囲みを抜けたり、後ろの敵に回り込んだりできる',
   deflect: `攻撃が当たったとき ${DEFLECT_CHANCE}% の確率で剣で弾いてダメージ 0。相手が自分の間合いにいれば反撃もする`,
   scout: '視界が広い。隠密の敵も2マスまで見つけられる',
-  stealth: '敵からは隣のマスまで近づかないと見えない（攻撃すると次の自分の行動まで見える）',
+  stealth: '敵からは2マス以内（斥候からは3マス以内）まで近づかないと見えない（攻撃すると次の自分の行動まで見える）',
   assassin: '将（兵長以上）への攻撃 ×1.6、兵士の駒への攻撃 ×0.5',
 };
 const CHARGE_MIN = 2;         // 突撃になる最低直進マス数
@@ -602,11 +602,12 @@ function alliesOf(unit) {
 }
 
 /** その陣営から敵ユニット e が見えているか（味方の誰かの視界に入っているか） */
+const STEALTH_SPOT = { base: 2, scout: 3 };   // 隠密の敵が見える距離（ふつう / 斥候）。以前は 1 / 2 で、隣にいないと気づかなかった
 function visibleTo(side, e) {
   if (!state.fog || e.revealed) return true;
   const stealth = e.traits.includes('stealth');
   return state[side].units.some(o => o.alive &&
-    distance(o, e) <= (stealth ? (o.traits.includes('scout') ? 2 : 1) : (o.vision ?? VISION_DEFAULT)));
+    distance(o, e) <= (stealth ? (o.traits.includes('scout') ? STEALTH_SPOT.scout : STEALTH_SPOT.base) : (o.vision ?? VISION_DEFAULT)));
 }
 
 /** 見えている敵（狙える敵） */
@@ -1444,9 +1445,9 @@ function assassinAct(unit) {
     const gs = seenEnemies(unit).filter(isGeneral);
     return gs.find(isLeader) || gs.sort((a, b) => distance(unit, a) - distance(unit, b))[0] || null;
   };
-  // 兵長以下には近づかない（見つかりにくい間合い = 斥候なら3マス、ほかは2マス以上を保つ）
+  // 兵長以下には近づかない（見つからない間合い = 見える距離 + 1 以上を保つ）
   const exposure = p => seenEnemies(unit).filter(e => !isGeneral(e))
-    .reduce((sum, e) => sum + Math.max(0, (e.traits.includes('scout') ? 3 : 2) - distance(p, e)), 0);
+    .reduce((sum, e) => sum + Math.max(0, (e.traits.includes('scout') ? STEALTH_SPOT.scout : STEALTH_SPOT.base) + 1 - distance(p, e)), 0);
   let target = prey();
   if (!target || distance(unit, target) > effRng(unit)) {
     // 将が見えなければ、最後に将を見た場所 → ふつうの索敵の地点

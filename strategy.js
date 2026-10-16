@@ -219,7 +219,7 @@ function tokenVisibleTo(side, t) {
   if (t.side === side || !state.fog) return true;
   const mine = liveTokens().filter(o => o.side === side);
   const forts = smap().forts.filter(f => f.owner === side);
-  if (tokenKind(t) === '暗殺者') return mine.some(o => distance(o, t) <= (tokenKind(o) === '斥候' ? 2 : 1)) || forts.some(f => distance(f, t) <= 1);
+  if (tokenKind(t) === '暗殺者') return mine.some(o => distance(o, t) <= (tokenKind(o) === '斥候' ? STEALTH_SPOT.scout : STEALTH_SPOT.base)) || forts.some(f => distance(f, t) <= STEALTH_SPOT.base);
   return mine.some(o => distance(o, t) <= tokenVision(o)) || forts.some(f => distance(f, t) <= FORT_VISION);
 }
 
@@ -670,7 +670,7 @@ function endPlayerTurn() {
   if (m.phase !== 'player' || m.battle) return;
   ui.selected = null;
   m.phase = 'cpu';
-  for (const t of m.tokens) t.acted = false;
+  for (const t of m.tokens) { t.acted = false; t.moved = false; }
   m.cpuQueue = m.tokens.filter(t => t.side === 'cpu').map(t => t.id);
   smapLog(`--- ターン ${m.turn}（CPU軍） ---`, 'turn');
   renderStrat();
@@ -689,7 +689,7 @@ function cpuRun() {
   }
   m.phase = 'player';
   m.turn++;
-  for (const t of m.tokens) t.acted = false;
+  for (const t of m.tokens) { t.acted = false; t.moved = false; }
   smapLog(`--- ターン ${m.turn}（自軍） ---`, 'turn');
   updateTrapKnowledge();
   saveCampaign();
@@ -798,7 +798,7 @@ function renderStratBody() {
   const sel = liveTokens().find(t => t.id === ui.selected);
   const myTurn = m.phase === 'player' && !m.battle;
   if (!sel || sel.acted || !myTurn) ui.mode = null;
-  const reach = new Set(sel && myTurn && !sel.acted && !ui.moved && !ui.mode ? tokenReach(sel).map(([x, y]) => `${x},${y}`) : []);
+  const reach = new Set(sel && myTurn && !sel.acted && !sel.moved && !ui.mode ? tokenReach(sel).map(([x, y]) => `${x},${y}`) : []);
   const modeCells = new Set(!sel || !ui.mode ? [] : (ui.mode === 'trap' ? trapCells(sel) : disarmCells(sel)).map(([x, y]) => `${x},${y}`));
   const targets = new Set(sel && myTurn && !sel.acted ? tokenTargets(sel).map(o => o.id) : []);
   const grid = $('smap');
@@ -878,7 +878,7 @@ function renderStratBody() {
     const q = tokenSquad(sel), opts = stationOptions(sel);
     const hub = hubOf(sel);
     info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
-      <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : ui.moved ? '点滅する赤枠（⚔）の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の点滅する赤枠（⚔）の敵をクリックで攻撃。'}</div>
+      <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : sel.moved ? '点滅する赤枠（⚔）の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の点滅する赤枠（⚔）の敵をクリックで攻撃。'}</div>
       <div class="ap-buttons">
         ${!sel.acted ? '<button id="sm-wait">待機</button>' : ''}
         ${!sel.acted && hasScout(sel) ? `<button id="sm-trap" class="${ui.mode === 'trap' ? 'skill' : ''}" ${trapCells(sel).length ? '' : 'disabled'}>🪤 罠を仕掛ける（残り${trapsLeft('player')}）</button>` : ''}
@@ -943,28 +943,41 @@ function renderStratBody() {
   });
 }
 
-/** 操作の箱を、選んだマスの近く（右、入らなければ左）に置く。マップのスクロール・拡大でも付いていく */
+/**
+ * 浮かぶ箱を、目印のマスの近くに置く。移動・攻撃できるマス（highlight）にはかぶらないよう、
+ * それらをまとめた範囲の 右 → 左 → 下 → 上 に置き、どこにも入らなければ目印から遠い隅に置く
+ */
+function placeFloat(box, stage, cell, highlight) {
+  const S = stage.getBoundingClientRect(), C = cell.getBoundingClientRect();
+  const w = box.offsetWidth, h = box.offsetHeight, gap = 8;
+  // 目印と光っているマスをまとめた範囲（ステージの座標）
+  let [l, t, r, b] = [C.left, C.top, C.right, C.bottom];
+  for (const el of highlight) { const R = el.getBoundingClientRect(); l = Math.min(l, R.left); t = Math.min(t, R.top); r = Math.max(r, R.right); b = Math.max(b, R.bottom); }
+  [l, t, r, b] = [l - S.left, t - S.top, r - S.left, b - S.top];
+  const cx = C.left - S.left + C.width / 2, cy = C.top - S.top + C.height / 2;
+  const clampX = v => Math.max(gap, Math.min(S.width - w - gap, v)), clampY = v => Math.max(gap, Math.min(S.height - h - gap, v));
+  const tries = [
+    [r + gap, clampY(cy - h / 2), r + gap + w <= S.width - gap],
+    [l - gap - w, clampY(cy - h / 2), l - gap - w >= gap],
+    [clampX(cx - w / 2), b + gap, b + gap + h <= S.height - gap],
+    [clampX(cx - w / 2), t - gap - h, t - gap - h >= gap],
+  ];
+  let [left, top] = (tries.find(x => x[2]) || [
+    cx < S.width / 2 ? S.width - w - gap : gap,          // 入らなければ、目印と反対側の隅
+    cy < S.height / 2 ? S.height - h - gap : gap,
+  ]);
+  box.style.left = `${Math.round(clampX(left))}px`;
+  box.style.top = `${Math.round(clampY(top))}px`;
+}
+
+/** 戦域図の操作の箱を置く。マップのスクロール・拡大でも付いていく */
 function placeStratInfo() {
   const box = $('strat-info'), stage = $('strat-stage');
   if (!box || box.classList.contains('hidden')) return;
   box.classList.toggle('center', ui.anchor === 'center');
   if (!Array.isArray(ui.anchor)) { box.style.left = box.style.top = ''; return; }
   const cell = document.querySelector(`#smap .scell[data-x="${ui.anchor[0]}"][data-y="${ui.anchor[1]}"]`);
-  if (!cell) return;
-  const S = stage.getBoundingClientRect(), C = cell.getBoundingClientRect();
-  const w = box.offsetWidth, h = box.offsetHeight, gap = 8;
-  const clampX = v => Math.max(gap, Math.min(S.width - w - gap, v)), clampY = v => Math.max(gap, Math.min(S.height - h - gap, v));
-  let left, top;
-  if (C.right - S.left + gap + w <= S.width - gap) [left, top] = [C.right - S.left + gap, clampY(C.top - S.top - 10)];   // 右
-  else if (C.left - S.left - gap - w >= gap) [left, top] = [C.left - S.left - gap - w, clampY(C.top - S.top - 10)];   // 左
-  else {
-    // 横に入らない（縦長の画面）: マスの下、入らなければ上。マスにかぶらないように
-    left = clampX(C.left - S.left + C.width / 2 - w / 2);
-    const below = C.bottom - S.top + gap, above = C.top - S.top - gap - h;
-    top = below + h <= S.height - gap ? below : above >= gap ? above : (S.height - h - gap);
-  }
-  box.style.left = `${Math.round(left)}px`;
-  box.style.top = `${Math.round(top)}px`;
+  if (cell) placeFloat(box, stage, cell, document.querySelectorAll('#smap .scell.reach, #smap .scell.target, #smap .scell.trapmode'));
 }
 
 /** 砦・本陣の説明 */
@@ -1015,9 +1028,10 @@ function onSmapClick(x, y) {
     return;
   }
   // 移動
-  if (sel && !t && !sel.acted && !ui.moved && tokenReach(sel).some(([cx, cy]) => cx === x && cy === y)) {
+  if (sel && !t && !sel.acted && !sel.moved && tokenReach(sel).some(([cx, cy]) => cx === x && cy === y)) {
     moveToken(sel, x, y);
     ui.moved = true;
+    sel.moved = true;   // このターンはもう動けない（選び直しても）
     if (sel.trapped) sel.trapped = false;   // 罠にかかった隊は springTrap で行動済み
     if (sel.acted || (!tokenTargets(sel).length && !stationOptions(sel).length && !trapCells(sel).length && !disarmCells(sel).length)) {
       sel.acted = true; ui.selected = null; ui.moved = false;
