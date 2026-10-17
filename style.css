@@ -171,6 +171,9 @@ body.battle-open .side-toggle { display: none !important; }   /* 編成画面の
 .strat-info { width: min(340px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; z-index: 7; border-color: #4a6fa5; }
 .strat-info.center { left: 50% !important; top: 8px !important; transform: translateX(-50%); width: min(720px, calc(100% - 16px)); }
 .strat-info.hidden { display: none; }
+.sq-detail { display: block; width: 100%; }   /* Safari で開いたときに見出しと中身が横並びにならないように */
+.sq-detail > summary { display: list-item; cursor: pointer; color: #9fb7d9; }
+.sq-detail > div { display: block; }
 .strat-info .ap-close { position: absolute; top: 4px; right: 4px; padding: 0 8px; background: #3a3f4a; }
 .strat-info > :nth-child(2) { padding-right: 28px; }   /* ✕ と重ならないように */
 .strat-info.center { background: rgba(20, 22, 27, 0.96); }

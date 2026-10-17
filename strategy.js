@@ -523,8 +523,8 @@ function renderReorg() {
   const group = hubSquads(hub, 'player');
   if (!group.length) { ui.reorg = null; return ''; }
   const atBase = hub.kind === 'base';
-  const desc = m => m.kind ? `${m.name}（${m.kind}）` : `${m.name}（${m.rank || m.type + '長'}）`;
-  const dests = (q, extra = '') => `<option value="">移す…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${o.name}</option>`).join('')}${atBase ? '<option value="__pool">→ 予備</option>' : ''}${extra}`;
+  const desc = m => m.kind ? `${nm(m.name)}（${m.kind}）` : `${nm(m.name)}（${m.rank || m.type + '長'}）`;
+  const dests = (q, extra = '') => `<option value="">移す…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${nm(o.name)}</option>`).join('')}${atBase ? '<option value="__pool">→ 予備</option>' : ''}${extra}`;
   const rows = group.map(q => {
     const lead = memberById(army, q.leader);
     const pieces = q.pieces.map((p, i) => `<span class="chip">${p.type}${p.size}
@@ -533,14 +533,14 @@ function renderReorg() {
       <select class="ro" data-op="member" data-from="${q.id}" data-id="${id}">${dests(q)}</select>
       ${!m.kind ? `<button class="small ro-btn" data-op="split" data-from="${q.id}" data-id="${id}">新しい隊に</button>` : ''}</span>`; }).join('') || '<span class="sub">なし</span>';
     const merge = q.name !== '本隊' && group.length > 1   // 守備隊も隊ごと合流できる（砦の守りを解いて、副将がほかの隊に戻る）
-      ? `<select class="ro" data-op="merge" data-from="${q.id}"><option value="">隊ごと合流…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${o.name}</option>`).join('')}</select>` : '';
+      ? `<select class="ro" data-op="merge" data-from="${q.id}"><option value="">隊ごと合流…</option>${group.filter(o => o !== q).map(o => `<option value="${o.id}">→ ${nm(o.name)}</option>`).join('')}</select>` : '';
     const add = atBase ? `<div class="ro-add">予備から:
       <select data-role="ro-type">${TYPE_NAMES.map(t => `<option>${t}</option>`).join('')}</select>
       <input type="number" data-role="ro-size" value="${PIECE_DEFAULT}" step="10" min="${MIN_PIECE}">人
       <button class="small ro-btn" data-op="addpiece" data-to="${q.id}">駒を足す</button>
       <select class="ro" data-op="addmember" data-to="${q.id}"><option value="">将などを入れる…</option>${
         [...army.generals.filter(g => g.rank === '副将'), ...army.sergeants, ...army.specials].filter(m => !squadOf(army, m.id)).map(m => `<option value="${m.id}">${desc(m)}</option>`).join('')}</select></div>` : '';
-    return `<div class="squad"><div class="sq-head"><b>${q.name}</b>（${squadKind(army, q)}）隊長 ${desc(lead)} ／ 率いる人数 ${squadUsed(army, q)}/${squadMenCap(army, q)}人分 ／ 駒 ${q.pieces.length}/${squadCap(army, q)} ／ 兵 ${squadTroops(q)}人 ${merge}</div>
+    return `<div class="squad"><div class="sq-head"><b>${nm(q.name)}</b>（${squadKind(army, q)}）隊長 ${desc(lead)} ／ 率いる人数 ${squadUsed(army, q)}/${squadMenCap(army, q)}人分 ／ 駒 ${q.pieces.length}/${squadCap(army, q)} ／ 兵 ${squadTroops(q)}人 ${merge}</div>
       <div>配下: ${members}</div><div>兵士の駒: ${pieces}</div>${add}</div>`;
   }).join('');
   return `<div class="reorg"><div class="ap-head"><b>🏯 ${hub.name}で再編成</b> <button class="small" id="sm-reorg-close">閉じる</button></div>
@@ -851,7 +851,7 @@ function renderStratBody() {
       t && t === sel ? 'acting' : '',
       t && t.side === 'player' && t.acted && m.phase === 'player' ? 'done' : '',
       f ? `fortcell fort-${f.owner || 'none'}` : ''].filter(Boolean).join(' ');
-    const title = t ? `${tokenSquad(t).name}（${tokenKind(t)}）兵 ${tokenTroops(t)}人 / 移動 ${tokenMove(t)}`
+    const title = t ? `${nm(tokenSquad(t).name)}（${tokenKind(t)}）兵 ${tokenTroops(t)}人 / 移動 ${tokenMove(t)}`
       : f ? `${f.name}（${f.owner ? (f.owner === 'player' ? '自軍' : 'CPU軍') : '中立'}）` : ter;
     html += `<div class="${cls}" data-x="${x}" data-y="${y}" title="${title}">` +
       (f ? `<span class="fort ${f.owner ? 'own-' + f.owner : ''}">🏯</span>` : '') +
@@ -882,7 +882,7 @@ function renderStratBody() {
   } else if (m.pending) {
     hud = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
   } else if (m.battle) {
-    hud = `<div>⚔ 戦闘中: ${A.player.squads.find(q => q.id === m.battle.player)?.name} vs ${A.cpu.squads.find(q => q.id === m.battle.cpu)?.name}</div>
+    hud = `<div>⚔ 戦闘中: ${nm(A.player.squads.find(q => q.id === m.battle.player)?.name)} vs ${nm(A.cpu.squads.find(q => q.id === m.battle.cpu)?.name)}</div>
       <button id="sm-open-battle">⚔ 局地戦の画面を開く</button>`;
   } else if (m.phase === 'cpu') {
     hud = '<div>CPU軍が行動中…</div>';
@@ -893,7 +893,7 @@ function renderStratBody() {
     ui.anchor = [sel.x, sel.y];
     const q = tokenSquad(sel), opts = stationOptions(sel);
     const hub = hubOf(sel);
-    info = `<div><b>${q.name}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
+    info = `<div><b>${nm(q.name)}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
       ${squadDetail(sel, ui.detailOpen)}
       <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : sel.moved ? '点滅する赤枠（⚔）の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の点滅する赤枠（⚔）の敵をクリックで攻撃。'}</div>
       <div class="ap-buttons">
@@ -909,7 +909,7 @@ function renderStratBody() {
     const e = liveTokens().find(o => o.id === ui.info.slice(4));
     if (e && tokenVisibleTo('player', e)) {
       const q = tokenSquad(e);
-      info = `<div><b class="nm-c">${q.name}</b>（CPU軍・${tokenKind(e)}）兵 ${tokenTroops(e)}人 ／ 移動 ${tokenMove(e)}</div>${squadDetail(e, true)}`;
+      info = `<div><b class="nm-c">${nm(q.name)}</b>（CPU軍・${tokenKind(e)}）兵 ${tokenTroops(e)}人 ／ 移動 ${tokenMove(e)}</div>${squadDetail(e, true)}`;
       ui.anchor = [e.x, e.y];
     } else ui.info = null;
   } else if (ui.info) {
@@ -1028,7 +1028,7 @@ function placeInfo(key) {
   if (f) {
     const g = liveTokens().find(t => t.fort === f.id);
     const owner = f.owner ? (f.owner === 'player' ? '自軍' : 'CPU軍') : '中立';
-    return `<div><b>🏯 ${f.name}</b>（${owner}）${g && tokenVisibleTo('player', g) ? ` 守備隊: ${tokenSquad(g).name}` : ''}</div>
+    return `<div><b>🏯 ${f.name}</b>（${owner}）${g && tokenVisibleTo('player', g) ? ` 守備隊: ${nm(tokenSquad(g).name)}` : ''}</div>
       <div class="sub">砦の効果（持ち主の軍に）:<br>
       ・守り: 砦の上か隣にいる隊・守備隊は、戦闘で DEF +${Math.round(FORT_DEF * 100)}%<br>
       ・再編成: 砦から${HUB_RANGE}マス以内にいる隊どうしで、駒や将を受け渡し・分割・合流できる<br>
