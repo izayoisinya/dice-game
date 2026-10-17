@@ -929,7 +929,7 @@ function renderStratBody() {
   placeStratInfo();
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
-  const det = $('strat-info').querySelector('.sq-detail');
+  const det = $('strat-info').querySelector('.tok-detail');
   if (det && sel) det.ontoggle = () => { ui.detailOpen = det.open; placeStratInfo(); };
   on('sm-basego', 'onclick', () => {
     m.phase = 'player';
@@ -1014,7 +1014,7 @@ function squadDetail(t, open) {
   const who = m => `${nm(m.name)}<span class="sub">（${m.kind || m.rank || m.type + '長'}）</span>`;
   const members = q.members.map(id => memberById(A, id)).filter(m => m && !(t.side === 'cpu' && m.kind === '暗殺者'));   // 敵の暗殺者は隠れているので出さない
   const pieces = q.pieces.map(p => `${p.type.replace('兵', '')}${p.size}`).join('　');
-  return `<details class="sq-detail" ${open ? 'open' : ''}><summary>隊の中身</summary>
+  return `<details class="tok-detail" ${open ? 'open' : ''}><summary>隊の中身</summary>
     <div>隊長: ${lead ? who(lead) : '—'}</div>
     <div>配下: ${members.length ? members.map(who).join('・') : 'なし'}</div>
     <div>兵士の駒: ${pieces || 'なし'}</div>
