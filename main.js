@@ -1266,8 +1266,8 @@ function advanceScorer(unit, target) {
 }
 
 /** 1ユニット分の行動（AI） */
-function actUnit(unit) {
-  tickUnit(unit);
+function actUnit(unit, ticked = false) {
+  if (!ticked) tickUnit(unit);   // 手動からオートに切り替えたときは、手動の番の始めにもう進めてある
   if (unit.traits.includes('scout')) return scoutAct(unit);
   if (unit.traits.includes('assassin')) return assassinAct(unit);
   let target = nearestEnemy(unit);
@@ -2352,7 +2352,7 @@ function updateButtons() {
   close.classList.toggle('hidden', !state.player);
   close.textContent = state.over ? '🗺 戦域図に戻る' : '🗺 マップを見る';
   $('btn-start').disabled = !state.player || state.running || state.over || (state.mode === 'manual' && !state.cmdReady);
-  $('mode').disabled = state.running;
+  $('mode').disabled = false;   // 戦闘中でも切り替えられる（onModeChange）
 }
 
 // ------------------------------------------------------------
@@ -3260,6 +3260,31 @@ function onCampaignChange(e) {
 
 $('campaign').addEventListener('click', onCampaignClick);
 $('campaign').addEventListener('change', onCampaignChange);
+$('mode').addEventListener('change', onModeChange);
+
+/**
+ * 戦闘中のモード切り替え。手動 → オート: 手番の駒はそのまま AI が動かし、以後オート。
+ * オート → 手動: 次の自軍の駒の番から手動（CPU の駒は動き続け、自軍の番で止まる）
+ */
+function onModeChange() {
+  const mode = $('mode').value;
+  if (!state.player || state.over || !state.running || state.mode === mode) { if (!state.running) state.mode = mode; return; }
+  state.mode = mode;
+  log(mode === 'auto' ? '⚙ オート観戦に切り替えた。' : '⚙ 手動プレイに切り替えた（次の自軍の駒の番から）。', 'turn');
+  const unit = currentUnit();
+  if (mode === 'auto' && unit) {
+    const fresh = state.manual && !state.manual.moved && !state.manual.attacked && !state.manual.gaugeAdded && state.phase === 'move';
+    ui2.spear = null;
+    state.current = null; state.phase = null; state.manual = null;
+    if (fresh) actUnit(unit, true);   // まだ何もしていなければ、その駒の行動を AI に任せる
+    render(unit);
+    saveGame();
+    if (!state.over) schedule(delay());
+    return;
+  }
+  render();
+  saveGame();
+}
 
 $('btn-start').addEventListener('click', () => {
   if (!state.player || state.running || state.over) return;
