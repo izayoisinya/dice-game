@@ -293,7 +293,7 @@ main { padding: 12px; }
 .armies-head { position: sticky; left: 0; display: flex; justify-content: flex-end; }
 .armies-box .armies { grid-template-columns: 1fr; }
 .armies-box.closed { transform: translateX(calc(100% - 30px)); }
-.cell.oob { pointer-events: none; background: #2a3326; filter: brightness(calc(0.5 - var(--far, 1) * 0.05)) saturate(0.6); }
+.cell.oob { pointer-events: none; }   /* 色は main.js で（離れるほど暗い） */
 @media (max-width: 600px) {
   .topbar h1 { font-size: 1rem; }
   .tab, .topbar .controls > button, .settings > summary { padding: 5px 8px; font-size: 0.85rem; }
@@ -437,3 +437,28 @@ tr.tap:hover td { background: #2f3440; }
 .info-skills { font-size: 0.9rem; line-height: 1.6; color: #ccc; }
 .rare-tag { color: #ffd76f; font-weight: bold; }
 .cp-side .gen-weapon { font-size: 0.75rem; padding: 0 5px; margin: 0; }
+
+/* 局地戦の 2.5D 表示（試作）: マップを斜め上から見下ろし、駒は板のように立てる。設定の「局地戦を2.5Dで表示」 */
+#battle.tilt #field-wrap { perspective: none; }
+#battle.tilt .field { transform: perspective(2200px) rotateX(38deg); transform-origin: 50% 15%; background: transparent; }
+#battle.tilt .cell.p, #battle.tilt .cell.c { overflow: visible; z-index: 2; }
+#battle.tilt .cell.p, #battle.tilt .cell.c { background: #3a4a32; }   /* 床は地面の色。陣営の色は立てた駒に */
+#battle.tilt .cell.p.reach, #battle.tilt .cell.c.reach { background: #3f6a8f; }
+#battle.tilt .cell .glyph {
+  position: absolute; left: 10%; right: 10%; bottom: 40%; height: 95%; z-index: 3;
+  display: flex; align-items: center; justify-content: center; border-radius: 4px 4px 2px 2px;
+  /* 立体（preserve-3d）にすると一部のマスが描かれなくなるので、床と同じ面のまま縦に伸ばして立って見せる（1 / cos38° ≒ 1.27） */
+  transform-origin: 50% 100%; transform: scaleY(1.27);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5), inset 0 -3px 0 rgba(0, 0, 0, 0.25); font-weight: bold; pointer-events: none;
+}
+#battle.tilt .cell.p .glyph { background: linear-gradient(#3d6aa3, #2a4d7a); color: #e6f1ff; border: 1px solid #6a9ad6; }
+#battle.tilt .cell.c .glyph { background: linear-gradient(#a33d3d, #7a2a2a); color: #ffe6e2; border: 1px solid #d66a6a; }
+#battle.tilt .cell.p::after, #battle.tilt .cell.c::after {   /* 足もとの影 */
+  content: ''; position: absolute; left: 15%; right: 15%; bottom: 30%; height: 22%; border-radius: 50%; background: rgba(0, 0, 0, 0.45); pointer-events: none; }
+#battle.tilt .cell.buffed::after { content: '▲'; background: none; left: auto; right: 1px; bottom: auto; top: 0; height: auto; color: #ffd76f; }
+#battle.tilt .cell.acting .glyph { box-shadow: 0 0 0 2px #ffd76f, 0 2px 0 rgba(0, 0, 0, 0.5); }
+#battle.tilt .cell.target .glyph { box-shadow: 0 0 0 2px #ff5a4f, 0 0 10px #ff5a4f; }
+#battle.tilt .cell .mini-hp { bottom: 2px; height: 4px; }
+#battle.tilt .cell.ghost .glyph { opacity: 0.5; }
+/* 操作の箱はログ・部隊の箱より手前（開いたログにボタンが隠れて押せなくならないように） */
+.battle .action-panel, .strat-info { z-index: 9 !important; }

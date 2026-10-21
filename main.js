@@ -2061,7 +2061,9 @@ function renderField(acting) {
       if (x < 0 || y < 0 || x >= w || y >= h) {
         const oob = document.createElement('div');
         oob.className = 'cell oob';
-        oob.style.setProperty('--far', Math.min(6, Math.max(-x, -y, x - w + 1, y - h + 1)));
+        const far = Math.min(6, Math.max(-x, -y, x - w + 1, y - h + 1));
+        const k = 0.5 - far * 0.05;   // 離れるほど暗い（filter を使うと 2.5D 表示で描き崩れるので色で付ける）
+        oob.style.background = `rgb(${Math.round(42 * k)}, ${Math.round(51 * k)}, ${Math.round(38 * k)})`;
         cells.appendChild(oob);
         continue;
       }
@@ -3288,6 +3290,18 @@ function onCampaignChange(e) {
 $('campaign').addEventListener('click', onCampaignClick);
 $('campaign').addEventListener('change', onCampaignChange);
 $('mode').addEventListener('change', onModeChange);
+// 局地戦の 2.5D 表示（試作）。オン・オフは覚えておく
+{
+  const apply = on => { $('battle').classList.toggle('tilt', on); $('tilt').checked = on; };
+  let saved = null;
+  try { saved = localStorage.getItem('battleTilt'); } catch {}
+  apply(saved == null ? true : saved === '1');
+  $('tilt').addEventListener('change', () => {
+    apply($('tilt').checked);
+    try { localStorage.setItem('battleTilt', $('tilt').checked ? '1' : '0'); } catch {}
+    if (state.player) render();
+  });
+}
 
 /**
  * 戦闘中のモード切り替え。手動 → オート: 手番の駒はそのまま AI が動かし、以後オート。
