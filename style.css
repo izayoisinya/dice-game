@@ -451,7 +451,7 @@ tr.tap:hover td { background: #2f3440; }
   /* 立体（preserve-3d）にすると一部のマスが描かれなくなるので、床と同じ面のまま縦に伸ばして立って見せる（1 / cos38° ≒ 1.27） */
   transform-origin: 50% 100%; transform: scaleY(var(--stand));
   box-shadow: 0 3px 0 rgba(0, 0, 0, 0.55), inset 0 -4px 0 rgba(0, 0, 0, 0.3), inset 0 2px 0 rgba(255, 255, 255, 0.18); font-weight: bold; pointer-events: none;
-  font-size: 0.85em; line-height: 1; white-space: nowrap; letter-spacing: -1px;
+  font-size: 1.15em; line-height: 1; white-space: nowrap; letter-spacing: -1px;
 }
 #battle.tilt .cell.p .glyph { background: linear-gradient(#3d6aa3, #2a4d7a); color: #e6f1ff; border: 1px solid #6a9ad6; }
 #battle.tilt .cell.c .glyph { background: linear-gradient(#a33d3d, #7a2a2a); color: #ffe6e2; border: 1px solid #d66a6a; }
@@ -464,3 +464,5 @@ tr.tap:hover td { background: #2f3440; }
 #battle.tilt .cell.ghost .glyph { opacity: 0.5; }
 /* 操作の箱はログ・部隊の箱より手前（開いたログにボタンが隠れて押せなくならないように） */
 .battle .action-panel, .strat-info { z-index: 9 !important; }
+#battle.tilt .cell .glyph > b { display: inline-block; transform: scaleY(calc(1 / var(--stand))); }   /* 板は縦に伸ばしても、文字は元の形に戻す（引き伸ばした感じを消す） */
+.cell .glyph > b { font-weight: inherit; }

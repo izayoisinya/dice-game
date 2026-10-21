@@ -2087,7 +2087,7 @@ function renderField(acting) {
       if (chargeSet.has(`${x},${y}`)) cell.title = '🐎 ここへ一直線に走ると突撃（初撃の威力アップ）';
       if (u) {
         cell.title = `${nm(u.name)} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
-        cell.innerHTML = `<span class="glyph">${short(u)}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>` +
+        cell.innerHTML = `<span class="glyph"><b>${short(u)}</b></span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>` +
           (targets.has(u.id) ? '<span class="tgt-mark">⚔</span>' : '');
       }
       cells.appendChild(cell);
