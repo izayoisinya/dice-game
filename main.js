@@ -1570,8 +1570,8 @@ function step() {
     state.turn++;
     const q = buildQueue();
     state.queue = q.map(u => u.id);
-    // 手動プレイで視界があるとき、見えていない敵は行動順に出さない（数や顔ぶれが分からないように）
-    const shown = q.filter(u => !(state.fog && state.mode === 'manual' && u.side === 'cpu' && !visibleTo('player', u)));
+    // 霧ありのとき、見えていない敵は行動順に出さない（数や顔ぶれが分からないように。オートでも同じ）
+    const shown = q.filter(u => !(state.fog && u.side === 'cpu' && !visibleTo('player', u)));
     log(`--- ターン ${state.turn} --- 行動順: ${shown.map(u => `${u.name}(${u.spd})`).join(' > ')}${shown.length < q.length ? ' ＋ 霧の中の敵' : ''}`, 'turn');
   }
 
@@ -1584,8 +1584,8 @@ function step() {
     beginManual(unit);
     return;
   }
-  // 手動プレイで視界があるとき、見えない敵の動き（位置）はログに出さない
-  const fogLog = state.fog && state.mode === 'manual' && unit.side === 'cpu';
+  // 霧ありのとき、見えない敵の動き（位置）はログに出さない（オートでも同じ）
+  const fogLog = state.fog && unit.side === 'cpu';
   if (fogLog) state.logBuffer = [];
   actUnit(unit);
   if (fogLog) {
@@ -1919,7 +1919,7 @@ function showResult() {
 
 function renderArmy(army, side, acting) {
   const tbody = document.createElement('tbody');   // 作り終えてから差し替える（途中で表が空になってスクロールが戻らないように）
-  const hidden = u => side === 'cpu' && state.mode === 'manual' && u.alive && !visibleTo('player', u);
+  const hidden = u => side === 'cpu' && state.fog && u.alive && !visibleTo('player', u);
   for (const u of army.units) {
     if (hidden(u)) continue;
     const tr = document.createElement('tr');
@@ -2045,7 +2045,7 @@ function renderField(acting) {
     for (const k of reach) atkRange.delete(k);
     atkRange.delete(`${cur.x},${cur.y}`);
   }
-  // プレイヤー軍の視界。手動プレイでは見えない敵を描かない（オート観戦では半透明で描く）
+  // プレイヤー軍の視界。霧ありなら、見えない敵は手動でもオートでも描かない
   const eyes = state.player.units.filter(u => u.alive);
   const inSight = (x, y) => !state.fog || eyes.some(o => Math.abs(o.x - x) + Math.abs(o.y - y) <= (o.vision ?? VISION_DEFAULT));
   // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。戦域図と同じ
@@ -2067,7 +2067,7 @@ function renderField(acting) {
       }
       let u = unitAt(x, y);
       const ghost = u && u.side === 'cpu' && !visibleTo('player', u);
-      if (ghost && state.mode === 'manual') u = null;
+      if (ghost) u = null;   // 霧の中の敵はオートでも描かない（オートで見て手動に戻す抜け道をふさぐ）
       const cell = document.createElement('div');
       cell.className = 'cell' + (u ? ` ${u.side === 'player' ? 'p' : 'c'}` : '') +
         (u && u === acting ? ' acting' : '') +
