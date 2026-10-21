@@ -440,21 +440,23 @@ tr.tap:hover td { background: #2f3440; }
 
 /* 局地戦の 2.5D 表示（試作）: マップを斜め上から見下ろし、駒は板のように立てる。設定の「局地戦を2.5Dで表示」 */
 #battle.tilt #field-wrap { perspective: none; }
-#battle.tilt .field { transform: perspective(2200px) rotateX(38deg); transform-origin: 50% 15%; background: transparent; }
+#battle.tilt { --tilt: 46deg; --stand: 2.1; }   /* マップの傾き・駒を縦に伸ばす倍率（1/cos46° ≒ 1.44 より大きくして、しっかり立って見せる） */
+#battle.tilt .field { transform: perspective(2000px) rotateX(var(--tilt)); transform-origin: 50% 15%; background: transparent; }
 #battle.tilt .cell.p, #battle.tilt .cell.c { overflow: visible; z-index: 2; }
 #battle.tilt .cell.p, #battle.tilt .cell.c { background: #3a4a32; }   /* 床は地面の色。陣営の色は立てた駒に */
 #battle.tilt .cell.p.reach, #battle.tilt .cell.c.reach { background: #3f6a8f; }
 #battle.tilt .cell .glyph {
-  position: absolute; left: 10%; right: 10%; bottom: 40%; height: 95%; z-index: 3;
+  position: absolute; left: 12%; right: 12%; bottom: 34%; height: 78%; z-index: 3;
   display: flex; align-items: center; justify-content: center; border-radius: 4px 4px 2px 2px;
   /* 立体（preserve-3d）にすると一部のマスが描かれなくなるので、床と同じ面のまま縦に伸ばして立って見せる（1 / cos38° ≒ 1.27） */
-  transform-origin: 50% 100%; transform: scaleY(1.27);
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5), inset 0 -3px 0 rgba(0, 0, 0, 0.25); font-weight: bold; pointer-events: none;
+  transform-origin: 50% 100%; transform: scaleY(var(--stand));
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.55), inset 0 -4px 0 rgba(0, 0, 0, 0.3), inset 0 2px 0 rgba(255, 255, 255, 0.18); font-weight: bold; pointer-events: none;
+  font-size: 0.85em; line-height: 1; white-space: nowrap; letter-spacing: -1px;
 }
 #battle.tilt .cell.p .glyph { background: linear-gradient(#3d6aa3, #2a4d7a); color: #e6f1ff; border: 1px solid #6a9ad6; }
 #battle.tilt .cell.c .glyph { background: linear-gradient(#a33d3d, #7a2a2a); color: #ffe6e2; border: 1px solid #d66a6a; }
 #battle.tilt .cell.p::after, #battle.tilt .cell.c::after {   /* 足もとの影 */
-  content: ''; position: absolute; left: 15%; right: 15%; bottom: 30%; height: 22%; border-radius: 50%; background: rgba(0, 0, 0, 0.45); pointer-events: none; }
+  content: ''; position: absolute; left: 8%; right: 8%; bottom: 22%; height: 28%; border-radius: 50%; background: rgba(0, 0, 0, 0.5); pointer-events: none; }
 #battle.tilt .cell.buffed::after { content: '▲'; background: none; left: auto; right: 1px; bottom: auto; top: 0; height: auto; color: #ffd76f; }
 #battle.tilt .cell.acting .glyph { box-shadow: 0 0 0 2px #ffd76f, 0 2px 0 rgba(0, 0, 0, 0.5); }
 #battle.tilt .cell.target .glyph { box-shadow: 0 0 0 2px #ff5a4f, 0 0 10px #ff5a4f; }
