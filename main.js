@@ -1949,7 +1949,19 @@ function renderArmy(army, side, acting) {
     [...['総大将', '副将', '兵長', '雑兵'].filter(r => count(r)).map(r => `${r === '雑兵' ? '兵士の駒' : r}${count(r)}`),
      ...['斥候', '暗殺者'].filter(specials).map(k => `${k}${specials(k)}`)].join(' / ') +
     `　兵 ${troops}人　生存 ${alive.length}/${known.length}${fogged ? '（ほかに見えない敵）' : ''}　総コスト ${cost}`;
-  $(`${side}-dice`).textContent = army.squadName
+  // 戦役の局地戦: 隊の名前と隊長。敵の隊長は姿を見るまで「？」（見えたら隊ごと覚える）
+  const sq = state.campaignBattle && campaign.armies?.[side]?.squads.find(x => x.id === state.campaignBattle[side]);
+  if (sq && side === 'cpu' && !sq.known) {
+    const lead = memberById(campaign.armies.cpu, sq.leader);
+    if (!state.fog || (lead && army.units.some(u => u.name === lead.name && visibleTo('player', u)))) {
+      sq.known = true;
+      const pq = campaign.armies.player.squads.find(x => x.id === state.campaignBattle.player);
+      $('battle-title').textContent = `⚔ ${nm(pq?.name ?? '')} vs ${squadLabel('cpu', sq)}`;
+    }
+  }
+  $(`${side}-dice`).textContent = sq
+    ? `【${squadLabel(side, sq)}（隊長 ${side === 'cpu' && state.fog && !sq.known ? '？' : nm(memberById(campaign.armies[side], sq.leader)?.name ?? '—')}）】`
+    : army.squadName
     ? `【${army.squadName}】`
     : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
@@ -2788,13 +2800,13 @@ function startCampaignBattle(pid, cid) {
     return o;
   };
   state.campaignBattle = { player: pid, cpu: cid, before: { player: before('player'), cpu: before('cpu') } };
-  log(`⚔ 出陣: ${pq.name} vs CPU ${cq.name}（マップ ${state.map.type} ${state.map.w}×${state.map.h}）`, 'turn');
+  log(`⚔ 出陣: ${nm(pq.name)} vs CPU ${squadLabel('cpu', cq)}（マップ ${state.map.type} ${state.map.w}×${state.map.h}）`, 'turn');
   log('「戦闘開始」で開戦します。', 'sys');
   render();
   renderEditor();
   updateButtons();
   saveGame();
-  $('battle-title').textContent = `⚔ ${pq.name} vs CPU ${cq.name}`;
+  $('battle-title').textContent = `⚔ ${nm(pq.name)} vs ${squadLabel('cpu', cq)}`;
   setBattleOpen(true);
 }
 
@@ -2867,6 +2879,21 @@ function loadCampaign() {
 /** 自軍の画面では名前の頭の「P」を省く（CPU軍と並ぶ戦闘のログ・盤面では残す） */
 function nm(name) {
   return String(name).replace(/^[PC](?=[^\sA-Za-z])/, '');
+}
+
+/**
+ * 隊の表示名。霧ありのとき、敵の隊は局地戦で隊長の姿を見るまで「敵分隊イ」のような仮の名前にする
+ * （隊の名前は隊長の名前なので、そのままだと誰が率いているか分かってしまう）
+ */
+const ALIAS_KANA = 'イロハニホヘトチリヌルヲワカヨタレソツネナラム';
+function squadLabel(side, q) {
+  if (!q) return '';
+  if (side !== 'cpu' || !state.fog || q.known) return nm(q.name);
+  if (!q.alias) {
+    const A = campaign.armies.cpu, used = A.squads.filter(x => x.alias).length;
+    q.alias = `敵${squadKind(A, q)}${ALIAS_KANA[used % ALIAS_KANA.length]}`;
+  }
+  return q.alias;
 }
 
 /** 表示用の階級名（内部の「雑兵」は「兵士」と表示する） */

@@ -295,7 +295,7 @@ function moveToken(t, x, y) {
     }
   }
   [t.x, t.y] = [x, y];
-  if (t.side === 'player' || tokenVisibleTo('player', t)) smapLog(`${q.name} が移動 ${before} → (${x},${y})`, t.side);
+  if (t.side === 'player' || tokenVisibleTo('player', t)) smapLog(`${squadLabel(t.side, q)} が移動 ${before} → (${x},${y})`, t.side);
   if (trap && hasScout(t)) {
     trap.known[t.side] = true;
     t.acted = true;
@@ -305,7 +305,7 @@ function moveToken(t, x, y) {
   const f = fortAt(x, y);
   if (f && f.owner !== t.side && tokenKind(t) !== '斥候' && tokenKind(t) !== '暗殺者') {
     f.owner = t.side;
-    smapLog(`🏯 ${q.name} が${f.name}を押さえた！`, t.side);
+    smapLog(`🏯 ${squadLabel(t.side, q)} が${f.name}を押さえた！`, t.side);
   }
   updateTrapKnowledge();
 }
@@ -377,7 +377,7 @@ function springTrap(t, trap) {
   }).filter(p => p.size >= MIN_TROOPS);
   t.acted = true;
   t.trapped = true;
-  smapLog(`🪤 ${q.name} が罠にかかった！ 兵 ${lost}人を失い、足が止まった。`, trap.side);
+  smapLog(`🪤 ${squadLabel(t.side, q)} が罠にかかった！ 兵 ${lost}人を失い、足が止まった。`, trap.side);
 }
 
 /** 斥候が近づいた敵の罠を見つける */
@@ -597,10 +597,10 @@ function attackToken(t, target) {
   const pt = t.side === 'player' ? t : target, ct = t.side === 'player' ? target : t;
   t.acted = true;
   m.battle = { player: pt.id, cpu: ct.id, attacker: t.side };
-  smapLog(`⚔ ${tokenSquad(t).name} が ${tokenSquad(target).name} に攻撃！`, t.side);
+  smapLog(`⚔ ${squadLabel(t.side, tokenSquad(t))} が ${squadLabel(target.side, tokenSquad(target))} に攻撃！`, t.side);
   saveCampaign();
   startCampaignBattle(pt.id, ct.id);
-  if (t.side === 'cpu') log(`CPU軍の攻撃！ 迎え撃つのは ${tokenSquad(pt).name} です。`, 'turn');
+  if (t.side === 'cpu') log(`CPU軍の攻撃！ 迎え撃つのは ${nm(tokenSquad(pt).name)} です。`, 'turn');
   // 砦の守り: 自軍の砦の上か隣にいる隊（守備隊を含む）は DEF +20%
   if (state.campaignBattle) {
     const bonus = side => { const tok = side === 'player' ? pt : ct; return !!tok.fort || m.forts.some(f => f.owner === side && distance(f, tok) <= 1); };
@@ -646,7 +646,7 @@ function resolvePending() {
       if (exits.length) {
         const c = pick(exits);
         [t.x, t.y] = [c.x, c.y];
-        smapLog(`${q.name} は退いた。`, side);
+        smapLog(`${squadLabel(side, q)} は退いた。`, side);
       }
     }
   }
@@ -851,7 +851,7 @@ function renderStratBody() {
       t && t === sel ? 'acting' : '',
       t && t.side === 'player' && t.acted && m.phase === 'player' ? 'done' : '',
       f ? `fortcell fort-${f.owner || 'none'}` : ''].filter(Boolean).join(' ');
-    const title = t ? `${nm(tokenSquad(t).name)}（${tokenKind(t)}）兵 ${tokenTroops(t)}人 / 移動 ${tokenMove(t)}`
+    const title = t ? `${squadLabel(t.side, tokenSquad(t))}（${tokenKind(t)}）兵 ${tokenTroops(t)}人 / 移動 ${tokenMove(t)}`
       : f ? `${f.name}（${f.owner ? (f.owner === 'player' ? '自軍' : 'CPU軍') : '中立'}）` : ter;
     html += `<div class="${cls}" data-x="${x}" data-y="${y}" title="${title}">` +
       (f ? `<span class="fort ${f.owner ? 'own-' + f.owner : ''}">🏯</span>` : '') +
@@ -882,7 +882,7 @@ function renderStratBody() {
   } else if (m.pending) {
     hud = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
   } else if (m.battle) {
-    hud = `<div>⚔ 戦闘中: ${nm(A.player.squads.find(q => q.id === m.battle.player)?.name)} vs ${nm(A.cpu.squads.find(q => q.id === m.battle.cpu)?.name)}</div>
+    hud = `<div>⚔ 戦闘中: ${nm(A.player.squads.find(q => q.id === m.battle.player)?.name)} vs ${squadLabel('cpu', A.cpu.squads.find(q => q.id === m.battle.cpu))}</div>
       <button id="sm-open-battle">⚔ 局地戦の画面を開く</button>`;
   } else if (m.phase === 'cpu') {
     hud = '<div>CPU軍が行動中…</div>';
@@ -909,7 +909,7 @@ function renderStratBody() {
     const e = liveTokens().find(o => o.id === ui.info.slice(4));
     if (e && tokenVisibleTo('player', e)) {
       const q = tokenSquad(e);
-      info = `<div><b class="nm-c">${nm(q.name)}</b>（CPU軍・${tokenKind(e)}）兵 ${tokenTroops(e)}人 ／ 移動 ${tokenMove(e)}</div>${squadDetail(e, true)}`;
+      info = `<div><b class="nm-c">${squadLabel('cpu', q)}</b>（CPU軍・${tokenKind(e)}）兵 ${tokenTroops(e)}人 ／ 移動 ${tokenMove(e)}</div>${squadDetail(e, true)}`;
       ui.anchor = [e.x, e.y];
     } else ui.info = null;
   } else if (ui.info) {
@@ -1013,10 +1013,11 @@ function squadDetail(t, open) {
   const lead = memberById(A, q.leader);
   const who = m => `${nm(m.name)}<span class="sub">（${m.kind || m.rank || m.type + '長'}）</span>`;
   const members = q.members.map(id => memberById(A, id)).filter(m => m && !(t.side === 'cpu' && m.kind === '暗殺者'));   // 敵の暗殺者は隠れているので出さない
+  const hidden = t.side === 'cpu' && state.fog && !q.known;   // 局地戦で隊長を見るまで、敵の将の顔ぶれは分からない
   const pieces = q.pieces.map(p => `${p.type.replace('兵', '')}${p.size}`).join('　');
   return `<details class="tok-detail" ${open ? 'open' : ''}><summary>隊の中身</summary>
-    <div>隊長: ${lead ? who(lead) : '—'}</div>
-    <div>配下: ${members.length ? members.map(who).join('・') : 'なし'}</div>
+    <div>隊長: ${hidden ? '？（局地戦で姿を見るまで分からない）' : lead ? who(lead) : '—'}</div>
+    ${hidden ? '' : `<div>配下: ${members.length ? members.map(who).join('・') : 'なし'}</div>`}
     <div>兵士の駒: ${pieces || 'なし'}</div>
     <div class="sub">位置 (${t.x},${t.y})　※座標は左上が (0,0)、右へ x・下へ y が増える</div></details>`;
 }
@@ -1028,7 +1029,7 @@ function placeInfo(key) {
   if (f) {
     const g = liveTokens().find(t => t.fort === f.id);
     const owner = f.owner ? (f.owner === 'player' ? '自軍' : 'CPU軍') : '中立';
-    return `<div><b>🏯 ${f.name}</b>（${owner}）${g && tokenVisibleTo('player', g) ? ` 守備隊: ${nm(tokenSquad(g).name)}` : ''}</div>
+    return `<div><b>🏯 ${f.name}</b>（${owner}）${g && tokenVisibleTo('player', g) ? ` 守備隊: ${squadLabel(g.side, tokenSquad(g))}` : ''}</div>
       <div class="sub">砦の効果（持ち主の軍に）:<br>
       ・守り: 砦の上か隣にいる隊・守備隊は、戦闘で DEF +${Math.round(FORT_DEF * 100)}%<br>
       ・再編成: 砦から${HUB_RANGE}マス以内にいる隊どうしで、駒や将を受け渡し・分割・合流できる<br>
