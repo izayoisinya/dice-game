@@ -2019,7 +2019,9 @@ function renderField(acting) {
   const field = $('field');
   // 新しいマスは別の入れ物に作ってから一度に差し替える（途中で空になると、スクロール位置が先頭に戻されるため）
   const cells = document.createDocumentFragment();
-  const short = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '') + u.type[0];
+  const mark = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '');
+  const short = u => mark(u) + u.type[0];
+  const rankCls = u => (u.isCommander ? ' rk-lead' : u.rank === '副将' ? ' rk-gen' : u.rank === '兵長' ? ' rk-sgt' : '');
   // 突撃になる移動先（騎兵など）と、一斉指揮の範囲
   const curU = currentUnit();
   const chargeSet = new Set(curU && state.phase === 'move' && curU.traits.includes('charge')
@@ -2081,13 +2083,13 @@ function renderField(acting) {
         (cmdRange && Math.abs(curU.x - x) + Math.abs(curU.y - y) <= COMMAND_RANGE ? ' skillrange' : '') +
         (spearCells.has(`${x},${y}`) ? ' spearhit' : '') +
         (deploy && inDeployZone(x, y) ? ' deployzone' : '') + (deploy && u && u.id === ui2.deploySel ? ' acting' : '') +
-        (u && u.buffs.length ? ' buffed' : '');
+        (u && u.buffs.length ? ' buffed' : '') + (u ? rankCls(u) : '');
       cell.dataset.x = x;
       cell.dataset.y = y;
       if (chargeSet.has(`${x},${y}`)) cell.title = '🐎 ここへ一直線に走ると突撃（初撃の威力アップ）';
       if (u) {
         cell.title = `${nm(u.name)} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
-        cell.innerHTML = `<span class="glyph"><b>${short(u)}</b></span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>` +
+        cell.innerHTML = `<span class="glyph"><b>${u.type[0]}</b>${mark(u) ? `<i>${mark(u)}</i>` : ''}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>` +
           (targets.has(u.id) ? '<span class="tgt-mark">⚔</span>' : '');
       }
       cells.appendChild(cell);
