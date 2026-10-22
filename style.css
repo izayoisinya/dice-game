@@ -483,13 +483,13 @@ tr.tap:hover td { background: #2f3440; }
 #battle.tilt .cell.acting .glyph { box-shadow: 0 0 0 2px #ffd76f, 0 0 12px #ffd76f, 0 2px 0 rgba(0, 0, 0, 0.5) !important; }
 #battle.tilt .cell.target .glyph { box-shadow: 0 0 0 2px #ff5a4f, 0 0 10px #ff5a4f !important; }
 
-/* 六角マス（試作）: 頂点が上の六角形。奇数の行は半マス右にずらす。マスは --x, --y（マス単位）で置く */
+/* 六角マス（試作）: 辺が上下の六角形。奇数の列は半マス下にずらす。マスは --x, --y（マス単位）で置く */
 .field.hex { display: block; position: relative; box-sizing: border-box; }
 .field.hex .cell {
   position: absolute; aspect-ratio: auto; border-radius: 0;
-  width: var(--cell); height: calc(var(--cell) * 1.1547);
-  left: calc(6px + var(--cell) * var(--x)); top: calc(6px + var(--cell) * 0.866 * var(--y));
-  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); transform: scale(0.95);
+  width: calc(var(--cell) * 1.1547); height: var(--cell);
+  left: calc(6px + var(--cell) * 0.866 * var(--x)); top: calc(6px + var(--cell) * var(--y));
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); transform: scale(0.95);
 }
 /* 切り抜くと枠線（outline）が見えなくなるので、内側の影で示す */
 .field.hex .cell.acting { outline: none; box-shadow: inset 0 0 0 calc(var(--cell) * 0.09) #ffd76f; }
@@ -500,7 +500,7 @@ tr.tap:hover td { background: #2f3440; }
 /* 駒の板: 床と同じ場所に重ね、切り抜かない。押せない（下の床が受ける） */
 .field.hex .cell.piece {
   clip-path: none; transform: none; background: transparent !important; box-shadow: none; outline: none; animation: none;
-  height: var(--cell); margin-top: calc(var(--cell) * 0.077); pointer-events: none; z-index: 2; overflow: visible;
+  width: var(--cell); margin-left: calc(var(--cell) * 0.077); pointer-events: none; z-index: 2; overflow: visible;
 }
 .field.hex .cell.piece .glyph { pointer-events: none; }
 .field.hex .cell.piece.target .glyph { animation: tgt-glow 1s ease-in-out infinite; }

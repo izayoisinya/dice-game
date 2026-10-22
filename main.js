@@ -674,15 +674,15 @@ function sqDist(a, b) {
 
 // ------------------------------------------------------------
 // 局地戦のマス目の形: 正方形（上下左右の4方向）/ 六角形（6方向）。map.hex で切り替える
-//   六角形は「頂点が上」の向きで、奇数の行を半マス右にずらす（odd-r）。横一列はまっすぐ並ぶ（真横に動ける）
+//   六角形は「辺が上下」の向きで、奇数の列を半マス下にずらす（odd-q）。縦一列はまっすぐ並ぶ（前後にまっすぐ進める）
 //   内部では斜めの座標（axial: q, r）に直して計算する
 // ------------------------------------------------------------
 function isHex() { return !!state.map?.hex; }
 const SQ_DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];                                      // → ↓ ← ↑
 const SQ_RING = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];   // 周りの8マス（時計回り）
-const HEX_DIRS = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];                     // axial: → ↘ ↙ ← ↖ ↗（時計回り）
-const toAxial = (x, y) => [x - (y - (y & 1)) / 2, y];
-const fromAxial = (q, r) => [q + (r - (r & 1)) / 2, r];
+const HEX_DIRS = [[0, -1], [1, -1], [1, 0], [0, 1], [-1, 1], [-1, 0]];                     // axial: ↑ ↗ ↘ ↓ ↙ ↖（時計回り）
+const toAxial = (x, y) => [x, y - (x - (x & 1)) / 2];
+const fromAxial = (q, r) => [q, r + (q - (q & 1)) / 2];
 /** 戦場の向き（まっすぐ進める方向）の一覧 */
 function dirList() { return isHex() ? HEX_DIRS : SQ_DIRS; }
 /** 周りのマスを時計回りに（薙ぎ払いの弧に使う）。正方形は斜めを含む8マス、六角形は隣の6マス */
@@ -711,7 +711,7 @@ function lineDir(from, to) {
 /** (cx, cy) からちょうど r マス（le = true なら r マス以内）のマス */
 function cellsAround(cx, cy, r, le = false) {
   const out = [];
-  for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r - 1; x <= cx + r + 1; x++) {
+  for (let y = cy - r - 1; y <= cy + r + 1; y++) for (let x = cx - r - 1; x <= cx + r + 1; x++) {
     const dd = distance({ x: cx, y: cy }, { x, y });
     if (le ? dd <= r : dd === r) out.push([x, y]);
   }
@@ -1118,9 +1118,9 @@ function braceStrike(unit, fromX, fromY) {
 
 /** 技の向き（ボタンの表示用） */
 function dirName(unit, opt) { return dirArrow(opt.dir); }
-/** 向きの矢印。六角形は → ↘ ↙ ← ↖ ↗ の6つ */
+/** 向きの矢印。六角形は ↑ ↗ ↘ ↓ ↙ ↖ の6つ */
 function dirArrow(d) {
-  if (isHex()) return ['→', '↘', '↙', '←', '↖', '↗'][HEX_DIRS.findIndex(h => h[0] === d[0] && h[1] === d[1])] || '';
+  if (isHex()) return ['↑', '↗', '↘', '↓', '↙', '↖'][HEX_DIRS.findIndex(h => h[0] === d[0] && h[1] === d[1])] || '';
   return { '0,-1': '↑', '1,-1': '↗', '1,0': '→', '1,1': '↘', '0,1': '↓', '-1,1': '↙', '-1,0': '←', '-1,-1': '↖' }[d.join(',')] || '';
 }
 
@@ -2096,18 +2096,18 @@ function renderField(acting) {
   const inSight = (x, y) => !state.fog || eyes.some(o => distance(o, { x, y }) <= (o.vision ?? VISION_DEFAULT));
   // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。戦域図と同じ
   const fw = $('field-wrap');
-  const hex = isHex(), rowK = hex ? HEX_ROW : 1;   // 六角形は行の間隔が詰まる
-  const fit = Math.min((fw.clientWidth - 12) / (w + (hex ? 2.5 : 2)), (fw.clientHeight - 12) / ((h + 2) * rowK));
+  const hex = isHex(), colK = hex ? HEX_COL : 1;   // 六角形は列の間隔が詰まる
+  const fit = Math.min((fw.clientWidth - 12) / ((w + 2) * colK), (fw.clientHeight - 12) / (h + (hex ? 2.5 : 2)));
   const oldPad = `${fieldPad.x},${fieldPad.y}`;
-  fieldPad.x = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientWidth - 12) / fit - w) / 2) + 1) : 0;
-  fieldPad.y = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientHeight - 12) / (fit * rowK) - h) / 2) + 1) : 0;
+  fieldPad.x = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientWidth - 12) / (fit * colK) - w) / 2) + 1) : 0;
+  fieldPad.y = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientHeight - 12) / fit - h) / 2) + 1) : 0;
   if (oldPad !== `${fieldPad.x},${fieldPad.y}`) fieldCentered = null;   // 外側の段数が変わったら（画面の大きさが変わった）真ん中に合わせ直す
   field.classList.toggle('hex', hex);
   field.style.gridTemplateColumns = hex ? '' : `repeat(${w + fieldPad.x * 2}, minmax(0, 1fr))`;
-  // 六角形: マスは置き場所（--x, --y）を指定して並べる。奇数の行は半マス右へ
+  // 六角形: マスは置き場所（--x, --y）を指定して並べる。奇数の列は半マス下へ
   const place = (el, x, y) => {
-    el.style.setProperty('--x', x + fieldPad.x + (y & 1) * 0.5);
-    el.style.setProperty('--y', y + fieldPad.y);
+    el.style.setProperty('--x', x + fieldPad.x);
+    el.style.setProperty('--y', y + fieldPad.y + (x & 1) * 0.5);
   };
   for (let y = -fieldPad.y; y < h + fieldPad.y; y++) {
     for (let x = -fieldPad.x; x < w + fieldPad.x; x++) {
@@ -2297,8 +2297,8 @@ function placeActionPanel() {
 // ------------------------------------------------------------
 
 const zoom = { field: 1, smap: 1 };
-const HEX_TALL = 2 / Math.sqrt(3);   // 六角形のマスの高さ（幅 = 1）
-const HEX_ROW = HEX_TALL * 0.75;     // 六角形の行の間隔（≒ 0.866）
+const HEX_WIDE = 2 / Math.sqrt(3);   // 六角形のマスの幅（高さ = 1）
+const HEX_COL = HEX_WIDE * 0.75;     // 六角形の列の間隔（≒ 0.866）
 const fieldPad = { x: 0, y: 0 };   // 局地戦のマップの外側に描く段数（戦域図は ui.pad）
 let fieldCentered = null;          // 真ん中に合わせ済みの戦場
 let fieldJustCentered = false;     // この描き直しで真ん中に合わせた（スクロールを戻さない）
@@ -2312,16 +2312,16 @@ function applyZoom(kind) {
   const maxH = parseFloat(getComputedStyle(wrap).maxHeight);
   const availH = Math.max(160, Number.isFinite(maxH) ? maxH : (wrap.clientHeight || window.innerHeight * 0.6));
   const edge = 2;   // マップの外側1段も入れて収める
-  const hex = kind === 'field' && !!map.hex, rowK = hex ? HEX_ROW : 1;
-  const fit = Math.min((wrap.clientWidth - 12) / (map.w + edge + (hex ? 0.5 : 0)), (availH - 12) / ((map.h + edge) * rowK));   // 全体が収まるマスの大きさ
+  const hex = kind === 'field' && !!map.hex, colK = hex ? HEX_COL : 1;
+  const fit = Math.min((wrap.clientWidth - 12) / ((map.w + edge) * colK), (availH - 12) / (map.h + edge + (hex ? 0.5 : 0)));   // 全体が収まるマスの大きさ
   const cell = Math.max(8, fit * zoom[kind]);
   const pad = kind === 'smap' ? (typeof ui !== 'undefined' && ui.pad) : fieldPad;
   const cols = map.w + (pad ? pad.x * 2 : 0);   // マップの外側の分も
   if (hex) {
-    // 六角形のマスは並べ方を自分で決めるので、入れ物の大きさも計算して決める（横は半マスずれる分、縦は行が詰まる分）
+    // 六角形のマスは並べ方を自分で決めるので、入れ物の大きさも計算して決める（横は列が詰まる分、縦は半マスずれる分）
     const rows = map.h + (pad ? pad.y * 2 : 0);
-    el.style.width = `${Math.ceil(cell * (cols + 0.5)) + 12}px`;
-    el.style.height = `${Math.ceil(cell * (HEX_ROW * (rows - 1) + HEX_TALL)) + 12}px`;
+    el.style.width = `${Math.ceil(cell * (HEX_COL * (cols - 1) + HEX_WIDE)) + 12}px`;
+    el.style.height = `${Math.ceil(cell * (rows + 0.5)) + 12}px`;
   } else {
     el.style.width = `${Math.floor(cell * cols)}px`;
     el.style.height = '';
