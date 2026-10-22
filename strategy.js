@@ -81,7 +81,7 @@ const BASE_ROWS = 3;   // 本陣を置ける段（自軍は下から、CPU軍は
 function baseCells() {
   const m = smap(), out = [];
   for (let y = m.h - BASE_ROWS; y < m.h; y++) for (let x = 0; x < m.w; x++) {
-    if (TERRAIN[smapCell(m, x, y)].cost === Infinity || m.forts.some(f => distance(f, { x, y }) < 3)) continue;
+    if (TERRAIN[smapCell(m, x, y)].cost === Infinity || m.forts.some(f => sqDist(f, { x, y }) < 3)) continue;
     const dist = costMap(m, { x, y });
     if (dist[m.bases.cpu.y * m.w + m.bases.cpu.x] < Infinity && m.forts.every(f => dist[f.y * m.w + f.x] < Infinity)) out.push([x, y]);
   }
@@ -128,7 +128,7 @@ function genStrategicMap() {
       const x = Math.floor(Math.random() * m.w), y = 3 + Math.floor(Math.random() * (m.h - 6));
       if (smapCell(m, x, y) === '川') continue;
       const p = { x, y };
-      if (m.forts.some(f => distance(f, p) < 4) || distance(p, m.bases.player) < 4 || distance(p, m.bases.cpu) < 4) continue;
+      if (m.forts.some(f => sqDist(f, p) < 4) || sqDist(p, m.bases.player) < 4 || sqDist(p, m.bases.cpu) < 4) continue;
       setCell(m, x, y, '平地');
       m.forts.push({ id: `F${m.forts.length}`, name: FORT_NAMES[m.forts.length], x, y, owner: null });
     }
@@ -223,8 +223,8 @@ function tokenVisibleTo(side, t) {
   if (t.side === side || !state.fog) return true;
   const mine = liveTokens().filter(o => o.side === side);
   const forts = smap().forts.filter(f => f.owner === side);
-  if (tokenKind(t) === '暗殺者') return mine.some(o => distance(o, t) <= (tokenKind(o) === '斥候' ? STEALTH_SPOT.scout : STEALTH_SPOT.base)) || forts.some(f => distance(f, t) <= STEALTH_SPOT.base);
-  return mine.some(o => distance(o, t) <= tokenVision(o)) || forts.some(f => distance(f, t) <= FORT_VISION);
+  if (tokenKind(t) === '暗殺者') return mine.some(o => sqDist(o, t) <= (tokenKind(o) === '斥候' ? STEALTH_SPOT.scout : STEALTH_SPOT.base)) || forts.some(f => sqDist(f, t) <= STEALTH_SPOT.base);
+  return mine.some(o => sqDist(o, t) <= tokenVision(o)) || forts.some(f => sqDist(f, t) <= FORT_VISION);
 }
 
 /** 隊が今のターンに止まれるマス（地形のコスト。敵の隊は通れない、味方の隊は通れるが止まれない） */
@@ -268,7 +268,7 @@ function tokenPaths(t) {
 /** 隣接している、攻撃できる（見えている）敵の隊。単独の斥候は攻撃しない */
 function tokenTargets(t) {
   if (tokenKind(t) === '斥候' || tokenKind(t) === '守備隊') return [];
-  return liveTokens().filter(o => o.side !== t.side && distance(o, t) === 1 && tokenVisibleTo(t.side, o));
+  return liveTokens().filter(o => o.side !== t.side && sqDist(o, t) === 1 && tokenVisibleTo(t.side, o));
 }
 
 /** 隊を移動する。砦に入ったら、守備隊のいない砦は自軍のものになる */
@@ -345,7 +345,7 @@ function trapCells(t) {
 /** 解除できる罠: 隣接している、見つけている敵の罠 */
 function disarmCells(t) {
   if (!hasScout(t)) return [];
-  return (smap().traps || []).filter(tr => tr.side !== t.side && tr.known[t.side] && distance(tr, t) === 1).map(tr => [tr.x, tr.y]);
+  return (smap().traps || []).filter(tr => tr.side !== t.side && tr.known[t.side] && sqDist(tr, t) === 1).map(tr => [tr.x, tr.y]);
 }
 
 function placeTrap(t, x, y) {
@@ -386,7 +386,7 @@ function updateTrapKnowledge() {
   for (const tr of m.traps || []) {
     for (const side of ['player', 'cpu']) {
       if (side === tr.side || tr.known[side]) continue;
-      if (liveTokens().some(o => o.side === side && hasScout(o) && distance(o, tr) <= TRAP_DETECT)) {
+      if (liveTokens().some(o => o.side === side && hasScout(o) && sqDist(o, tr) <= TRAP_DETECT)) {
         tr.known[side] = true;
         if (side === 'player') smapLog(`🔍 斥候が (${tr.x},${tr.y}) に敵の罠を見つけた！`, 'player');
       }
@@ -426,14 +426,14 @@ function station(t, gid) {
 function hubOf(t) {
   const m = smap();
   const base = m.bases[t.side];
-  if (distance(t, base) <= HUB_RANGE) return { kind: 'base', x: base.x, y: base.y, name: '本陣' };
-  const f = m.forts.find(f => f.owner === t.side && distance(f, t) <= HUB_RANGE);
+  if (sqDist(t, base) <= HUB_RANGE) return { kind: 'base', x: base.x, y: base.y, name: '本陣' };
+  const f = m.forts.find(f => f.owner === t.side && sqDist(f, t) <= HUB_RANGE);
   return f ? { kind: 'fort', x: f.x, y: f.y, name: f.name, id: f.id } : null;
 }
 
 /** 拠点に集まっている自軍の隊 */
 function hubSquads(hub, side) {
-  return liveTokens().filter(o => o.side === side && distance(o, hub) <= HUB_RANGE).map(tokenSquad);
+  return liveTokens().filter(o => o.side === side && sqDist(o, hub) <= HUB_RANGE).map(tokenSquad);
 }
 
 /** 副将は総大将・副将が率いる隊にだけ入れる（兵長が率いる小隊には入れない） */
@@ -474,9 +474,9 @@ function reorg(op, a) {
       // 拠点にいちばん近い空きマス（拠点の範囲内）に置く
       for (let dy = -HUB_RANGE; dy <= HUB_RANGE; dy++) for (let dx = -HUB_RANGE; dx <= HUB_RANGE; dx++) {
         const x = hub.x + dx, y = hub.y + dy, ter = smapCell(m, x, y);
-        if (ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && distance({ x, y }, hub) <= HUB_RANGE) cell.push([x, y]);
+        if (ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && sqDist({ x, y }, hub) <= HUB_RANGE) cell.push([x, y]);
       }
-      cell.sort((p1, p2) => distance({ x: p1[0], y: p1[1] }, hub) - distance({ x: p2[0], y: p2[1] }, hub));
+      cell.sort((p1, p2) => sqDist({ x: p1[0], y: p1[1] }, hub) - sqDist({ x: p2[0], y: p2[1] }, hub));
       if (!cell.length) return fail(`拠点のまわり（${HUB_RANGE}マス以内）に新しい隊を置く空きマスがありません。`);
       from.members = from.members.filter(x => x !== a.id);
       const leader = memberById(army, a.id);
@@ -564,7 +564,7 @@ function deploy(side) {
   const dist = costMap(m, base);
   const cells = [];
   for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
-    if (TERRAIN[smapCell(m, x, y)].cost < Infinity && !fortAt(x, y)) cells.push({ x, y, c: dist[y * m.w + x] + distance({ x, y }, base) * 0.01 });
+    if (TERRAIN[smapCell(m, x, y)].cost < Infinity && !fortAt(x, y)) cells.push({ x, y, c: dist[y * m.w + x] + sqDist({ x, y }, base) * 0.01 });
   }
   cells.sort((a, b) => a.c - b.c);
   order.forEach((q, i) => m.tokens.push({ id: q.id, side, x: cells[i].x, y: cells[i].y, acted: false }));
@@ -603,7 +603,7 @@ function attackToken(t, target) {
   if (t.side === 'cpu') log(`CPU軍の攻撃！ 迎え撃つのは ${nm(tokenSquad(pt).name)} です。`, 'turn');
   // 砦の守り: 自軍の砦の上か隣にいる隊（守備隊を含む）は DEF +20%
   if (state.campaignBattle) {
-    const bonus = side => { const tok = side === 'player' ? pt : ct; return !!tok.fort || m.forts.some(f => f.owner === side && distance(f, tok) <= 1); };
+    const bonus = side => { const tok = side === 'player' ? pt : ct; return !!tok.fort || m.forts.some(f => f.owner === side && sqDist(f, tok) <= 1); };
     state.campaignBattle.fortBonus = { player: bonus('player'), cpu: bonus('cpu') };
     for (const side of ['player', 'cpu']) if (state.campaignBattle.fortBonus[side]) log(`🏯 ${side === 'player' ? '自軍' : 'CPU軍'}は砦の守りを得ている（DEF +${Math.round(FORT_DEF * 100)}%）`, side);
     saveGame();
@@ -642,7 +642,7 @@ function resolvePending() {
       // 負けた隊は相手から1マス離れる（空いていて通れるマスがあれば）
       const foe = m.tokens.find(x => x.id === p[winner]) || t;
       const exits = DIRS.map(([dx, dy]) => ({ x: t.x + dx, y: t.y + dy }))
-        .filter(c => smapCell(m, c.x, c.y) && TERRAIN[smapCell(m, c.x, c.y)].cost < Infinity && !tokenAt(c.x, c.y) && distance(c, foe) > distance(t, foe));
+        .filter(c => smapCell(m, c.x, c.y) && TERRAIN[smapCell(m, c.x, c.y)].cost < Infinity && !tokenAt(c.x, c.y) && sqDist(c, foe) > sqDist(t, foe));
       if (exits.length) {
         const c = pick(exits);
         [t.x, t.y] = [c.x, c.y];
@@ -703,7 +703,7 @@ function cpuRun() {
 /** CPU が攻撃したい相手（隣接・見えている・勝てそうな相手。弱い順） */
 function cpuTarget(t) {
   // 相手を囲んでいる味方（隣接しているCPUの隊）の戦力も合わせて考える（順に攻めかかれば削り切れる）
-  const around = o => liveTokens().filter(x => x.side === t.side && distance(x, o) === 1 && tokenKind(x) !== '斥候')
+  const around = o => liveTokens().filter(x => x.side === t.side && sqDist(x, o) === 1 && tokenKind(x) !== '斥候')
     .reduce((a, x) => a + tokenStrength(x), 0);
   // 相手の戦力は見積もり（プレイヤーと同じく正確には分からない）。同じターンのうちは同じ見積もりを使う
   const m = smap();
@@ -737,15 +737,15 @@ function cpuAct(t) {
   if (kind === '斥候') goal = m.bases.player;
   else {
     const forts = m.forts.filter(f => f.owner !== 'cpu' && !claimed.has(f.id) && kind !== '暗殺者')
-      .sort((a, b) => (b.id === t.goal) - (a.id === t.goal) || distance(a, t) - distance(b, t));   // 今の目標を優先
-    const foes = liveTokens().filter(o => sight.has(o.id)).sort((a, b) => distance(a, t) - distance(b, t));
+      .sort((a, b) => (b.id === t.goal) - (a.id === t.goal) || sqDist(a, t) - sqDist(b, t));   // 今の目標を優先
+    const foes = liveTokens().filter(o => sight.has(o.id)).sort((a, b) => sqDist(a, t) - sqDist(b, t));
     if (forts[0]) { goal = forts[0]; t.goal = forts[0].id; }
     else goal = foes[0] || m.bases.player;
   }
   const dist = costMap(m, goal);
   const reach = tokenReach(t);
   // 斥候は見えている敵から3マス以上離れる
-  const safe = ([x, y]) => kind !== '斥候' || liveTokens().every(o => o.side === 'cpu' || !sight.has(o.id) || distance(o, { x, y }) >= 3);
+  const safe = ([x, y]) => kind !== '斥候' || liveTokens().every(o => o.side === 'cpu' || !sight.has(o.id) || sqDist(o, { x, y }) >= 3);
   let best = null, bestC = dist[t.y * m.w + t.x];
   for (const [x, y] of reach) {
     const c = dist[y * m.w + x] + Math.random() * 0.3;
@@ -903,7 +903,7 @@ function renderStratBody() {
         ${!sel.acted && opts.length ? `<select id="sm-station"><option value="">副将を駐留させる…</option>${opts.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}</select>` : ''}
         ${hub ? `<button id="sm-reorg">🏯 ${hub.name}で再編成</button>` : ''}
       </div>
-      ${hub ? `<div class="sub">${hub.name}の近く（${HUB_RANGE}マス以内）にいるので、再編成できます${m.forts.some(f => f.owner === 'player' && distance(f, sel) <= 1) ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
+      ${hub ? `<div class="sub">${hub.name}の近く（${HUB_RANGE}マス以内）にいるので、再編成できます${m.forts.some(f => f.owner === 'player' && sqDist(f, sel) <= 1) ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
   } else if (ui.info && ui.info.startsWith('tok:')) {
     // 見えている敵の隊の詳細
     const e = liveTokens().find(o => o.id === ui.info.slice(4));

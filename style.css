@@ -482,3 +482,27 @@ tr.tap:hover td { background: #2f3440; }
 #battle.tilt .cell.rk-sgt .glyph > i { color: #e3ebf5; }
 #battle.tilt .cell.acting .glyph { box-shadow: 0 0 0 2px #ffd76f, 0 0 12px #ffd76f, 0 2px 0 rgba(0, 0, 0, 0.5) !important; }
 #battle.tilt .cell.target .glyph { box-shadow: 0 0 0 2px #ff5a4f, 0 0 10px #ff5a4f !important; }
+
+/* 六角マス（試作）: 頂点が上の六角形。奇数の行は半マス右にずらす。マスは --x, --y（マス単位）で置く */
+.field.hex { display: block; position: relative; box-sizing: border-box; }
+.field.hex .cell {
+  position: absolute; aspect-ratio: auto; border-radius: 0;
+  width: var(--cell); height: calc(var(--cell) * 1.1547);
+  left: calc(6px + var(--cell) * var(--x)); top: calc(6px + var(--cell) * 0.866 * var(--y));
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); transform: scale(0.95);
+}
+/* 切り抜くと枠線（outline）が見えなくなるので、内側の影で示す */
+.field.hex .cell.acting { outline: none; box-shadow: inset 0 0 0 calc(var(--cell) * 0.09) #ffd76f; }
+.field.hex .cell.target { outline: none; animation: none; box-shadow: inset 0 0 0 calc(var(--cell) * 0.1) #ff5a4f; }
+.field.hex .cell.deployzone { box-shadow: inset 0 0 0 calc(var(--cell) * 0.07) #ffd76f; }
+.field.hex .cell.spearhit { box-shadow: inset 0 0 0 calc(var(--cell) * 0.1) #ffd84a; }
+.field.hex .cell.atkrange::before { inset: 0; border: none; border-radius: 0; background: rgba(255, 120, 100, 0.28); }
+/* 駒の板: 床と同じ場所に重ね、切り抜かない。押せない（下の床が受ける） */
+.field.hex .cell.piece {
+  clip-path: none; transform: none; background: transparent !important; box-shadow: none; outline: none; animation: none;
+  height: var(--cell); margin-top: calc(var(--cell) * 0.077); pointer-events: none; z-index: 2; overflow: visible;
+}
+.field.hex .cell.piece .glyph { pointer-events: none; }
+.field.hex .cell.piece.target .glyph { animation: tgt-glow 1s ease-in-out infinite; }
+@keyframes tgt-glow { 50% { opacity: 0.7; } }
+.field.hex .cell.piece .tgt-mark { bottom: 0; }

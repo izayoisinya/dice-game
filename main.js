@@ -667,8 +667,55 @@ function searchPoint(unit) {
 }
 
 /** マンハッタン距離（4方向移動なので斜めは距離2） */
-function distance(a, b) {
+/** 正方形のマス目の距離（上下左右の歩数）。戦域図はいつもこれ */
+function sqDist(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+// ------------------------------------------------------------
+// 局地戦のマス目の形: 正方形（上下左右の4方向）/ 六角形（6方向）。map.hex で切り替える
+//   六角形は「頂点が上」の向きで、奇数の行を半マス右にずらす（odd-r）。横一列はまっすぐ並ぶ（真横に動ける）
+//   内部では斜めの座標（axial: q, r）に直して計算する
+// ------------------------------------------------------------
+function isHex() { return !!state.map?.hex; }
+const SQ_DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];                                      // → ↓ ← ↑
+const SQ_RING = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];   // 周りの8マス（時計回り）
+const HEX_DIRS = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];                     // axial: → ↘ ↙ ← ↖ ↗（時計回り）
+const toAxial = (x, y) => [x - (y - (y & 1)) / 2, y];
+const fromAxial = (q, r) => [q + (r - (r & 1)) / 2, r];
+/** 戦場の向き（まっすぐ進める方向）の一覧 */
+function dirList() { return isHex() ? HEX_DIRS : SQ_DIRS; }
+/** 周りのマスを時計回りに（薙ぎ払いの弧に使う）。正方形は斜めを含む8マス、六角形は隣の6マス */
+function ringList() { return isHex() ? HEX_DIRS : SQ_RING; }
+/** (x, y) から向き d に k マス進んだマス */
+function stepXY(x, y, d, k = 1) {
+  if (!isHex()) return [x + d[0] * k, y + d[1] * k];
+  const [q, r] = toAxial(x, y);
+  return fromAxial(q + d[0] * k, r + d[1] * k);
+}
+/** 隣のマス */
+function neighbors(x, y) { return dirList().map(d => stepXY(x, y, d)); }
+/** 局地戦の距離（歩数）。正方形は上下左右、六角形は6方向 */
+function distance(a, b) {
+  if (!isHex()) return sqDist(a, b);
+  const [aq, ar] = toAxial(a.x, a.y), [bq, br] = toAxial(b.x, b.y);
+  const dq = aq - bq, dr = ar - br;
+  return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+}
+/** from から to がまっすぐの向きなら、その向き（そうでなければ null） */
+function lineDir(from, to) {
+  const k = distance(from, to);
+  if (!k) return null;
+  return dirList().find(d => { const [x, y] = stepXY(from.x, from.y, d, k); return x === to.x && y === to.y; }) || null;
+}
+/** (cx, cy) からちょうど r マス（le = true なら r マス以内）のマス */
+function cellsAround(cx, cy, r, le = false) {
+  const out = [];
+  for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r - 1; x <= cx + r + 1; x++) {
+    const dd = distance({ x: cx, y: cy }, { x, y });
+    if (le ? dd <= r : dd === r) out.push([x, y]);
+  }
+  return out;
 }
 
 function unitAt(x, y) {
@@ -801,7 +848,7 @@ function tickUnit(u) {
 
 /** 攻撃対象に上下左右で隣接している、攻撃側の味方の数（攻撃者自身は除く） */
 function surroundCount(attacker, defender) {
-  return alliesOf(attacker).filter(a => Math.abs(a.x - defender.x) + Math.abs(a.y - defender.y) === 1).length;
+  return alliesOf(attacker).filter(a => distance(a, defender) === 1).length;
 }
 
 /**
@@ -872,11 +919,9 @@ function withinFrontLine(unit, p) {
     : p.y <= Math.max(...front.map(a => a.y));
 }
 
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // 上下左右の4方向
-
 /** 地点 (x,y) が、unit から見て敵の足止め（ZOC）範囲（上下左右に隣接）か */
 function inEnemyZoc(unit, x, y, known = false) {
-  return enemiesOf(unit).some(e => e.traits.includes('zoc') && Math.abs(e.x - x) + Math.abs(e.y - y) === 1 && knownFoe(unit, e, known));
+  return enemiesOf(unit).some(e => e.traits.includes('zoc') && distance(e, { x, y }) === 1 && knownFoe(unit, e, known));
 }
 /** known: false = すべての敵 / true = 今見えている敵 / Set = その id の敵（移動前に見えていた敵） */
 function knownFoe(unit, e, known) {
@@ -901,8 +946,8 @@ function reachableCells(unit, steps, known = false) {
   for (let s = 0; s < steps; s++) {
     const next = [];
     for (const [x, y] of frontier) {
-      for (const [dx, dy] of DIRS) {
-        const nx = x + dx, ny = y + dy, key = `${nx},${ny}`;
+      for (const [nx, ny] of neighbors(x, y)) {
+        const key = `${nx},${ny}`;
         if (nx < 0 || ny < 0 || nx >= w || ny >= h || seen.has(key)) continue;
         const foe = enemyAt(unit, nx, ny, known);
         if (foe) continue;                                 // 敵は通り抜け不可
@@ -945,15 +990,15 @@ function moveUnit(unit, steps, score) {
 function findCharge(unit) {
   const { w, h } = state.map;
   let best = null;
-  for (const [dx, dy] of DIRS) {
+  for (const d of dirList()) {
     for (let k = 1; k <= unit.move + 1; k++) {
-      const x = unit.x + dx * k, y = unit.y + dy * k;
+      const [x, y] = stepXY(unit.x, unit.y, d, k);
       if (x < 0 || y < 0 || x >= w || y >= h) break;
       const other = unitAt(x, y);
       if (other && other.side !== unit.side) {
         if (!visibleTo(unit.side, other)) break;   // 見えない敵には突撃できない
         const run = k - 1;   // 敵の手前まで走ったマス数
-        const sx = x - dx, sy = y - dy;
+        const [sx, sy] = stepXY(unit.x, unit.y, d, k - 1);
         const stopFree = run === 0 || !unitAt(sx, sy);
         if (run >= CHARGE_MIN && stopFree && (!best || run > best.run)) {
           best = { run, x: sx, y: sy, target: other };
@@ -964,7 +1009,7 @@ function findCharge(unit) {
       if (inEnemyZoc(unit, x, y)) {
         if (other) break;   // ZOC 内の味方マスには止まれず、先にも進めない
         // ZOC で止まる。止まったマスの隣（直線上）に敵がいれば突撃は成立する
-        const nx = x + dx, ny = y + dy, ahead = unitAt(nx, ny);
+        const [nx, ny] = stepXY(unit.x, unit.y, d, k + 1), ahead = unitAt(nx, ny);
         if (k >= CHARGE_MIN && ahead && ahead.side !== unit.side && visibleTo(unit.side, ahead) && (!best || k > best.run)) {
           best = { run: k, x, y, target: ahead };
         }
@@ -979,11 +1024,11 @@ function findCharge(unit) {
 function dashOptions(unit) {
   if (!unit.traits.includes('dash') || unit.dashed || unit.rooted) return [];
   const opts = [];
-  for (const [dx, dy] of DIRS) {
-    const e = enemyAt(unit, unit.x + dx, unit.y + dy, true);
-    const tx = unit.x + 2 * dx, ty = unit.y + 2 * dy;
+  for (const d of dirList()) {
+    const e = enemyAt(unit, ...stepXY(unit.x, unit.y, d), true);
+    const [tx, ty] = stepXY(unit.x, unit.y, d, 2);
     if (!e || tx < 0 || ty < 0 || tx >= state.map.w || ty >= state.map.h || unitAt(tx, ty)) continue;
-    opts.push({ target: e, to: [tx, ty], dir: [dx, dy] });
+    opts.push({ target: e, to: [tx, ty], dir: d });
   }
   return opts;
 }
@@ -1004,32 +1049,32 @@ function performDash(unit, opt) {
  *   薙ぎ払い = 周りの8マスのうち、ひと続きの3マス（例: 左・左斜め前・前）の弧に敵が2体以上（見えている）
  * を探す。{ kind, name, hits: [{ u, mult }], dir } の配列
  */
-const RING = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];   // 周りの8マス（時計回り）
 function spearOptions(unit) {
   if (!unit.traits.includes('spear')) return [];
   const foe = (x, y) => { const o = unitAt(x, y); return o && o.side !== unit.side && visibleTo(unit.side, o) ? o : null; };
   const opts = [];
-  for (const [dx, dy] of DIRS) {
-    const front = foe(unit.x + dx, unit.y + dy);
-    const back = front && foe(unit.x + 2 * dx, unit.y + 2 * dy);
+  for (const d of dirList()) {
+    const front = foe(...stepXY(unit.x, unit.y, d));
+    const back = front && foe(...stepXY(unit.x, unit.y, d, 2));
     if (back && effRng(unit) >= 2) {
       const m = THRUST_MULT[lv(unit)];
-      opts.push({ kind: 'thrust', name: '突き', dir: [dx, dy], hits: [{ u: front, mult: m[0] }, { u: back, mult: m[1] }] });
+      opts.push({ kind: 'thrust', name: '突き', dir: d, hits: [{ u: front, mult: m[0] }, { u: back, mult: m[1] }] });
     }
   }
   const seen = new Set();
-  for (let i = 0; i < RING.length; i++) {
-    const arc = [RING[(i + 7) % 8], RING[i], RING[(i + 1) % 8]];
-    const us = arc.map(([dx, dy]) => foe(unit.x + dx, unit.y + dy)).filter(Boolean);
+  const ring = ringList(), n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const arc = [ring[(i + n - 1) % n], ring[i], ring[(i + 1) % n]];
+    const us = arc.map(d => foe(...stepXY(unit.x, unit.y, d))).filter(Boolean);
     if (us.length < 2) continue;
     const key = us.map(u => u.id).sort().join(',');
     if (seen.has(key)) continue;   // 同じ顔ぶれになる弧は1つだけ
     seen.add(key);
     // 反撃してくるのは弧の真ん中（いなければ上下左右で隣の敵）
-    const mid = foe(unit.x + RING[i][0], unit.y + RING[i][1]);
+    const mid = foe(...stepXY(unit.x, unit.y, ring[i]));
     const main = mid || us.find(u => distance(unit, u) === 1) || us[0];
     const mult = SWEEP_MULT[us.length][lv(unit)];
-    opts.push({ kind: 'sweep', name: '薙ぎ払い', dir: RING[i], main, hits: us.map(u => ({ u, mult })) });
+    opts.push({ kind: 'sweep', name: '薙ぎ払い', dir: ring[i], main, hits: us.map(u => ({ u, mult })) });
   }
   return opts;
 }
@@ -1072,9 +1117,11 @@ function braceStrike(unit, fromX, fromY) {
 }
 
 /** 技の向き（ボタンの表示用） */
-function dirName(unit, opt) {
-  const [dx, dy] = opt.dir;
-  return { '0,-1': '↑', '1,-1': '↗', '1,0': '→', '1,1': '↘', '0,1': '↓', '-1,1': '↙', '-1,0': '←', '-1,-1': '↖' }[`${dx},${dy}`] || '';
+function dirName(unit, opt) { return dirArrow(opt.dir); }
+/** 向きの矢印。六角形は → ↘ ↙ ← ↖ ↗ の6つ */
+function dirArrow(d) {
+  if (isHex()) return ['→', '↘', '↙', '←', '↖', '↗'][HEX_DIRS.findIndex(h => h[0] === d[0] && h[1] === d[1])] || '';
+  return { '0,-1': '↑', '1,-1': '↗', '1,0': '→', '1,1': '↘', '0,1': '↓', '-1,1': '↙', '-1,0': '←', '-1,-1': '↖' }[d.join(',')] || '';
 }
 
 /** 範囲攻撃の見込み（倍率 × 相性の合計）。オートで普通の攻撃と比べる */
@@ -1105,11 +1152,11 @@ function performSpear(unit, opt, atkMult = 1) {
  * 盾兵が代わりに攻撃を受ける（いちばん攻撃側に近い盾兵）。隣接した相手への攻撃には間がないので起きない
  */
 function coverFor(attacker, target) {
-  if (attacker.x !== target.x && attacker.y !== target.y) return target;
+  const d = lineDir(attacker, target);
+  if (!d) return target;
+  // 攻撃側から同じ向きにまっすぐ進んだ途中（狙われた側より手前）にいる盾兵
   const between = u => u.alive && u.side === target.side && u !== target && u.traits.includes('cover') &&
-    (attacker.x === target.x
-      ? u.x === target.x && (u.y - attacker.y) * (u.y - target.y) < 0
-      : u.y === target.y && (u.x - attacker.x) * (u.x - target.x) < 0);
+    distance(attacker, u) < distance(attacker, target) && lineDir(attacker, u) === d;
   const guards = allUnits().filter(between).sort((a, b) => distance(a, attacker) - distance(b, attacker));
   if (!guards.length) return target;
   log(`🛡 ${guards[0].name} が ${target.name} を庇った！`, guards[0].side);
@@ -1233,20 +1280,17 @@ function advanceScorer(unit, target) {
   const seen = new Set();
   const b = bestVs(unit, target);
   for (const e of enemies) {
-    for (let dx = -b; dx <= b; dx++) {
-      const r = b - Math.abs(dx);
-      for (const dy of r === 0 ? [0] : [-r, r]) {
-        const x = e.x + dx, y = e.y + dy, key = `${x},${y}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        if (!free(x, y)) continue;
-        const p = { x, y };
-        if (enemies.some(o => distance(p, o) < b)) continue;
-        // 囲み度: この位置から狙える敵に、すでに張り付いている味方の数
-        const gang = Math.max(...enemies.filter(o => distance(p, o) === b)
-          .map(o => alliesOf(unit).filter(a => distance(a, o) <= a.best).length));
-        ideal.push({ x, y, gang });
-      }
+    for (const [x, y] of cellsAround(e.x, e.y, b)) {
+      const key = `${x},${y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!free(x, y)) continue;
+      const p = { x, y };
+      if (enemies.some(o => distance(p, o) < b)) continue;
+      // 囲み度: この位置から狙える敵に、すでに張り付いている味方の数
+      const gang = Math.max(...enemies.filter(o => distance(p, o) === b)
+        .map(o => alliesOf(unit).filter(a => distance(a, o) <= a.best).length));
+      ideal.push({ x, y, gang });
     }
   }
   return p => {
@@ -1657,15 +1701,15 @@ function manualTargets(unit) {
  */
 function manualCharge(unit, fromX, fromY, known = false) {
   if (!unit.traits.includes('charge')) return null;
-  const dx = Math.sign(unit.x - fromX), dy = Math.sign(unit.y - fromY);
-  if (dx !== 0 && dy !== 0) return null;
-  const run = Math.abs(unit.x - fromX) + Math.abs(unit.y - fromY);
+  const from = { x: fromX, y: fromY }, d = lineDir(from, unit);
+  if (!d) return null;
+  const run = distance(from, unit);
   if (run < CHARGE_MIN) return null;
   for (let k = 1; k < run; k++) {
-    const x = fromX + dx * k, y = fromY + dy * k;
+    const [x, y] = stepXY(fromX, fromY, d, k);
     if (enemyAt(unit, x, y, known) || inEnemyZoc(unit, x, y, known)) return null;
   }
-  const ahead = enemyAt(unit, unit.x + dx, unit.y + dy, known);
+  const ahead = enemyAt(unit, ...stepXY(unit.x, unit.y, d), known);
   return ahead ? { run, target: ahead.id } : null;
 }
 
@@ -2019,6 +2063,7 @@ function renderField(acting) {
   const field = $('field');
   // 新しいマスは別の入れ物に作ってから一度に差し替える（途中で空になると、スクロール位置が先頭に戻されるため）
   const cells = document.createDocumentFragment();
+  const pieces = [];
   const mark = u => (u.isCommander ? '★' : u.rank === '副将' ? '☆' : u.rank === '兵長' ? '◆' : '');
   const short = u => mark(u) + u.type[0];
   const rankCls = u => (u.isCommander ? ' rk-lead' : u.rank === '副将' ? ' rk-gen' : u.rank === '兵長' ? ' rk-sgt' : '');
@@ -2039,9 +2084,8 @@ function renderField(acting) {
     && (state.manual.gaugeAdded ? cur.gauge : chargedGauge(cur)) >= ACT_PER_ATTACK) {
     const rng = effRng(cur);
     for (const [ox, oy] of [[cur.x, cur.y], ...reach].map(k => typeof k === 'string' ? k.split(',').map(Number) : k)) {
-      for (let dx = -rng; dx <= rng; dx++) for (let dy = -(rng - Math.abs(dx)); dy <= rng - Math.abs(dx); dy++) {
-        const x = ox + dx, y = oy + dy;
-        if (x >= 0 && y >= 0 && x < w && y < h && !(dx === 0 && dy === 0 && ox === cur.x && oy === cur.y)) atkRange.add(`${x},${y}`);
+      for (const [x, y] of cellsAround(ox, oy, rng, true)) {
+        if (x >= 0 && y >= 0 && x < w && y < h) atkRange.add(`${x},${y}`);
       }
     }
     for (const k of reach) atkRange.delete(k);
@@ -2049,15 +2093,22 @@ function renderField(acting) {
   }
   // プレイヤー軍の視界。霧ありなら、見えない敵は手動でもオートでも描かない
   const eyes = state.player.units.filter(u => u.alive);
-  const inSight = (x, y) => !state.fog || eyes.some(o => Math.abs(o.x - x) + Math.abs(o.y - y) <= (o.vision ?? VISION_DEFAULT));
+  const inSight = (x, y) => !state.fog || eyes.some(o => distance(o, { x, y }) <= (o.vision ?? VISION_DEFAULT));
   // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。戦域図と同じ
   const fw = $('field-wrap');
-  const fit = Math.min((fw.clientWidth - 12) / (w + 2), (fw.clientHeight - 12) / (h + 2));
+  const hex = isHex(), rowK = hex ? HEX_ROW : 1;   // 六角形は行の間隔が詰まる
+  const fit = Math.min((fw.clientWidth - 12) / (w + (hex ? 2.5 : 2)), (fw.clientHeight - 12) / ((h + 2) * rowK));
   const oldPad = `${fieldPad.x},${fieldPad.y}`;
   fieldPad.x = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientWidth - 12) / fit - w) / 2) + 1) : 0;
-  fieldPad.y = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientHeight - 12) / fit - h) / 2) + 1) : 0;
+  fieldPad.y = fw.clientWidth && fit > 0 ? Math.max(1, Math.ceil(((fw.clientHeight - 12) / (fit * rowK) - h) / 2) + 1) : 0;
   if (oldPad !== `${fieldPad.x},${fieldPad.y}`) fieldCentered = null;   // 外側の段数が変わったら（画面の大きさが変わった）真ん中に合わせ直す
-  field.style.gridTemplateColumns = `repeat(${w + fieldPad.x * 2}, minmax(0, 1fr))`;
+  field.classList.toggle('hex', hex);
+  field.style.gridTemplateColumns = hex ? '' : `repeat(${w + fieldPad.x * 2}, minmax(0, 1fr))`;
+  // 六角形: マスは置き場所（--x, --y）を指定して並べる。奇数の行は半マス右へ
+  const place = (el, x, y) => {
+    el.style.setProperty('--x', x + fieldPad.x + (y & 1) * 0.5);
+    el.style.setProperty('--y', y + fieldPad.y);
+  };
   for (let y = -fieldPad.y; y < h + fieldPad.y; y++) {
     for (let x = -fieldPad.x; x < w + fieldPad.x; x++) {
       if (x < 0 || y < 0 || x >= w || y >= h) {
@@ -2066,6 +2117,7 @@ function renderField(acting) {
         const far = Math.min(6, Math.max(-x, -y, x - w + 1, y - h + 1));
         const k = 0.5 - far * 0.05;   // 離れるほど暗い（filter を使うと 2.5D 表示で描き崩れるので色で付ける）
         oob.style.background = `rgb(${Math.round(42 * k)}, ${Math.round(51 * k)}, ${Math.round(38 * k)})`;
+        if (hex) place(oob, x, y);
         cells.appendChild(oob);
         continue;
       }
@@ -2080,7 +2132,7 @@ function renderField(acting) {
         (u && targets.has(u.id) ? ' target' : '') +
         (inSight(x, y) ? '' : ' fog') + (u && ghost ? ' ghost' : '') +
         (chargeSet.has(`${x},${y}`) ? ' charge' : '') +
-        (cmdRange && Math.abs(curU.x - x) + Math.abs(curU.y - y) <= COMMAND_RANGE ? ' skillrange' : '') +
+        (cmdRange && distance(curU, { x, y }) <= COMMAND_RANGE ? ' skillrange' : '') +
         (spearCells.has(`${x},${y}`) ? ' spearhit' : '') +
         (deploy && inDeployZone(x, y) ? ' deployzone' : '') + (deploy && u && u.id === ui2.deploySel ? ' acting' : '') +
         (u && u.buffs.length ? ' buffed' : '') + (u ? rankCls(u) : '');
@@ -2089,12 +2141,22 @@ function renderField(acting) {
       if (chargeSet.has(`${x},${y}`)) cell.title = '🐎 ここへ一直線に走ると突撃（初撃の威力アップ）';
       if (u) {
         cell.title = `${nm(u.name)} HP ${u.hp}/${u.maxHp}` + (u.buffs.length ? ` / ${buffText(u)}` : '');
-        cell.innerHTML = `<span class="glyph"><b>${u.type[0]}</b>${mark(u) ? `<i>${mark(u)}</i>` : ''}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>` +
+        const html = `<span class="glyph"><b>${u.type[0]}</b>${mark(u) ? `<i>${mark(u)}</i>` : ''}</span><span class="mini-hp" style="width:${u.hp / u.maxHp * 100}%"></span>` +
           (targets.has(u.id) ? '<span class="tgt-mark">⚔</span>' : '');
+        if (hex) {
+          // 六角形の床は形に切り抜くので、駒は切り抜かない別の板に載せて重ねる（押したときは下の床のマスが受ける）
+          const piece = document.createElement('div');
+          piece.className = 'cell piece ' + [...cell.classList].filter(c => /^(p|c|acting|target|ghost|buffed|rk-.*)$/.test(c)).join(' ');
+          piece.innerHTML = html;
+          place(piece, x, y);
+          pieces.push(piece);
+        } else cell.innerHTML = html;
       }
+      if (hex) place(cell, x, y);
       cells.appendChild(cell);
     }
   }
+  for (const pc of pieces) cells.appendChild(pc);   // 駒は床より後（手前）に
   field.replaceChildren(cells);
   applyZoom('field');
   // 新しい戦場を開いたときは、マップが真ん中に来るようにスクロールしておく
@@ -2108,7 +2170,7 @@ function renderField(acting) {
     (state.fog ? '<br>暗いマス=視界の外' : '');
   const legend = '';
   $('turn-label').textContent =
-    `${type} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
+    `${type}${hex ? '・六角マス' : ''} ${w}×${h}（幅 ${MAP_MIN_W}+🎲[${wd.dice.join('][')}] / 高さ ${MAP_MIN_H}+🎲[${hd.dice.join('][')}]）` +
     (state.turn ? `　ターン ${state.turn}` : '') + legend;
 }
 
@@ -2156,7 +2218,7 @@ function renderActionPanel() {
   const canHit = (state.phase === 'move' || state.phase === 'attack') && gauge >= ACT_PER_ATTACK;
   const spOpts = canHit ? spearOptions(unit) : [];
   const dashOpts = canHit ? dashOptions(unit) : [];
-  const dashBtns = dashOpts.map((o, i) => `<button class="skill" data-dash="${i}">💨すれ違い斬り${{ '0,-1': '↑', '1,0': '→', '0,1': '↓', '-1,0': '←' }[o.dir.join(',')]}（${o.target.name}）</button>`).join('');
+  const dashBtns = dashOpts.map((o, i) => `<button class="skill" data-dash="${i}">💨すれ違い斬り${dirArrow(o.dir)}（${o.target.name}）</button>`).join('');
   // 1回目のタップで盤面に当たる敵を表示、2回目（「実行」）で攻撃する
   if (ui2.spear != null && !spOpts[ui2.spear]) ui2.spear = null;
   const spearBtns = spOpts.map((o, i) => `<button class="skill ${ui2.spear === i ? 'armed' : ''}" data-spear="${i}">🔱${o.name}${dirName(unit, o)}${ui2.spear === i ? ' ▶ 実行' : ''}（${o.hits.map(h => `${h.u.name} ${Math.round(h.mult * 100)}%`).join('・')}）</button>`).join('');
@@ -2235,6 +2297,8 @@ function placeActionPanel() {
 // ------------------------------------------------------------
 
 const zoom = { field: 1, smap: 1 };
+const HEX_TALL = 2 / Math.sqrt(3);   // 六角形のマスの高さ（幅 = 1）
+const HEX_ROW = HEX_TALL * 0.75;     // 六角形の行の間隔（≒ 0.866）
 const fieldPad = { x: 0, y: 0 };   // 局地戦のマップの外側に描く段数（戦域図は ui.pad）
 let fieldCentered = null;          // 真ん中に合わせ済みの戦場
 let fieldJustCentered = false;     // この描き直しで真ん中に合わせた（スクロールを戻さない）
@@ -2248,11 +2312,20 @@ function applyZoom(kind) {
   const maxH = parseFloat(getComputedStyle(wrap).maxHeight);
   const availH = Math.max(160, Number.isFinite(maxH) ? maxH : (wrap.clientHeight || window.innerHeight * 0.6));
   const edge = 2;   // マップの外側1段も入れて収める
-  const fit = Math.min((wrap.clientWidth - 12) / (map.w + edge), (availH - 12) / (map.h + edge));   // 全体が収まるマスの大きさ
+  const hex = kind === 'field' && !!map.hex, rowK = hex ? HEX_ROW : 1;
+  const fit = Math.min((wrap.clientWidth - 12) / (map.w + edge + (hex ? 0.5 : 0)), (availH - 12) / ((map.h + edge) * rowK));   // 全体が収まるマスの大きさ
   const cell = Math.max(8, fit * zoom[kind]);
   const pad = kind === 'smap' ? (typeof ui !== 'undefined' && ui.pad) : fieldPad;
   const cols = map.w + (pad ? pad.x * 2 : 0);   // マップの外側の分も
-  el.style.width = `${Math.floor(cell * cols)}px`;
+  if (hex) {
+    // 六角形のマスは並べ方を自分で決めるので、入れ物の大きさも計算して決める（横は半マスずれる分、縦は行が詰まる分）
+    const rows = map.h + (pad ? pad.y * 2 : 0);
+    el.style.width = `${Math.ceil(cell * (cols + 0.5)) + 12}px`;
+    el.style.height = `${Math.ceil(cell * (HEX_ROW * (rows - 1) + HEX_TALL)) + 12}px`;
+  } else {
+    el.style.width = `${Math.floor(cell * cols)}px`;
+    el.style.height = '';
+  }
   el.style.maxWidth = 'none';
   el.style.setProperty('--cell', `${cell}px`);
 }
@@ -2795,6 +2868,7 @@ function startCampaignBattle(pid, cid) {
   reset();
   state.mode = $('mode').value;
   state.map = formMap();
+  state.map.hex = $('hexgrid').checked;   // 局地戦のマス目の形（設定）。戦いの途中では変えない
   state.player = buildBattleArmy('player', A.player, pq, state.map);
   state.cpu = buildBattleArmy('cpu', A.cpu, cq, state.map);
   state.cmdReady = true;
@@ -3292,6 +3366,13 @@ function onCampaignChange(e) {
 $('campaign').addEventListener('click', onCampaignClick);
 $('campaign').addEventListener('change', onCampaignChange);
 $('mode').addEventListener('change', onModeChange);
+// 局地戦のマス目を六角形にする（試作）。次の局地戦から。オン・オフは覚えておく
+{
+  try { $('hexgrid').checked = localStorage.getItem('battleHex') === '1'; } catch {}
+  $('hexgrid').addEventListener('change', () => {
+    try { localStorage.setItem('battleHex', $('hexgrid').checked ? '1' : '0'); } catch {}
+  });
+}
 // 局地戦の 2.5D 表示（試作）。オン・オフは覚えておく
 {
   const apply = on => { $('battle').classList.toggle('tilt', on); $('tilt').checked = on; };
