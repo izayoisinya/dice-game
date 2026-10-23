@@ -65,7 +65,7 @@ function init3d() {
   F3.renderer = r;
   F3.scene = new T.Scene();
   F3.scene.background = new T.Color(0x14161a);
-  F3.camera = new T.PerspectiveCamera(F3_FOV, 1, 0.1, 400);
+  F3.camera = new T.PerspectiveCamera(F3_FOV, 1, 0.5, 300);
   F3.scene.add(new T.HemisphereLight(0xe4ecff, 0x30362a, 0.6));
   const sun = new T.DirectionalLight(0xfff0d8, 0.7);
   sun.castShadow = true;
@@ -140,7 +140,7 @@ function buildMap3d() {
     const inner = m.hex ? out - w / Math.cos(Math.PI / 6) : out - w / Math.cos(Math.PI / 4);
     const g = new T.RingGeometry(inner, out, m.hex ? 6 : 4, 1, m.hex ? 0 : Math.PI / 4);
     g.rotateX(-Math.PI / 2);
-    g.translate(0, 0.004, 0);
+    g.translate(0, 0.01, 0);
     const mesh = new T.InstancedMesh(g, new T.MeshBasicMaterial({ color: 0xffffff }), m.w * m.h);
     mesh.setColorAt(0, new T.Color(0xffffff));   // 色の入れ物を先に作っておく（後から作ると色が反映されない）
     mesh.count = 0;
@@ -227,10 +227,11 @@ function makePiece(u, rank) {
   board.position.y = 0.07 + 0.46;
   board.castShadow = true;
   // HP バー（いつもこちらを向く板）
-  const hpBg = new T.Sprite(new T.SpriteMaterial({ color: 0x222222 }));
-  hpBg.center.set(0, 0.5); hpBg.scale.set(0.62, 0.075, 1); hpBg.position.set(-0.31, 1.12, 0);
+  // 下地と緑は同じ深さに重なるので、下地は奥行きを書かずに先に描き、緑を必ずその上に描く（向きによって緑が隠れてちらつかないように）
+  const hpBg = new T.Sprite(new T.SpriteMaterial({ color: 0x222222, depthWrite: false }));
+  hpBg.center.set(0, 0.5); hpBg.scale.set(0.62, 0.075, 1); hpBg.position.set(-0.31, 1.12, 0); hpBg.renderOrder = 5;
   const hp = new T.Sprite(new T.SpriteMaterial({ color: 0x55cc55 }));
-  hp.center.set(0, 0.5); hp.scale.set(0.62, 0.075, 1); hp.position.set(-0.31, 1.12, 0.001);
+  hp.center.set(0, 0.5); hp.scale.set(0.62, 0.075, 1); hp.position.set(-0.31, 1.12, 0); hp.renderOrder = 6;
   const tgt = new T.Sprite(new T.SpriteMaterial({ map: glyphTex('⚔', '#fff', '#ff5a4f'), depthTest: false }));
   tgt.scale.set(0.36, 0.36, 1); tgt.position.set(0.3, 1.36, 0); tgt.renderOrder = 10;
   const buff = new T.Sprite(new T.SpriteMaterial({ map: glyphTex('▲', '#ffd76f'), depthTest: false }));
