@@ -162,8 +162,8 @@ const TYPES = {
             falloff: { 1: { hit: 0.9, pow: 0.9 }, 2: { hit: 0.85, pow: 1.0 } } },
   // 遠距離攻撃の代わりに脆い。
   // 平面（マンハッタン距離）向け: 斜め方向は距離が長く数えられ、前衛越しに撃つと距離3〜4になるため
-  // 最適帯を2〜3に広げ、射程を5にしている
-  '弓兵': { stats: { hp: 70, atk: 110, def: 40, spd: 80, act: 70 }, rng: 5, hit: 80, best: 3, rear: true, traits: ['aim'],
+  // 最適帯を2〜3に広げ、射程を5にしている。六角マスは斜めも短く数えるので射程4（hexRng）
+  '弓兵': { stats: { hp: 70, atk: 110, def: 40, spd: 80, act: 70 }, rng: 5, hexRng: 4, hit: 80, best: 3, rear: true, traits: ['aim'],
             falloff: { 1: { hit: 0.5, pow: 0.5 },    // 近すぎると狙いにくく、弓を引ききれず威力も落ちる（剣に詰め寄られると弱い）
                        2: { hit: 1.0, pow: 1.0 },    // 最大性能
                        3: { hit: 1.0, pow: 1.0 },    // 最大性能（前衛越しの基本距離）
@@ -247,7 +247,7 @@ function sergeantStats(st, f) {
 
 function scaleStats(type, cost) {
   const t = TYPES[type];
-  const budget = cost - (rngCost(t.rng) + traitCost(t)) * cost / BASE_COST;
+  const budget = cost - (rngCost(typeRng(t)) + traitCost(t)) * cost / BASE_COST;
   const baseSum = STAT_KEYS.reduce((s, k) => s + (t.stats[k] || 0), 0);
   const out = {};
   for (const k of STAT_KEYS) out[k] = Math.round((t.stats[k] || 0) * budget / baseSum);
@@ -455,7 +455,7 @@ class Unit {
     // SPD・ACT は兵士の駒と同じ物差し（階級の倍率を割り戻した値）で持つ。行動順・回避・表示はこの値
     // 兵長は割り戻した SPD/ACT のコストの一部で、兵士より少し速い（+SERGEANT_SPD）。残りは固有能力の強化（兵長の値）に使う扱い
     this.spd = Math.round(st.spd / tempoDiv) + (rank === '兵長' && !t.special ? SERGEANT_SPD : 0) + (d(3) - 1) * 10;   // 行動順。個体差 +0〜20
-    this.rng = cs ? cs.rng : t.rng;
+    this.rng = cs ? cs.rng : typeRng(t);
     this.act = Math.round(st.act / tempoDiv);
     this.move = Math.max(1, Math.ceil(st.spd / tempoDiv / MOVE_DIV)) + MOVE_BONUS;
     this.actRate = st.act / tempoDiv;      // 1行動ごとに行動ゲージにたまる量
@@ -822,6 +822,17 @@ function gaugeCap(u) {
   return ACT_GAUGE_MAX * Math.max(1, Math.sqrt(sizeRatio(u)));
 }
 function effRng(u) { return u.rng + u.rngBonus; }
+
+/**
+ * 六角マスの局地戦では、兵種によって射程を変える（hexRng。弓兵 5 → 4）。六角は斜めも短く数えるので、射程4で正方形の射程5と同じくらい届く。
+ * 射程はコストを使うので、短くなった分は HP・ATK などに回る（コスト制のまま）。局地戦の駒を作る間だけ buildHex を立てる
+ */
+let buildHex = false;
+function typeRng(t) { return buildHex && t.hexRng != null ? t.hexRng : t.rng; }
+function withGrid(map, fn) {
+  buildHex = !!map?.hex;
+  try { return fn(); } finally { buildHex = false; }
+}
 
 function skillReady(u, name) {
   return u.skills.includes(name) && !(u.cooldowns[name] > 0);
@@ -2889,8 +2900,8 @@ function startCampaignBattle(pid, cid) {
   state.mode = $('mode').value;
   state.map = formMap();
   state.map.hex = $('hexgrid').checked;   // 局地戦のマス目の形（設定）。戦いの途中では変えない
-  state.player = buildBattleArmy('player', A.player, pq, state.map);
-  state.cpu = buildBattleArmy('cpu', A.cpu, cq, state.map);
+  state.player = withGrid(state.map, () => buildBattleArmy('player', A.player, pq, state.map));
+  state.cpu = withGrid(state.map, () => buildBattleArmy('cpu', A.cpu, cq, state.map));
   state.cmdReady = true;
   const before = side => {
     const o = {};
