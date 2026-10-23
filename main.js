@@ -3386,9 +3386,11 @@ function onCampaignChange(e) {
 $('campaign').addEventListener('click', onCampaignClick);
 $('campaign').addEventListener('change', onCampaignChange);
 $('mode').addEventListener('change', onModeChange);
-// 局地戦のマス目を六角形にする（試作）。次の局地戦から。オン・オフは覚えておく
+// 局地戦のマス目を六角形にする（標準）。次の局地戦から。オン・オフは覚えておく
 {
-  try { $('hexgrid').checked = localStorage.getItem('battleHex') === '1'; } catch {}
+  let saved = null;
+  try { saved = localStorage.getItem('battleHex'); } catch {}
+  $('hexgrid').checked = saved == null ? true : saved === '1';   // 六角マスが標準（オフにしたことがある人はそのまま）
   $('hexgrid').addEventListener('change', () => {
     try { localStorage.setItem('battleHex', $('hexgrid').checked ? '1' : '0'); } catch {}
   });
