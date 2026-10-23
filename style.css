@@ -491,11 +491,24 @@ tr.tap:hover td { background: #2f3440; }
   left: calc(6px + var(--cell) * 0.866 * var(--x)); top: calc(6px + var(--cell) * var(--y));
   clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); transform: scale(0.95);
 }
-/* 切り抜くと枠線（outline）が見えなくなるので、内側の影で示す */
-.field.hex .cell.acting { outline: none; box-shadow: inset 0 0 0 calc(var(--cell) * 0.09) #ffd76f; }
-.field.hex .cell.target { outline: none; animation: none; box-shadow: inset 0 0 0 calc(var(--cell) * 0.1) #ff5a4f; }
-.field.hex .cell.deployzone { box-shadow: inset 0 0 0 calc(var(--cell) * 0.07) #ffd76f; }
-.field.hex .cell.spearhit { box-shadow: inset 0 0 0 calc(var(--cell) * 0.1) #ffd84a; }
+/* 切り抜くと枠線（outline）や内側の影が四角のまま欠けて見えるので、六角形の縁取り（外の六角 − 内の六角）を重ねて示す。
+   --ring = 色、--rw = 太さ。内の六角は、斜めの辺が同じ太さになるよう頂点を横に 0.577 / 1.155 倍ずらす */
+#battle .field.hex .cell:not(.piece)::after {
+  content: ''; position: absolute; inset: 0; width: auto; height: auto; border-radius: 0; font-size: 0; color: transparent;
+  pointer-events: none; z-index: 1; background: var(--ring, transparent);
+  --b: calc(var(--cell) * var(--rw, 0.07));
+  clip-path: polygon(evenodd, 25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%, 25% 0,
+    calc(25% + var(--b) * 0.577) var(--b), calc(75% - var(--b) * 0.577) var(--b), calc(100% - var(--b) * 1.155) 50%,
+    calc(75% - var(--b) * 0.577) calc(100% - var(--b)), calc(25% + var(--b) * 0.577) calc(100% - var(--b)), calc(var(--b) * 1.155) 50%,
+    calc(25% + var(--b) * 0.577) var(--b));
+}
+.field.hex .cell.acting, .field.hex .cell.target, .field.hex .cell.deployzone, .field.hex .cell.spearhit, .field.hex .cell.skillrange { outline: none; box-shadow: none; animation: none; }
+.field.hex .cell.deployzone { --ring: rgba(255, 215, 111, 0.85); --rw: 0.06; }
+.field.hex .cell.skillrange { background-image: linear-gradient(rgba(170, 120, 255, 0.35), rgba(170, 120, 255, 0.35)); }
+.field.hex .cell.spearhit { --ring: #ffd84a; --rw: 0.1; }
+.field.hex .cell.target { --ring: #ff5a4f; --rw: 0.1; }
+.field.hex .cell.acting { --ring: #ffd76f; --rw: 0.1; }
+/* 床の ::after は縁取りに使う（▲・足もとの影は駒の板の方に出る） */
 .field.hex .cell.atkrange::before { inset: 0; border: none; border-radius: 0; background: rgba(255, 120, 100, 0.28); }
 /* 駒の板: 床と同じ場所に重ね、切り抜かない。押せない（下の床が受ける） */
 .field.hex .cell.piece {
