@@ -125,10 +125,13 @@ function buildMap3d() {
   F3.border = new T.InstancedMesh(tile, tileMat, outs.length);
   outs.forEach(([x, y, far], i) => {
     const [px, pz] = pos3(x, y);
-    mtx.makeTranslation(px, -0.06, pz);
+    // マップのすぐ外の1列: 手前（自陣側）は青、奥（敵陣側）は赤。回してもどちらから攻めているかわかるように
+    const edge = x >= 0 && x < m.w ? (y === m.h ? 0x3a6db0 : y === -1 ? 0xb04040 : null) : null;
+    mtx.makeTranslation(px, edge != null ? -0.03 : -0.06, pz);
     F3.border.setMatrixAt(i, mtx);
     const k = 0.5 - far * 0.06;
-    F3.border.setColorAt(i, col.setRGB(0.165 * k, 0.2 * k, 0.15 * k));
+    if (edge != null) F3.border.setColorAt(i, col.set(edge));
+    else F3.border.setColorAt(i, col.setRGB(0.165 * k, 0.2 * k, 0.15 * k));
   });
   F3.border.receiveShadow = true;
   // 縁取り（手番・攻撃対象・布陣のマスなど）。細いのと太いの

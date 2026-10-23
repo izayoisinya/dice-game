@@ -2119,6 +2119,7 @@ function renderField(acting) {
         const far = Math.min(6, Math.max(-x, -y, x - w + 1, y - h + 1));
         const k = 0.5 - far * 0.05;   // 離れるほど暗い（filter を使うと 2.5D 表示で描き崩れるので色で付ける）
         oob.style.background = `rgb(${Math.round(42 * k)}, ${Math.round(51 * k)}, ${Math.round(38 * k)})`;
+        if (x >= 0 && x < w && (y === h || y === -1)) oob.style.background = y === h ? '#2f5a92' : '#923535';   // すぐ外の1列: 自陣側は青、敵陣側は赤
         if (hex) place(oob, x, y);
         cells.appendChild(oob);
         continue;
