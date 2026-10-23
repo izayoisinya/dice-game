@@ -519,3 +519,9 @@ tr.tap:hover td { background: #2f3440; }
 .field.hex .cell.piece.target .glyph { animation: tgt-glow 1s ease-in-out infinite; }
 @keyframes tgt-glow { 50% { opacity: 0.7; } }
 .field.hex .cell.piece .tgt-mark { bottom: 0; }
+
+/* 局地戦の 3D 表示（試作、field3d.js）: マスの DOM は隠して、キャンバスに描く */
+#field3d { display: none; position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#battle.three #field3d { display: block; }
+#battle.three #field { display: none; }
+#battle.three #field-wrap { overflow: hidden; }
