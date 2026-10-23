@@ -50,7 +50,7 @@ function blob(m, type, size) {
   let x = Math.floor(Math.random() * m.w), y = 2 + Math.floor(Math.random() * (m.h - 4));
   for (let i = 0; i < size; i++) {
     if (y >= 2 && y < m.h - 2 && smapCell(m, x, y) === '平地') setCell(m, x, y, type);
-    const [dx, dy] = DIRS[Math.floor(Math.random() * 4)];
+    const [dx, dy] = SQ_DIRS[Math.floor(Math.random() * 4)];
     x = Math.max(0, Math.min(m.w - 1, x + dx));
     y = Math.max(2, Math.min(m.h - 3, y + dy));
   }
@@ -65,7 +65,7 @@ function costMap(m, from) {
     open.sort((a, b) => a[0] - b[0]);
     const [c, x, y] = open.shift();
     if (c > dist[y * m.w + x]) continue;
-    for (const [dx, dy] of DIRS) {
+    for (const [dx, dy] of SQ_DIRS) {
       const nx = x + dx, ny = y + dy, t = smapCell(m, nx, ny);
       if (!t) continue;
       const nc = c + TERRAIN[t].cost;
@@ -246,7 +246,7 @@ function tokenPaths(t) {
     open.sort((a, b) => a[0] - b[0]);
     const [c, x, y] = open.shift();
     if (c > dist.get(`${x},${y}`)) continue;
-    for (const [dx, dy] of DIRS) {
+    for (const [dx, dy] of SQ_DIRS) {
       const nx = x + dx, ny = y + dy, ter = smapCell(m, nx, ny);
       if (!ter) continue;
       const nc = c + TERRAIN[ter].cost, key = `${nx},${ny}`;
@@ -335,7 +335,7 @@ function trapsLeft(side) {
 function trapCells(t) {
   const m = smap();
   if (!hasScout(t) || trapsLeft(t.side) <= 0) return [];
-  return DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy]).filter(([x, y]) => {
+  return SQ_DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy]).filter(([x, y]) => {
     const ter = smapCell(m, x, y);
     return ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && !fortAt(x, y) && !trapAt(x, y) &&
       !Object.values(m.bases).some(b => b.x === x && b.y === y);
@@ -405,7 +405,7 @@ function stationOptions(t) {
 /** 駐留: 副将を砦に残して守備隊にする（隊は隣の空いたマスへ出る） */
 function station(t, gid) {
   const m = smap(), army = campaign.armies[t.side], q = tokenSquad(t), f = fortAt(t.x, t.y);
-  const exit = DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy])
+  const exit = SQ_DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy])
     .find(([x, y]) => smapCell(m, x, y) && TERRAIN[smapCell(m, x, y)].cost < Infinity && !tokenAt(x, y));
   if (!f || !exit) return false;
   const g = memberById(army, gid);
@@ -641,7 +641,7 @@ function resolvePending() {
     } else if (q && lost) {
       // 負けた隊は相手から1マス離れる（空いていて通れるマスがあれば）
       const foe = m.tokens.find(x => x.id === p[winner]) || t;
-      const exits = DIRS.map(([dx, dy]) => ({ x: t.x + dx, y: t.y + dy }))
+      const exits = SQ_DIRS.map(([dx, dy]) => ({ x: t.x + dx, y: t.y + dy }))
         .filter(c => smapCell(m, c.x, c.y) && TERRAIN[smapCell(m, c.x, c.y)].cost < Infinity && !tokenAt(c.x, c.y) && sqDist(c, foe) > sqDist(t, foe));
       if (exits.length) {
         const c = pick(exits);
