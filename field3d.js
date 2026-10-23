@@ -2,8 +2,16 @@
 // 局地戦の 3D 表示（試作）: 設定の「局地戦を3Dで表示」。Three.js（vendor/three.min.js）はオンにしたときだけ読み込む
 //   ルールや操作は今までのまま。renderField が作るマス（#field の中、3D のときは隠す）の印（reach / target など）を読み取って、
 //   床のタイル・縁取り・駒を立体で描き直す。押したマスは onCellClick へ渡す
-//   カメラは固定の角度で斜め上から見下ろす。1本指（マウスはドラッグ）で移動、ピンチ（ホイール）で拡大縮小
+//   カメラ: 1本指（マウスはドラッグ）で移動、ピンチ（ホイール）で拡大縮小、2本指でひねると回転、2本指を上下にずらすと見下ろす角度
+//   （マウスは右ドラッグで回転・角度）。⟲ ⟳ のボタンで 45°（六角は 60°）ずつ回す。「全体」で元の向きに戻す
 // ============================================================
+
+const F3_ELEV = 52 * Math.PI / 180;   // カメラの見下ろす角度（水平から）の初めの値
+const F3_ELEV_MIN = 22 * Math.PI / 180, F3_ELEV_MAX = 88 * Math.PI / 180;   // 低すぎると奥のマスが押しにくいので制限
+const F3_ZOOM_MIN = 0.5;              // 回すと全体が収まらなくなるので、全体（1）より引ける
+const F3_FOV = 30;
+const F3_TOP = 0.16;                  // 床のタイルの厚み
+const F3_BORDER = 9;                  // マップの外に並べるタイルの段数
 
 const F3 = {
   loading: false, renderer: null, scene: null, camera: null, sun: null,
@@ -12,13 +20,11 @@ const F3 = {
   pieces: new Map(),        // 駒の id → 駒の 3D（Group）
   tex: new Map(),           // 駒の表の絵（同じ見た目は使い回す）
   pan: { x: 0, z: 0 },      // 画面の移動（マップの真ん中からのずれ）
+  yaw: 0, yawTo: null,      // カメラの向き（0 = 手前（自陣側）から。ボタンで回すときは yawTo へなめらかに）
+  elev: F3_ELEV,            // 見下ろす角度
   fitDist: 20, fitKey: '',  // 全体が収まるカメラの距離（画面の大きさ・マップごとに計算）
   raf: null, mouse: null,
 };
-const F3_ELEV = 52 * Math.PI / 180;   // カメラの見下ろす角度（水平から）
-const F3_FOV = 30;
-const F3_TOP = 0.16;                  // 床のタイルの厚み
-const F3_BORDER = 9;                  // マップの外に並べるタイルの段数
 
 /** 3D 表示にしたいか（設定） */
 function want3d() { return !!document.getElementById('battle3d')?.checked; }
@@ -91,6 +97,7 @@ function buildMap3d() {
   F3.pieces.clear();
   F3.map = m;
   F3.pan = { x: 0, z: 0 };
+  F3.yaw = 0; F3.yawTo = null; F3.elev = F3_ELEV;
   F3.fitKey = '';
   zoom.field = 1;
   // 床のタイル: 正方形は箱、六角形は6角柱（辺が上下になる向き）。上の面が高さ 0
@@ -306,7 +313,14 @@ function loop3d(t) {
   const wrap = $('field-wrap');
   if (wrap.clientWidth !== F3.w || wrap.clientHeight !== F3.h) place3dCamera();
   let busy = false;
+  if (F3.yawTo != null) {   // ボタンで回したとき
+    const dy = F3.yawTo - F3.yaw;
+    if (Math.abs(dy) < 0.002) { F3.yaw = F3.yawTo; F3.yawTo = null; } else F3.yaw += dy * 0.2;
+    place3dCamera();
+    placeActionPanelSoon();
+  }
   for (const p of F3.pieces.values()) {
+    if (p.rotation.y !== F3.yaw) { p.rotation.y = F3.yaw; busy = true; }   // 駒の板はいつもカメラの方を向く
     const d = p.userData;
     const dx = d.tx - p.position.x, dz = d.tz - p.position.z;
     if (Math.abs(dx) + Math.abs(dz) > 0.002) { p.position.x += dx * 0.25; p.position.z += dz * 0.25; busy = true; }
@@ -323,7 +337,8 @@ function loop3d(t) {
 // カメラ: 斜め上の決まった角度から。zoom.field（1 = 全体が収まる）と F3.pan で寄せる・ずらす
 // ------------------------------------------------------------
 
-function camDir() { return [Math.sin(F3_ELEV), Math.cos(F3_ELEV)]; }   // [高さ, 手前] の向き
+/** 見ている点からカメラへの向き（長さ 1） */
+function camDir(yaw = F3.yaw) { const c = Math.cos(F3.elev); return [Math.sin(yaw) * c, Math.sin(F3.elev), Math.cos(yaw) * c]; }
 
 function place3dCamera() {
   const wrap = $('field-wrap'), W = wrap.clientWidth, H = wrap.clientHeight;
@@ -333,9 +348,9 @@ function place3dCamera() {
   const cam = F3.camera;
   cam.aspect = W / H;
   cam.updateProjectionMatrix();
-  const m = state.map, [sy, sz] = camDir();
-  // 全体が収まる距離（四隅と駒の頭が画面に入る）を探す
-  const key = `${W}x${H}|${m.w}x${m.h}|${m.hex}`;
+  const m = state.map;
+  // 全体が収まる距離（四隅と駒の頭が画面に入る）を探す。向きは手前から見たときで決める（回しても寄ったり引いたりしないように）
+  const key = `${W}x${H}|${m.w}x${m.h}|${m.hex}|${F3.elev.toFixed(3)}`;
   if (F3.fitKey !== key) {
     const hx = (m.hex ? (m.w - 1) * HEX_COL : m.w - 1) / 2 + 0.7, hz = (m.h - 1 + (m.hex ? 0.5 : 0)) / 2 + 0.7;
     const corners = [];
@@ -343,6 +358,7 @@ function place3dCamera() {
     let lo = 1, hi = 300;
     for (let i = 0; i < 40; i++) {
       const d = (lo + hi) / 2;
+      const [, sy, sz] = camDir(0);
       cam.position.set(0, d * sy, d * sz); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
       const fits = corners.every(c => { const p = c.clone().project(cam); return Math.abs(p.x) <= 0.96 && Math.abs(p.y) <= 0.96; });
       if (fits) hi = d; else lo = d;
@@ -351,8 +367,8 @@ function place3dCamera() {
     F3.fitKey = key;
   }
   clampPan3d();
-  const d = F3.fitDist / zoom.field;
-  cam.position.set(F3.pan.x, d * sy, F3.pan.z + d * sz);
+  const d = F3.fitDist / zoom.field, [sx, sy, sz] = camDir();
+  cam.position.set(F3.pan.x + d * sx, d * sy, F3.pan.z + d * sz);
   cam.lookAt(F3.pan.x, 0, F3.pan.z);
   cam.updateMatrixWorld();
   F3.dirty = true;
@@ -379,8 +395,10 @@ function pan3d(dx, dy) {
   if (!F3.renderer) return;
   const d = F3.fitDist / zoom.field;
   const perPx = 2 * d * Math.tan(F3_FOV * Math.PI / 360) / F3.h;
-  F3.pan.x -= dx * perPx;
-  F3.pan.z -= dy * perPx / Math.sin(F3_ELEV);
+  // 画面の右・上に当たる地面の向き（カメラの向きで変わる）
+  const c = Math.cos(F3.yaw), s = Math.sin(F3.yaw), up = perPx / Math.sin(F3.elev);
+  F3.pan.x -= dx * perPx * c - dy * up * s;
+  F3.pan.z -= -dx * perPx * s + dy * up * c;
   place3dCamera();
   placeActionPanelSoon();
 }
@@ -389,11 +407,37 @@ function pan3d(dx, dy) {
 function zoom3d(z, cx, cy) {
   if (!F3.renderer) { zoom.field = z; return; }
   const before = cx != null ? groundAt3d(cx, cy) : null;
-  zoom.field = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX * 1.5, z));
-  if (cx == null && z === 1) F3.pan = { x: 0, z: 0 };
+  zoom.field = Math.max(F3_ZOOM_MIN, Math.min(ZOOM_MAX * 1.5, z));
+  if (cx == null && z === 1) { F3.pan = { x: 0, z: 0 }; F3.yawTo = nearestTurn(F3.yaw, 0); F3.elev = F3_ELEV; }   // 「全体」: 元の向き・角度に戻す
   place3dCamera();
   const after = before && groundAt3d(cx, cy);
   if (before && after) { F3.pan.x += before.x - after.x; F3.pan.z += before.z - after.z; place3dCamera(); }
+  placeActionPanelSoon();
+}
+
+/** 0 と同じ向き（360° の倍数）のうち今の向きにいちばん近いもの（回り過ぎずに戻すため） */
+function nearestTurn(yaw, to) { return to + Math.round((yaw - to) / (Math.PI * 2)) * Math.PI * 2; }
+
+/** カメラを回す（ラジアン。正 = マップが時計回りに回って見える） */
+function rotate3d(da) {
+  if (!F3.renderer) return;
+  F3.yawTo = null;
+  F3.yaw += da;
+  place3dCamera();
+  placeActionPanelSoon();
+}
+/** ボタン: 45°（六角は 60°）ずつ、きりのいい向きへなめらかに回す */
+function rotateStep3d(dir) {
+  if (!F3.renderer) return;
+  const step = (state.map?.hex ? 60 : 45) * Math.PI / 180, from = F3.yawTo ?? F3.yaw;
+  F3.yawTo = (Math.round(from / step) + dir) * step;
+  if (!F3.raf) F3.raf = requestAnimationFrame(loop3d);
+}
+/** 見下ろす角度を変える（画面の下向き = 正。上へずらすと低い視点に） */
+function tilt3d(dy) {
+  if (!F3.renderer) return;
+  F3.elev = Math.max(F3_ELEV_MIN, Math.min(F3_ELEV_MAX, F3.elev + dy * 0.004));
+  place3dCamera();
   placeActionPanelSoon();
 }
 
@@ -435,9 +479,10 @@ function initInput3d(canvas) {
     if (u) onCellClick(u.x, u.y);
   });
   canvas.addEventListener('pointerdown', e => {
-    if (e.pointerType !== 'mouse' || e.button !== 0) return;
-    F3.mouse = { x: e.clientX, y: e.clientY, moved: false, down: true };
+    if (e.pointerType !== 'mouse' || (e.button !== 0 && e.button !== 2)) return;
+    F3.mouse = { x: e.clientX, y: e.clientY, moved: false, down: true, turn: e.button === 2 || e.shiftKey };   // 右ドラッグ（Shift + ドラッグ）= 回転・角度
   });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
   window.addEventListener('pointermove', e => {
     const m = F3.mouse;
     if (!m?.down || e.pointerType !== 'mouse') return;
@@ -445,7 +490,7 @@ function initInput3d(canvas) {
     if (!m.moved && Math.hypot(dx, dy) < 5) return;
     m.moved = true;
     m.x = e.clientX; m.y = e.clientY;
-    pan3d(dx, dy);
+    if (m.turn) { rotate3d(dx * 0.008); tilt3d(dy); } else pan3d(dx, dy);
   });
   window.addEventListener('pointerup', e => { if (F3.mouse && e.pointerType === 'mouse') { F3.mouse.down = false; if (!F3.mouse.moved) F3.mouse = null; } });
   canvas.addEventListener('wheel', e => {

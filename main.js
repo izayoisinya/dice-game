@@ -2396,10 +2396,16 @@ function initZoom(kind) {
     if (pts.size === 1) { scrollBy(dx, dy); return; }
     if (pts.size !== 2) return;
     const [a, b] = [...pts.values()];
-    const dist = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-    if (!pinch) { pinch = { dist, z: zoom[kind], cx, cy }; return; }
+    const dist = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, ang = Math.atan2(b.y - a.y, b.x - a.x);
+    if (!pinch) { pinch = { dist, z: zoom[kind], cx, cy, ang }; return; }
     setZoom(kind, pinch.z * dist / pinch.dist, cx, cy);
-    if (kind === 'field' && is3d()) pan3d(cx - pinch.cx, cy - pinch.cy);
+    if (kind === 'field' && is3d()) {   // 3D: ひねると回転、2本指を上下にずらすと見下ろす角度
+      let da = ang - pinch.ang;
+      da = Math.atan2(Math.sin(da), Math.cos(da));
+      rotate3d(da);
+      tilt3d(cy - pinch.cy);
+      pinch.ang = ang;
+    }
     else { wrap.scrollLeft -= cx - pinch.cx; wrap.scrollTop -= cy - pinch.cy; }   // 2本指のまま動かすと移動も
     pinch.cx = cx; pinch.cy = cy;
   });
@@ -2420,6 +2426,7 @@ function initZoom(kind) {
   wrap.addEventListener('click', e => { if (dragged > 12) { e.stopPropagation(); e.preventDefault(); dragged = 0; } }, true);
   document.querySelectorAll(`[data-zoom-for="${kind}"] button`).forEach(b => b.addEventListener('click', () => {
     const d = b.dataset.zoom;
+    if (b.dataset.rot) return rotateStep3d(Number(b.dataset.rot));   // 3D の回転ボタン
     setZoom(kind, d === '0' ? 1 : zoom[kind] * (d === '+' ? 1.5 : 1 / 1.5));
   }));
 }

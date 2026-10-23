@@ -525,3 +525,5 @@ tr.tap:hover td { background: #2f3440; }
 #battle.three #field3d { display: block; }
 #battle.three #field { display: none; }
 #battle.three #field-wrap { overflow: hidden; }
+.rot3d { display: none; }
+#battle.three .rot3d { display: inline-block; }
