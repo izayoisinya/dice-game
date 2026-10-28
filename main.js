@@ -632,7 +632,7 @@ function updateIntel(side) {
   const sees = p => eyes.some(o => distance(o, p) <= (o.vision ?? VISION_DEFAULT));
   for (const e of state[side === 'player' ? 'cpu' : 'player'].units) {
     if (!e.alive) delete intel.seen[e.id];
-    else if (visibleTo(side, e)) intel.seen[e.id] = { x: e.x, y: e.y, leader: isLeader(e), gen: e.rank === '副将' || e.rank === '総大将' };
+    else if (visibleTo(side, e)) intel.seen[e.id] = { x: e.x, y: e.y, leader: isLeader(e), gen: e.rank === '副将' || e.rank === '総大将' || isLeader(e) };
     else if (intel.seen[e.id] && sees(intel.seen[e.id])) delete intel.seen[e.id];   // 来てみたが、もういない
   }
   for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
@@ -1523,7 +1523,8 @@ function scoutAct(unit) {
 
 /** 暗殺者（オート）: 見えている将（大将を優先）に忍び寄って攻撃する。将が見えなければ敵の本陣の方へ */
 function assassinAct(unit) {
-  const isGeneral = e => e.rank === '副将' || e.rank === '総大将';
+  // 狙うのは副将以上と、その戦局の敵の大将（小隊なら隊長の兵長。倒せば決着するので）
+  const isGeneral = e => e.rank === '副将' || e.rank === '総大将' || isLeader(e);
   const prey = () => {
     const gs = seenEnemies(unit).filter(isGeneral);
     return gs.find(isLeader) || gs.sort((a, b) => distance(unit, a) - distance(unit, b))[0] || null;
@@ -1545,7 +1546,7 @@ function assassinAct(unit) {
     target = prey();
   }
   unit.gauge = chargedGauge(unit);
-  // 狙うのは副将以上だけ（兵長以下は相手にしない）
+  // 狙うのは副将以上と敵の大将だけ（ほかの兵長以下は相手にしない）
   while (unit.gauge >= ACT_PER_ATTACK && target && target.alive && distance(unit, target) <= effRng(unit)) {
     unit.gauge -= ACT_PER_ATTACK;
     if (performAttack(unit, target)) return;
