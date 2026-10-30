@@ -18,6 +18,7 @@
     <nav class="tabs">
       <button class="tab" data-view="form">📋 編成</button>
       <button class="tab" data-view="map">🗺 戦域図</button>
+      <button class="tab" data-view="records">📜 記録</button>
     </nav>
     <div class="controls">
       <button id="btn-title">🏠 タイトル</button>
@@ -87,6 +88,9 @@
         <div id="campaign"></div>
       </div>
     </section>
+
+    <!-- 戦闘の記録: 今の戦いの分析と、これまで決着した戦い -->
+    <section id="view-records" class="view hidden"><div id="records"></div></section>
 
     <!-- 戦域図の画面 -->
     <section id="view-map" class="view hidden">

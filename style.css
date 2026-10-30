@@ -576,3 +576,10 @@ canvas.board3d { display: none; position: absolute; inset: 0; width: 100%; heigh
 .rep-dead { color: #999; text-decoration: line-through; }
 .rep-hist td { font-size: 0.8rem; }
 .battle-result button { margin-left: 8px; }
+
+/* 結果の箱が縦にあふれても、帯や表を縮ませない（strat-info は縦並びの flex） */
+.strat-info > * { flex-shrink: 0; }
+/* 記録のページ */
+#view-records { padding: 8px; }
+.rec-game { border-top: 1px solid #333; padding: 6px 0; }
+.rec-game > summary { cursor: pointer; }

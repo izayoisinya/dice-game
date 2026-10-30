@@ -2520,7 +2520,8 @@ function initZoom(kind) {
 
 function showView(v) {
   const same = !$(`view-${v}`).classList.contains('hidden');   // 同じ画面のまま（局地戦から戻ったときなど）ならスクロール位置はそのまま
-  for (const id of ['title', 'form', 'map']) $(`view-${id}`).classList.toggle('hidden', id !== v);
+  for (const id of ['title', 'form', 'map', 'records']) $(`view-${id}`).classList.toggle('hidden', id !== v);
+  if (v === 'records') renderRecords();
   if (v === 'title') $('btn-continue').classList.toggle('hidden', !campaign.armies && !campaign.setup);
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   if (!same) window.scrollTo(0, 0);

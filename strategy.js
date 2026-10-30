@@ -587,6 +587,77 @@ function armySnapshot(army) {
   return { worth: Math.round(worth), troops, generals: army.generals.length, sergeants: army.sergeants.length, specials: army.specials.length };
 }
 
+// ------------------------------------------------------------
+// 戦闘の記録の分析（決着のまとめ・記録のページで使う）
+// ------------------------------------------------------------
+
+const fmtN = n => Math.round(n).toLocaleString();
+
+/** 戦力比（自軍 ÷ CPU軍）の言い方 */
+function ratioText(p, c) {
+  const r = p / Math.max(1, c);
+  return r >= 1.05 ? `自軍${r.toFixed(2)}倍` : r <= 0.95 ? `敵${(1 / r).toFixed(2)}倍` : '互角';
+}
+
+/** 戦闘の記録の分析: 戦力で上回った・互角・下回った戦いごとの勝敗と、失った戦力の比べ合わせ */
+function analysisHtml(hist) {
+  if (!hist.length) return '<div class="sub">まだ戦闘の記録がありません。</div>';
+  const groups = [['自軍が上回った（1.05倍以上）', h => h.player.start >= h.cpu.start * 1.05],
+    ['ほぼ互角', h => h.player.start < h.cpu.start * 1.05 && h.cpu.start < h.player.start * 1.05],
+    ['CPU軍が上回った（1.05倍以上）', h => h.cpu.start >= h.player.start * 1.05]];
+  const won = h => /勝利/.test(h.result), lost = h => /敗北|撤退/.test(h.result);
+  const rows = groups.map(([label, f]) => {
+    const hs = hist.filter(f), w = hs.filter(won).length, l = hs.filter(lost).length;
+    return `<tr><th>${label}</th><td>${hs.length}戦</td><td><b>${w}勝 ${l}敗</b>${hs.length - w - l ? ` ${hs.length - w - l}分` : ''}</td><td>${hs.length ? `勝率 ${Math.round(w / hs.length * 100)}%` : ''}</td></tr>`;
+  }).join('');
+  const lostP = hist.reduce((a, h) => a + h.player.start - h.player.end, 0), lostC = hist.reduce((a, h) => a + h.cpu.start - h.cpu.end, 0);
+  const w = hist.filter(won).length;
+  return `<table class="rep-table"><tbody>${rows}</tbody></table>
+    <div>通算 <b>${w}勝 ${hist.filter(lost).length}敗</b>（${hist.length}戦）／ 失った戦力 自軍 ${fmtN(lostP)} : CPU軍 ${fmtN(lostC)}（${lostP > lostC ? `自軍が${(lostP / Math.max(1, lostC)).toFixed(2)}倍多く失った` : `CPU軍が${(lostC / Math.max(1, lostP)).toFixed(2)}倍多く失った`}）</div>`;
+}
+
+/** 戦闘ごとの記録の表 */
+function historyTable(hist) {
+  if (!hist.length) return '';
+  return `<table class="rep-table rep-hist"><thead><tr><th>戦闘</th><th>結果</th><th>開戦時（自軍 : CPU軍）</th><th>終了時</th></tr></thead><tbody>` +
+    hist.map(h => `<tr><td>${h.title}</td><td>${h.result.replace(/プレイヤー軍の/, '')}</td><td>${fmtN(h.player.start)} : ${fmtN(h.cpu.start)} <small class="sub">（${ratioText(h.player.start, h.cpu.start)}）</small></td><td>${fmtN(h.player.end)} : ${fmtN(h.cpu.end)}</td></tr>`).join('') + '</tbody></table>';
+}
+
+const ARCHIVE_KEY = 'diceSenkiArchive';
+/** 決着した戦いの記録を残す（記録のページの「これまでの戦い」。新しい順に30件まで） */
+function archiveCampaign() {
+  const m = smap(), A = campaign.armies;
+  if (!m || m.archived) return;
+  m.archived = true;
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(ARCHIVE_KEY)) || []; } catch {}
+  list.unshift({ date: new Date().toISOString(), win: !!A.cpu.defeated, turn: m.turn, start: { player: A.player.start || null, cpu: A.cpu.start || null },
+    end: { player: armySnapshot(A.player), cpu: armySnapshot(A.cpu) }, history: m.history || [], size: `${m.w}×${m.h}${m.hex ? '・六角' : ''}` });
+  try { localStorage.setItem(ARCHIVE_KEY, JSON.stringify(list.slice(0, 30))); } catch {}
+}
+
+/** 記録のページ: 今の戦い（出陣中なら）と、これまでの戦い */
+function renderRecords() {
+  const m = smap(), A = campaign.armies;
+  if (m && m.phase === 'over') archiveCampaign();   // この版より前に決着した戦いも残す
+  let html = '';
+  if (m) {
+    html += `<section class="panel"><h2>今の戦い <small class="sub">ターン ${m.turn}${m.phase === 'over' ? '（決着）' : ''}</small></h2>
+      ${A.player.start && A.cpu.start ? `<div>出陣したときの軍全体の戦力: 自軍 ${fmtN(A.player.start.worth)} : CPU軍 ${fmtN(A.cpu.start.worth)}（${ratioText(A.player.start.worth, A.cpu.start.worth)}）</div>` : ''}
+      ${analysisHtml(m.history || [])}${historyTable(m.history || [])}</section>`;
+  }
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(ARCHIVE_KEY)) || []; } catch {}
+  html += `<section class="panel"><h2>これまでの戦い <small class="sub">${list.length}回（新しい順・30回まで）</small></h2>` + (list.length ? list.map(g => {
+    const d = new Date(g.date);
+    const st = g.start.player && g.start.cpu ? `開始時 ${fmtN(g.start.player.worth)} : ${fmtN(g.start.cpu.worth)}（${ratioText(g.start.player.worth, g.start.cpu.worth)}）` : '';
+    const w = g.history.filter(h => /勝利/.test(h.result)).length;
+    return `<details class="rec-game"><summary>${g.win ? '🏆 勝利' : '💀 敗北'}　${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}　${g.turn}ターン・戦域図 ${g.size}　${st}　局地戦 ${w}勝${g.history.length - w}敗</summary>
+      ${analysisHtml(g.history)}${historyTable(g.history)}</details>`;
+  }).join('') : '<div class="sub">決着した戦いはまだありません（戦域図で決着すると、ここに残ります）。</div>') + '</section>';
+  $('records').innerHTML = html;
+}
+
 /** 戦域図の決着のまとめ: 軍全体の戦力の比べ合わせと、戦闘ごとの記録 */
 function renderFinal() {
   const m = smap(), A = campaign.armies;
@@ -609,10 +680,7 @@ function renderFinal() {
     <tr><th>砦</th>${['player', 'cpu'].map(sd => `<td><b>${m.forts.filter(f => f.owner === sd).length}</b> / ${m.forts.length}</td>`).join('')}</tr>
     </tbody></table>`;
   const hist = m.history || [];
-  if (hist.length) {
-    html += `<div class="rep-head">戦闘の記録（${hist.length}回）</div><table class="rep-table rep-hist"><thead><tr><th>戦闘</th><th>結果</th><th>戦力（自軍 : CPU軍）</th></tr></thead><tbody>` +
-      hist.map(h => `<tr><td>${h.title}</td><td>${h.result.replace(/プレイヤー軍の/, '')}</td><td>${fmt(h.player.start)} : ${fmt(h.cpu.start)} → ${fmt(h.player.end)} : ${fmt(h.cpu.end)}</td></tr>`).join('') + '</tbody></table>';
-  }
+  if (hist.length) html += `<div class="rep-head">戦闘の分析</div>${analysisHtml(hist)}<div class="rep-head">戦闘の記録（${hist.length}回）</div>${historyTable(hist)}`;
   html += `<div class="sub">戦力 = コスト換算（兵士100人で1,000、兵長1,000・副将1,500・総大将2,000、斥候500・暗殺者1,000）。予備の兵も含む軍全体。</div>`;
   return html;
 }
@@ -706,6 +774,7 @@ function resolvePending() {
   if (A.player.defeated || A.cpu.defeated) {
     m.phase = 'over';
     smapLog(A.cpu.defeated ? '🏆 CPU軍の総大将を討ち取った！ 自軍の勝利！' : '💀 総大将を失い、自軍は敗北した。', 'turn');
+    archiveCampaign();
   }
   saveCampaign();
   renderCampaign();
