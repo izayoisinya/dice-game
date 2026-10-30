@@ -561,3 +561,18 @@ canvas.board3d { display: none; position: absolute; inset: 0; width: 100%; heigh
 .smap.hex .scell .tgt-mark { right: 20%; bottom: 4%; }
 .smap.hex .scell.fortcell .fort { top: auto; right: auto; }
 .smap.hex .scell.fortcell .glyph { bottom: 8%; }
+
+/* リザルト（局地戦の結果・戦域図の決着のまとめ）: 両軍の戦力を帯で比べる */
+.battle-report h3, .strat-info h3 { margin: 0 0 4px; }
+.rep-title { color: #bbb; margin-bottom: 6px; }
+.rep-head { margin: 8px 0 3px; font-size: 0.9rem; }
+.rep-bar { display: flex; height: 22px; border-radius: 5px; overflow: hidden; background: #9c2d2d; font-size: 0.78rem; line-height: 22px; }
+.rep-bar .rp { background: #2d5f9c; color: #e0f0ff; padding-left: 6px; white-space: nowrap; min-width: 0; }
+.rep-bar .rc { flex: 1; text-align: right; padding-right: 6px; color: #ffe0dc; white-space: nowrap; }
+.rep-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 0.85rem; }
+.rep-table th, .rep-table td { padding: 4px 6px; border-bottom: 1px solid #333; text-align: left; vertical-align: top; }
+.rep-table thead th { color: #aaa; font-weight: normal; }
+.rep-table tbody th { color: #aaa; font-weight: normal; white-space: nowrap; }
+.rep-dead { color: #999; text-decoration: line-through; }
+.rep-hist td { font-size: 0.8rem; }
+.battle-result button { margin-left: 8px; }

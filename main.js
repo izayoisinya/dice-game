@@ -1969,11 +1969,79 @@ function log(text, cls = 'sys') {
 function showResult() {
   const el = $('result');
   if (state.over && state.result) {
-    el.textContent = state.result;
+    el.innerHTML = `${state.result} <button class="small" id="btn-report">📊 結果を見る</button>`;
     el.classList.remove('hidden');
+    $('btn-report').onclick = () => { ui2.reportClosed = false; renderReport(); };
   } else {
     el.classList.add('hidden');
   }
+  renderReport();
+}
+
+// ------------------------------------------------------------
+// 局地戦のリザルト: 開戦時と終わったときの両軍の戦力（コスト換算）・兵数・駒・将を並べて比べる
+//   戦力 = 駒のコスト × 残りHPの割合（兵士の駒は人数ぶんのコスト。100人 = 1000）。決着したら霧の中だった敵も含めて見せる
+// ------------------------------------------------------------
+
+/** 駒の値打ち（コスト換算）。now = 今の HP の割合を掛ける */
+function unitWorth(u, now) {
+  const full = u.troops ? u.troops * RANKS['雑兵'].cost / BASE_TROOPS : u.cost;
+  return now ? full * Math.max(0, u.hp) / u.maxHp : full;
+}
+
+/** 片方の軍のまとめ */
+function armyReport(side) {
+  const units = state[side].units;
+  const sum = f => units.reduce((a, u) => a + f(u), 0);
+  const generals = units.filter(u => !u.troops && !u.special);
+  return {
+    start: Math.round(sum(u => unitWorth(u, false))), end: Math.round(sum(u => unitWorth(u, true))),
+    troops: sum(u => u.troops || 0), troopsNow: sum(u => (u.troops && u.alive ? u.troopsNow : 0)),
+    pieces: units.length, alive: units.filter(u => u.alive).length,
+    generals, taken: sum(u => u.maxHp - Math.max(0, u.hp)),   // 受けたダメージ
+  };
+}
+
+/** 戦闘ごとの記録（戦域図の決着のまとめに使う） */
+function battleRecord() {
+  const P = armyReport('player'), C = armyReport('cpu');
+  return { turn: state.turn, result: state.result, title: $('battle-title').textContent.replace(/^⚔\s*/, ''),
+    player: { start: P.start, end: P.end, troops: P.troops, troopsNow: P.troopsNow }, cpu: { start: C.start, end: C.end, troops: C.troops, troopsNow: C.troopsNow } };
+}
+
+function renderReport() {
+  const el = $('battle-report');
+  if (!el) return;
+  if (!state.over || !state.player || ui2.reportClosed) { el.classList.add('hidden'); return; }
+  const P = armyReport('player'), C = armyReport('cpu');
+  const fmt = n => n.toLocaleString();
+  const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  const ratio = C.start / Math.max(1, P.start);
+  const diff = ratio >= 1.05 ? `CPU軍が <b>${ratio.toFixed(2)}倍</b>（自軍が不利）` : ratio <= 0.95 ? `自軍が <b>${(1 / ratio).toFixed(2)}倍</b>（自軍が有利）` : 'ほぼ互角';
+  const bar = (a, b) => `<div class="rep-bar"><span class="rp" style="width:${pct(a, a + b)}%">${fmt(a)}</span><span class="rc">${fmt(b)}</span></div>`;
+  const gen = g => `<span class="${g.alive ? '' : 'rep-dead'}">${g.alive ? '' : '☠'}${nm(g.name)}<small class="sub">（${rankName(g.rank)}${g.alive ? `・HP ${pct(g.hp, g.maxHp)}%` : ''}）</small></span>`;
+  const row = (label, p, c) => `<tr><th>${label}</th><td>${p}</td><td>${c}</td></tr>`;
+  el.innerHTML = `<button class="small ap-close" id="report-close" title="閉じる">✕</button>
+    <h3>${state.result} <small class="sub">（${state.turn}ターン）</small></h3>
+    <div class="rep-title">${$('battle-title').textContent}</div>
+    <div class="rep-head">開戦時の戦力（コスト換算）: ${diff}</div>
+    ${bar(P.start, C.start)}
+    <div class="rep-head">終わったときの戦力</div>
+    ${bar(P.end, C.end)}
+    <table class="rep-table"><thead><tr><th></th><th class="nm-p">自軍</th><th class="nm-c">CPU軍</th></tr></thead><tbody>
+      ${row('戦力', `${fmt(P.start)} → <b>${fmt(P.end)}</b>（${pct(P.end, P.start)}%）`, `${fmt(C.start)} → <b>${fmt(C.end)}</b>（${pct(C.end, C.start)}%）`)}
+      ${row('兵士', `${fmt(P.troops)} → <b>${fmt(P.troopsNow)}</b>人`, `${fmt(C.troops)} → <b>${fmt(C.troopsNow)}</b>人`)}
+      ${row('駒', `${P.alive} / ${P.pieces}`, `${C.alive} / ${C.pieces}`)}
+      ${row('与えたダメージ', fmt(C.taken), fmt(P.taken))}
+      ${row('将・兵長', P.generals.map(gen).join('<br>') || '—', C.generals.map(gen).join('<br>') || '—')}
+    </tbody></table>
+    <div class="sub">戦力 = 駒のコスト × 残りHPの割合（兵士の駒は100人で1,000、兵長1,000・副将1,500・総大将2,000）。決着したので霧の中にいた敵も含めています。</div>
+    <div class="ap-buttons">${state.campaignBattle && campaign.smap ? '<button id="report-back">🗺 戦域図に戻る</button>' : ''}<button id="report-ok">閉じる</button></div>`;
+  el.classList.remove('hidden');
+  const close = () => { ui2.reportClosed = true; el.classList.add('hidden'); };
+  $('report-close').onclick = close;
+  $('report-ok').onclick = close;
+  if ($('report-back')) $('report-back').onclick = () => { close(); $('btn-battle-close').click(); };
 }
 
 function renderArmy(army, side, acting) {
@@ -2025,7 +2093,7 @@ function renderArmy(army, side, acting) {
     : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
 }
 
-const ui2 = { preview: null, deploySel: null, helpOpen: false, spear: null };   // spear = 範囲を表示中の槍の技（spearOptions の番号）   // preview = 範囲を表示するスキル、deploySel = 布陣で選んだ駒
+const ui2 = { preview: null, deploySel: null, helpOpen: false, spear: null, reportClosed: false };   // spear = 範囲を表示中の槍の技（spearOptions の番号）   // preview = 範囲を表示するスキル、deploySel = 布陣で選んだ駒
 
 /** その駒にかかっているバフの説明（例: ATK+30%・残2回） */
 function buffText(u) {
@@ -2916,6 +2984,7 @@ function startCampaignBattle(pid, cid) {
     return o;
   };
   state.campaignBattle = { player: pid, cpu: cid, before: { player: before('player'), cpu: before('cpu') } };
+  ui2.reportClosed = false;
   log(`⚔ 出陣: ${nm(pq.name)} vs CPU ${squadLabel('cpu', cq)}（マップ ${state.map.type} ${state.map.w}×${state.map.h}）`, 'turn');
   log('「戦闘開始」で開戦します。', 'sys');
   render();
@@ -2953,6 +3022,7 @@ function applyBattleResult(msg) {
     for (const u of fallen) removeMember(army, u.ref.id);
     log(`📜 ${side === 'player' ? '自軍' : 'CPU軍'}の損害: ${losses.join('・') || 'なし'}${fallen.length ? ` / 討ち死に: ${fallen.map(u => u.name).join('・')}` : ''}`, side);
   }
+  if (campaign.smap) (campaign.smap.history ||= []).push(battleRecord());   // 戦域図の決着のまとめに使う
   if (/総大将が撤退/.test(msg)) A.player.defeated = true;
   if (A.player.defeated) log('💀 総大将を失い、自軍は敗北した。', 'death');
   if (A.cpu.defeated) log('🏆 CPU軍の総大将を討ち取った！ 自軍の勝利！', 'turn');

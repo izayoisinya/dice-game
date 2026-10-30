@@ -577,9 +577,50 @@ function deploy(side) {
   order.forEach((q, i) => m.tokens.push({ id: q.id, side, x: cells[i].x, y: cells[i].y, acted: false }));
 }
 
+/** 軍全体の戦力（コスト換算）と兵数・将の数。兵士は100人で1,000、兵長1,000・副将1,500・総大将2,000、斥候500・暗殺者1,000 */
+function armySnapshot(army) {
+  const troops = Object.values(army.totals).reduce((a, n) => a + n, 0);
+  const worth = troops * RANKS['雑兵'].cost / BASE_TROOPS
+    + army.generals.reduce((a, g) => a + (RANKS[g.rank]?.cost || 0), 0)
+    + army.sergeants.length * RANKS['兵長'].cost
+    + army.specials.reduce((a, x) => a + (x.kind === '暗殺者' ? RANKS['兵長'].cost : RANKS['雑兵'].cost), 0);
+  return { worth: Math.round(worth), troops, generals: army.generals.length, sergeants: army.sergeants.length, specials: army.specials.length };
+}
+
+/** 戦域図の決着のまとめ: 軍全体の戦力の比べ合わせと、戦闘ごとの記録 */
+function renderFinal() {
+  const m = smap(), A = campaign.armies;
+  const fmt = n => n.toLocaleString(), pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  const now = { player: armySnapshot(A.player), cpu: armySnapshot(A.cpu) };
+  const start = { player: A.player.start || null, cpu: A.cpu.start || null };
+  const bar = (a, b) => `<div class="rep-bar"><span class="rp" style="width:${pct(a, a + b)}%">${fmt(a)}</span><span class="rc">${fmt(b)}</span></div>`;
+  let html = `<button class="small ap-close" id="sm-final-close" title="閉じる">✕</button>
+    <h3>${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'} <small class="sub">（${m.turn}ターン）</small></h3>`;
+  if (start.player && start.cpu) {
+    const r = start.cpu.worth / Math.max(1, start.player.worth);
+    html += `<div class="rep-head">開始時の軍全体の戦力（コスト換算）: ${r >= 1.05 ? `CPU軍が <b>${r.toFixed(2)}倍</b>` : r <= 0.95 ? `自軍が <b>${(1 / r).toFixed(2)}倍</b>` : 'ほぼ互角'}</div>${bar(start.player.worth, start.cpu.worth)}`;
+  }
+  html += `<div class="rep-head">終わったときの軍全体の戦力</div>${bar(now.player.worth, now.cpu.worth)}
+    <table class="rep-table"><thead><tr><th></th><th class="nm-p">自軍</th><th class="nm-c">CPU軍</th></tr></thead><tbody>
+    <tr><th>戦力</th>${['player', 'cpu'].map(sd => `<td>${start[sd] ? `${fmt(start[sd].worth)} → ` : ''}<b>${fmt(now[sd].worth)}</b>${start[sd] ? `（${pct(now[sd].worth, start[sd].worth)}%）` : ''}</td>`).join('')}</tr>
+    <tr><th>兵士</th>${['player', 'cpu'].map(sd => `<td>${start[sd] ? `${fmt(start[sd].troops)} → ` : ''}<b>${fmt(now[sd].troops)}</b>人</td>`).join('')}</tr>
+    <tr><th>将（総大将・副将）</th>${['player', 'cpu'].map(sd => `<td>${start[sd] ? `${start[sd].generals} → ` : ''}<b>${now[sd].generals}</b>人</td>`).join('')}</tr>
+    <tr><th>兵長</th>${['player', 'cpu'].map(sd => `<td>${start[sd] ? `${start[sd].sergeants} → ` : ''}<b>${now[sd].sergeants}</b>人</td>`).join('')}</tr>
+    <tr><th>砦</th>${['player', 'cpu'].map(sd => `<td><b>${m.forts.filter(f => f.owner === sd).length}</b> / ${m.forts.length}</td>`).join('')}</tr>
+    </tbody></table>`;
+  const hist = m.history || [];
+  if (hist.length) {
+    html += `<div class="rep-head">戦闘の記録（${hist.length}回）</div><table class="rep-table rep-hist"><thead><tr><th>戦闘</th><th>結果</th><th>戦力（自軍 : CPU軍）</th></tr></thead><tbody>` +
+      hist.map(h => `<tr><td>${h.title}</td><td>${h.result.replace(/プレイヤー軍の/, '')}</td><td>${fmt(h.player.start)} : ${fmt(h.cpu.start)} → ${fmt(h.player.end)} : ${fmt(h.cpu.end)}</td></tr>`).join('') + '</tbody></table>';
+  }
+  html += `<div class="sub">戦力 = コスト換算（兵士100人で1,000、兵長1,000・副将1,500・総大将2,000、斥候500・暗殺者1,000）。予備の兵も含む軍全体。</div>`;
+  return html;
+}
+
 function startMapStage() {
   const A = campaign.armies;
   if (!A || A.player.defeated || A.cpu.defeated) return;
+  for (const side of ['player', 'cpu']) A[side].start = armySnapshot(A[side]);   // 決着のまとめで比べる
   campaign.smap = genStrategicMap();
   campaign.setup = null;   // ゲーム開始の手順はここで終わり
   Object.assign(campaign.smap, { tokens: [], traps: [], turn: 1, phase: 'setbase', cpuQueue: [], battle: null, pending: null, logs: [], cpuBaseSeen: false });
@@ -892,7 +933,8 @@ function renderStratBody() {
     hud = `<div class="sub">自軍の本陣の位置を決めます。光っているマス（下の${BASE_ROWS}段）をタップすると、本陣と隊が移ります。</div>
       <div class="ap-buttons"><button id="sm-basego" class="go">この位置で開始</button></div>`;
   } else if (m.phase === 'over') {
-    hud = `<div class="result">${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'}</div>`;
+    hud = `<div class="result">${A.cpu.defeated ? '🏆 自軍の勝利！' : '💀 自軍の敗北…'}</div><button id="sm-final">📊 結果を見る</button>`;
+    if (!ui.finalClosed) { info = renderFinal(); ui.anchor = 'center'; }
   } else if (m.pending) {
     hud = `<div>戦闘の結果: <b>${m.pending.msg}</b></div><button id="sm-resolve">結果を反映する</button>`;
   } else if (m.battle) {
@@ -943,6 +985,8 @@ function renderStratBody() {
   placeStratInfo();
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   on('sm-resolve', 'onclick', resolvePending);
+  on('sm-final', 'onclick', () => { ui.finalClosed = false; renderStrat(); });
+  on('sm-final-close', 'onclick', () => { ui.finalClosed = true; renderStrat(); });
   const det = $('strat-info').querySelector('.tok-detail');
   if (det && sel) det.ontoggle = () => { ui.detailOpen = det.open; placeStratInfo(); };
   on('sm-basego', 'onclick', () => {
