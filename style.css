@@ -527,3 +527,35 @@ tr.tap:hover td { background: #2f3440; }
 #battle.three #field-wrap { overflow: hidden; }
 .rot3d { display: none; }
 #battle.three .rot3d { display: inline-block; }
+
+/* 戦域図の六角マス（試作）: 局地戦と同じ並べ方（辺が上下、奇数の列を半マス下に）。マスは --x, --y で置く */
+.smap.hex { display: block; position: relative; box-sizing: border-box; }
+.smap.hex .scell {
+  position: absolute; aspect-ratio: auto; border-radius: 0;
+  width: calc(var(--cell) * 1.1547); height: var(--cell);
+  left: calc(4px + var(--cell) * 0.866 * var(--x)); top: calc(4px + var(--cell) * var(--y));
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); transform: scale(0.96);
+}
+/* 縁取りは六角形の輪（外の六角 − 内の六角）。::after = 手番・攻撃対象、::before = 砦の持ち主 */
+.smap.hex .scell::after, .smap.hex .scell::before {
+  content: ''; position: absolute; inset: 0; border: none; border-radius: 0; pointer-events: none; z-index: 2;
+  --b: calc(var(--cell) * var(--rw, 0.08));
+  clip-path: polygon(evenodd, 25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%, 25% 0,
+    calc(25% + var(--b) * 0.577) var(--b), calc(75% - var(--b) * 0.577) var(--b), calc(100% - var(--b) * 1.155) 50%,
+    calc(75% - var(--b) * 0.577) calc(100% - var(--b)), calc(25% + var(--b) * 0.577) calc(100% - var(--b)), calc(var(--b) * 1.155) 50%,
+    calc(25% + var(--b) * 0.577) var(--b));
+}
+.smap.hex .scell::after { background: var(--ring, transparent); }
+.smap.hex .scell::before { background: var(--fring, transparent); --rw: 0.06; }
+.smap.hex .scell.acting, .smap.hex .scell.target { outline: none; animation: none; }
+.smap.hex .scell.acting { --ring: #ffd76f; --rw: 0.1; }
+.smap.hex .scell.target { --ring: #ff5a4f; --rw: 0.11; }
+.smap.hex .scell.fortcell { --fring: #bbbbbb; }
+.smap.hex .scell.fort-player { --fring: #4aa0ff; }
+.smap.hex .scell.fort-cpu { --fring: #ff5a4f; }
+.smap.hex .scell .fort { top: 6%; right: 24%; }
+.smap.hex .scell .base { top: 6%; left: 24%; }
+.smap.hex .scell .trap { bottom: 6%; right: 24%; }
+.smap.hex .scell .tgt-mark { right: 20%; bottom: 4%; }
+.smap.hex .scell.fortcell .fort { top: auto; right: auto; }
+.smap.hex .scell.fortcell .glyph { bottom: 8%; }

@@ -37,6 +37,13 @@ const TRAP_LOSS_CAVALRY = 0.2;            // 騎兵の駒は20%（落とし穴�
 // マップ生成
 // ------------------------------------------------------------
 
+/** 戦域図のマスの形（六角か）。マップを作るときの設定で決まり、マップごとに保存される */
+function sHex(m = smap()) { return !!m?.hex; }
+/** 戦域図の距離（歩数）。正方形は上下左右、六角形は6方向 */
+function sDist(a, b, m = smap()) { return gridDist(a, b, sHex(m)); }
+/** 戦域図の隣のマス */
+function sNeighbors(x, y, m = smap()) { return neighbors(x, y, sHex(m)); }
+
 function smapCell(m, x, y) {
   return x >= 0 && y >= 0 && x < m.w && y < m.h ? m.cells[y * m.w + x] : null;
 }
@@ -50,9 +57,9 @@ function blob(m, type, size) {
   let x = Math.floor(Math.random() * m.w), y = 2 + Math.floor(Math.random() * (m.h - 4));
   for (let i = 0; i < size; i++) {
     if (y >= 2 && y < m.h - 2 && smapCell(m, x, y) === '平地') setCell(m, x, y, type);
-    const [dx, dy] = SQ_DIRS[Math.floor(Math.random() * 4)];
-    x = Math.max(0, Math.min(m.w - 1, x + dx));
-    y = Math.max(2, Math.min(m.h - 3, y + dy));
+    const [nx, ny] = pick(sNeighbors(x, y, m));
+    x = Math.max(0, Math.min(m.w - 1, nx));
+    y = Math.max(2, Math.min(m.h - 3, ny));
   }
 }
 
@@ -65,8 +72,8 @@ function costMap(m, from) {
     open.sort((a, b) => a[0] - b[0]);
     const [c, x, y] = open.shift();
     if (c > dist[y * m.w + x]) continue;
-    for (const [dx, dy] of SQ_DIRS) {
-      const nx = x + dx, ny = y + dy, t = smapCell(m, nx, ny);
+    for (const [nx, ny] of sNeighbors(x, y, m)) {
+      const t = smapCell(m, nx, ny);
       if (!t) continue;
       const nc = c + TERRAIN[t].cost;
       if (nc < dist[ny * m.w + nx]) { dist[ny * m.w + nx] = nc; open.push([nc, nx, ny]); }
@@ -81,7 +88,7 @@ const BASE_ROWS = 3;   // 本陣を置ける段（自軍は下から、CPU軍は
 function baseCells() {
   const m = smap(), out = [];
   for (let y = m.h - BASE_ROWS; y < m.h; y++) for (let x = 0; x < m.w; x++) {
-    if (TERRAIN[smapCell(m, x, y)].cost === Infinity || m.forts.some(f => sqDist(f, { x, y }) < 3)) continue;
+    if (TERRAIN[smapCell(m, x, y)].cost === Infinity || m.forts.some(f => sDist(f, { x, y }) < 3)) continue;
     const dist = costMap(m, { x, y });
     if (dist[m.bases.cpu.y * m.w + m.bases.cpu.x] < Infinity && m.forts.every(f => dist[f.y * m.w + f.x] < Infinity)) out.push([x, y]);
   }
@@ -102,7 +109,7 @@ function moveBase(x, y) {
 function genStrategicMap() {
   for (;;) {
     const wd = roll(SMAP_DICE.n, SMAP_DICE.sides), hd = roll(SMAP_DICE.n, SMAP_DICE.sides);
-    const m = { w: SMAP_MIN_W + wd.total, h: SMAP_MIN_H + hd.total, wd, hd };
+    const m = { w: SMAP_MIN_W + wd.total, h: SMAP_MIN_H + hd.total, wd, hd, hex: !!$('hexmap')?.checked };
     m.cells = new Array(m.w * m.h).fill('平地');
     for (let i = 0; i < 2 + d(4); i++) blob(m, '森', 4 + d(8));
     for (let i = 0; i < 1 + d(3); i++) blob(m, '山', 3 + d(5));
@@ -128,7 +135,7 @@ function genStrategicMap() {
       const x = Math.floor(Math.random() * m.w), y = 3 + Math.floor(Math.random() * (m.h - 6));
       if (smapCell(m, x, y) === '川') continue;
       const p = { x, y };
-      if (m.forts.some(f => sqDist(f, p) < 4) || sqDist(p, m.bases.player) < 4 || sqDist(p, m.bases.cpu) < 4) continue;
+      if (m.forts.some(f => sDist(f, p, m) < 4) || sDist(p, m.bases.player, m) < 4 || sDist(p, m.bases.cpu, m) < 4) continue;
       setCell(m, x, y, '平地');
       m.forts.push({ id: `F${m.forts.length}`, name: FORT_NAMES[m.forts.length], x, y, owner: null });
     }
@@ -208,12 +215,12 @@ function smapSight(side) {
   const m = smap(), seen = new Set();
   for (const t of liveTokens().filter(t => t.side === side)) {
     const r = tokenVision(t);
-    for (let dy = -r; dy <= r; dy++) for (let dx = -(r - Math.abs(dy)); dx <= r - Math.abs(dy); dx++) seen.add(`${t.x + dx},${t.y + dy}`);
+    for (const [x, y] of cellsAround(t.x, t.y, r, true, sHex(m))) seen.add(`${x},${y}`);
   }
   // 自軍の砦は見張り台: 守備隊がいなくても周囲が見える
   for (const f of m.forts.filter(f => f.owner === side)) {
     const r = FORT_VISION;
-    for (let dy = -r; dy <= r; dy++) for (let dx = -(r - Math.abs(dy)); dx <= r - Math.abs(dy); dx++) seen.add(`${f.x + dx},${f.y + dy}`);
+    for (const [x, y] of cellsAround(f.x, f.y, r, true, sHex(m))) seen.add(`${x},${y}`);
   }
   return seen;
 }
@@ -223,8 +230,8 @@ function tokenVisibleTo(side, t) {
   if (t.side === side || !state.fog) return true;
   const mine = liveTokens().filter(o => o.side === side);
   const forts = smap().forts.filter(f => f.owner === side);
-  if (tokenKind(t) === '暗殺者') return mine.some(o => sqDist(o, t) <= (tokenKind(o) === '斥候' ? STEALTH_SPOT.scout : STEALTH_SPOT.base)) || forts.some(f => sqDist(f, t) <= STEALTH_SPOT.base);
-  return mine.some(o => sqDist(o, t) <= tokenVision(o)) || forts.some(f => sqDist(f, t) <= FORT_VISION);
+  if (tokenKind(t) === '暗殺者') return mine.some(o => sDist(o, t) <= (tokenKind(o) === '斥候' ? STEALTH_SPOT.scout : STEALTH_SPOT.base)) || forts.some(f => sDist(f, t) <= STEALTH_SPOT.base);
+  return mine.some(o => sDist(o, t) <= tokenVision(o)) || forts.some(f => sDist(f, t) <= FORT_VISION);
 }
 
 /** 隊が今のターンに止まれるマス（地形のコスト。敵の隊は通れない、味方の隊は通れるが止まれない） */
@@ -246,8 +253,8 @@ function tokenPaths(t) {
     open.sort((a, b) => a[0] - b[0]);
     const [c, x, y] = open.shift();
     if (c > dist.get(`${x},${y}`)) continue;
-    for (const [dx, dy] of SQ_DIRS) {
-      const nx = x + dx, ny = y + dy, ter = smapCell(m, nx, ny);
+    for (const [nx, ny] of sNeighbors(x, y, m)) {
+      const ter = smapCell(m, nx, ny);
       if (!ter) continue;
       const nc = c + TERRAIN[ter].cost, key = `${nx},${ny}`;
       // 移動力が足りなくても、隣の1マスへは必ず進める（移動力1の大部隊が森や山で立ち往生しないように）
@@ -268,7 +275,7 @@ function tokenPaths(t) {
 /** 隣接している、攻撃できる（見えている）敵の隊。単独の斥候は攻撃しない */
 function tokenTargets(t) {
   if (tokenKind(t) === '斥候' || tokenKind(t) === '守備隊') return [];
-  return liveTokens().filter(o => o.side !== t.side && sqDist(o, t) === 1 && tokenVisibleTo(t.side, o));
+  return liveTokens().filter(o => o.side !== t.side && sDist(o, t) === 1 && tokenVisibleTo(t.side, o));
 }
 
 /** 隊を移動する。砦に入ったら、守備隊のいない砦は自軍のものになる */
@@ -335,7 +342,7 @@ function trapsLeft(side) {
 function trapCells(t) {
   const m = smap();
   if (!hasScout(t) || trapsLeft(t.side) <= 0) return [];
-  return SQ_DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy]).filter(([x, y]) => {
+  return sNeighbors(t.x, t.y).filter(([x, y]) => {
     const ter = smapCell(m, x, y);
     return ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && !fortAt(x, y) && !trapAt(x, y) &&
       !Object.values(m.bases).some(b => b.x === x && b.y === y);
@@ -345,7 +352,7 @@ function trapCells(t) {
 /** 解除できる罠: 隣接している、見つけている敵の罠 */
 function disarmCells(t) {
   if (!hasScout(t)) return [];
-  return (smap().traps || []).filter(tr => tr.side !== t.side && tr.known[t.side] && sqDist(tr, t) === 1).map(tr => [tr.x, tr.y]);
+  return (smap().traps || []).filter(tr => tr.side !== t.side && tr.known[t.side] && sDist(tr, t) === 1).map(tr => [tr.x, tr.y]);
 }
 
 function placeTrap(t, x, y) {
@@ -386,7 +393,7 @@ function updateTrapKnowledge() {
   for (const tr of m.traps || []) {
     for (const side of ['player', 'cpu']) {
       if (side === tr.side || tr.known[side]) continue;
-      if (liveTokens().some(o => o.side === side && hasScout(o) && sqDist(o, tr) <= TRAP_DETECT)) {
+      if (liveTokens().some(o => o.side === side && hasScout(o) && sDist(o, tr) <= TRAP_DETECT)) {
         tr.known[side] = true;
         if (side === 'player') smapLog(`🔍 斥候が (${tr.x},${tr.y}) に敵の罠を見つけた！`, 'player');
       }
@@ -405,7 +412,7 @@ function stationOptions(t) {
 /** 駐留: 副将を砦に残して守備隊にする（隊は隣の空いたマスへ出る） */
 function station(t, gid) {
   const m = smap(), army = campaign.armies[t.side], q = tokenSquad(t), f = fortAt(t.x, t.y);
-  const exit = SQ_DIRS.map(([dx, dy]) => [t.x + dx, t.y + dy])
+  const exit = sNeighbors(t.x, t.y)
     .find(([x, y]) => smapCell(m, x, y) && TERRAIN[smapCell(m, x, y)].cost < Infinity && !tokenAt(x, y));
   if (!f || !exit) return false;
   const g = memberById(army, gid);
@@ -426,14 +433,14 @@ function station(t, gid) {
 function hubOf(t) {
   const m = smap();
   const base = m.bases[t.side];
-  if (sqDist(t, base) <= HUB_RANGE) return { kind: 'base', x: base.x, y: base.y, name: '本陣' };
-  const f = m.forts.find(f => f.owner === t.side && sqDist(f, t) <= HUB_RANGE);
+  if (sDist(t, base) <= HUB_RANGE) return { kind: 'base', x: base.x, y: base.y, name: '本陣' };
+  const f = m.forts.find(f => f.owner === t.side && sDist(f, t) <= HUB_RANGE);
   return f ? { kind: 'fort', x: f.x, y: f.y, name: f.name, id: f.id } : null;
 }
 
 /** 拠点に集まっている自軍の隊 */
 function hubSquads(hub, side) {
-  return liveTokens().filter(o => o.side === side && sqDist(o, hub) <= HUB_RANGE).map(tokenSquad);
+  return liveTokens().filter(o => o.side === side && sDist(o, hub) <= HUB_RANGE).map(tokenSquad);
 }
 
 /** 副将は総大将・副将が率いる隊にだけ入れる（兵長が率いる小隊には入れない） */
@@ -474,9 +481,9 @@ function reorg(op, a) {
       // 拠点にいちばん近い空きマス（拠点の範囲内）に置く
       for (let dy = -HUB_RANGE; dy <= HUB_RANGE; dy++) for (let dx = -HUB_RANGE; dx <= HUB_RANGE; dx++) {
         const x = hub.x + dx, y = hub.y + dy, ter = smapCell(m, x, y);
-        if (ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && sqDist({ x, y }, hub) <= HUB_RANGE) cell.push([x, y]);
+        if (ter && TERRAIN[ter].cost < Infinity && !tokenAt(x, y) && sDist({ x, y }, hub) <= HUB_RANGE) cell.push([x, y]);
       }
-      cell.sort((p1, p2) => sqDist({ x: p1[0], y: p1[1] }, hub) - sqDist({ x: p2[0], y: p2[1] }, hub));
+      cell.sort((p1, p2) => sDist({ x: p1[0], y: p1[1] }, hub) - sDist({ x: p2[0], y: p2[1] }, hub));
       if (!cell.length) return fail(`拠点のまわり（${HUB_RANGE}マス以内）に新しい隊を置く空きマスがありません。`);
       from.members = from.members.filter(x => x !== a.id);
       const leader = memberById(army, a.id);
@@ -564,7 +571,7 @@ function deploy(side) {
   const dist = costMap(m, base);
   const cells = [];
   for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
-    if (TERRAIN[smapCell(m, x, y)].cost < Infinity && !fortAt(x, y)) cells.push({ x, y, c: dist[y * m.w + x] + sqDist({ x, y }, base) * 0.01 });
+    if (TERRAIN[smapCell(m, x, y)].cost < Infinity && !fortAt(x, y)) cells.push({ x, y, c: dist[y * m.w + x] + sDist({ x, y }, base) * 0.01 });
   }
   cells.sort((a, b) => a.c - b.c);
   order.forEach((q, i) => m.tokens.push({ id: q.id, side, x: cells[i].x, y: cells[i].y, acted: false }));
@@ -603,7 +610,7 @@ function attackToken(t, target) {
   if (t.side === 'cpu') log(`CPU軍の攻撃！ 迎え撃つのは ${nm(tokenSquad(pt).name)} です。`, 'turn');
   // 砦の守り: 自軍の砦の上か隣にいる隊（守備隊を含む）は DEF +20%
   if (state.campaignBattle) {
-    const bonus = side => { const tok = side === 'player' ? pt : ct; return !!tok.fort || m.forts.some(f => f.owner === side && sqDist(f, tok) <= 1); };
+    const bonus = side => { const tok = side === 'player' ? pt : ct; return !!tok.fort || m.forts.some(f => f.owner === side && sDist(f, tok) <= 1); };
     state.campaignBattle.fortBonus = { player: bonus('player'), cpu: bonus('cpu') };
     for (const side of ['player', 'cpu']) if (state.campaignBattle.fortBonus[side]) log(`🏯 ${side === 'player' ? '自軍' : 'CPU軍'}は砦の守りを得ている（DEF +${Math.round(FORT_DEF * 100)}%）`, side);
     saveGame();
@@ -641,8 +648,8 @@ function resolvePending() {
     } else if (q && lost) {
       // 負けた隊は相手から1マス離れる（空いていて通れるマスがあれば）
       const foe = m.tokens.find(x => x.id === p[winner]) || t;
-      const exits = SQ_DIRS.map(([dx, dy]) => ({ x: t.x + dx, y: t.y + dy }))
-        .filter(c => smapCell(m, c.x, c.y) && TERRAIN[smapCell(m, c.x, c.y)].cost < Infinity && !tokenAt(c.x, c.y) && sqDist(c, foe) > sqDist(t, foe));
+      const exits = sNeighbors(t.x, t.y).map(([x, y]) => ({ x, y }))
+        .filter(c => smapCell(m, c.x, c.y) && TERRAIN[smapCell(m, c.x, c.y)].cost < Infinity && !tokenAt(c.x, c.y) && sDist(c, foe) > sDist(t, foe));
       if (exits.length) {
         const c = pick(exits);
         [t.x, t.y] = [c.x, c.y];
@@ -703,7 +710,7 @@ function cpuRun() {
 /** CPU が攻撃したい相手（隣接・見えている・勝てそうな相手。弱い順） */
 function cpuTarget(t) {
   // 相手を囲んでいる味方（隣接しているCPUの隊）の戦力も合わせて考える（順に攻めかかれば削り切れる）
-  const around = o => liveTokens().filter(x => x.side === t.side && sqDist(x, o) === 1 && tokenKind(x) !== '斥候')
+  const around = o => liveTokens().filter(x => x.side === t.side && sDist(x, o) === 1 && tokenKind(x) !== '斥候')
     .reduce((a, x) => a + tokenStrength(x), 0);
   // 相手の戦力は見積もり（プレイヤーと同じく正確には分からない）。同じターンのうちは同じ見積もりを使う
   const m = smap();
@@ -737,15 +744,15 @@ function cpuAct(t) {
   if (kind === '斥候') goal = m.bases.player;
   else {
     const forts = m.forts.filter(f => f.owner !== 'cpu' && !claimed.has(f.id) && kind !== '暗殺者')
-      .sort((a, b) => (b.id === t.goal) - (a.id === t.goal) || sqDist(a, t) - sqDist(b, t));   // 今の目標を優先
-    const foes = liveTokens().filter(o => sight.has(o.id)).sort((a, b) => sqDist(a, t) - sqDist(b, t));
+      .sort((a, b) => (b.id === t.goal) - (a.id === t.goal) || sDist(a, t) - sDist(b, t));   // 今の目標を優先
+    const foes = liveTokens().filter(o => sight.has(o.id)).sort((a, b) => sDist(a, t) - sDist(b, t));
     if (forts[0]) { goal = forts[0]; t.goal = forts[0].id; }
     else goal = foes[0] || m.bases.player;
   }
   const dist = costMap(m, goal);
   const reach = tokenReach(t);
   // 斥候は見えている敵から3マス以上離れる
-  const safe = ([x, y]) => kind !== '斥候' || liveTokens().every(o => o.side === 'cpu' || !sight.has(o.id) || sqDist(o, { x, y }) >= 3);
+  const safe = ([x, y]) => kind !== '斥候' || liveTokens().every(o => o.side === 'cpu' || !sight.has(o.id) || sDist(o, { x, y }) >= 3);
   let best = null, bestC = dist[t.y * m.w + t.x];
   for (const [x, y] of reach) {
     const c = dist[y * m.w + x] + Math.random() * 0.3;
@@ -819,21 +826,25 @@ function renderStratBody() {
   const baseSpots = new Set(m.phase === 'setbase' ? baseCells().map(([x, y]) => `${x},${y}`) : []);
   // マップの外側も描いて、画面いっぱいに続いているように見せる（入れない）。外側の段数は、全体表示で画面が埋まる分
   const wrap = $('smap-wrap');
-  const fit = Math.min((wrap.clientWidth - 12) / (m.w + 2), (wrap.clientHeight - 12) / (m.h + 2));   // 全体表示で、マップと外側1段が収まる大きさ
+  const hex = sHex(m), colK = hex ? HEX_COL : 1;   // 六角形は列の間隔が詰まる
+  const fit = Math.min((wrap.clientWidth - 12) / ((m.w + 2) * colK), (wrap.clientHeight - 12) / (m.h + (hex ? 2.5 : 2)));   // 全体表示で、マップと外側1段が収まる大きさ
   const oldPad = ui.pad ? `${ui.pad.x},${ui.pad.y}` : '';
   ui.pad = wrap.clientWidth && fit > 0
-    ? { x: Math.max(1, Math.ceil(((wrap.clientWidth - 12) / fit - m.w) / 2) + 1), y: Math.max(1, Math.ceil(((wrap.clientHeight - 12) / fit - m.h) / 2) + 1) }
+    ? { x: Math.max(1, Math.ceil(((wrap.clientWidth - 12) / (fit * colK) - m.w) / 2) + 1), y: Math.max(1, Math.ceil(((wrap.clientHeight - 12) / fit - m.h) / 2) + 1) }
     : { x: 0, y: 0 };
   const P = ui.pad;
   if (oldPad && oldPad !== `${P.x},${P.y}`) ui.scrolled = false;   // 外側の段数が変わったら（画面の大きさが変わった）真ん中に合わせ直す
-  grid.style.gridTemplateColumns = `repeat(${m.w + P.x * 2}, minmax(0, 1fr))`;
+  grid.classList.toggle('hex', hex);
+  grid.style.gridTemplateColumns = hex ? '' : `repeat(${m.w + P.x * 2}, minmax(0, 1fr))`;
+  // 六角形: マスは置き場所（--x, --y）を指定して並べる。奇数の列は半マス下へ
+  const at = (x, y) => (hex ? `--x:${x + P.x};--y:${y + P.y + (x & 1) * 0.5};` : '');
   let html = '';
   for (let y = -P.y; y < m.h + P.y; y++) for (let x = -P.x; x < m.w + P.x; x++) {
     if (x < 0 || y < 0 || x >= m.w || y >= m.h) {
       // 外側: いちばん近いマップの端の地形を、暗くして続ける
       const cx = Math.max(0, Math.min(m.w - 1, x)), cy = Math.max(0, Math.min(m.h - 1, y));
       const far = Math.max(cx - x, x - cx, cy - y, y - cy);
-      html += `<div class="scell oob t-${smapCell(m, cx, cy)}" style="--far:${Math.min(far, 6)}"></div>`;
+      html += `<div class="scell oob t-${smapCell(m, cx, cy)}" style="${at(x, y)}--far:${Math.min(far, 6)}"></div>`;
       continue;
     }
     const ter = smapCell(m, x, y), f = fortAt(x, y);
@@ -853,7 +864,7 @@ function renderStratBody() {
       f ? `fortcell fort-${f.owner || 'none'}` : ''].filter(Boolean).join(' ');
     const title = t ? `${squadLabel(t.side, tokenSquad(t))}（${tokenKind(t)}）兵 ${tokenTroops(t)}人 / 移動 ${tokenMove(t)}`
       : f ? `${f.name}（${f.owner ? (f.owner === 'player' ? '自軍' : 'CPU軍') : '中立'}）` : ter;
-    html += `<div class="${cls}" data-x="${x}" data-y="${y}" title="${title}">` +
+    html += `<div class="${cls}" data-x="${x}" data-y="${y}" title="${title}"${hex ? ` style="${at(x, y)}"` : ''}>` +
       (f ? `<span class="fort ${f.owner ? 'own-' + f.owner : ''}">🏯</span>` : '') +
       (base ? `<span class="base own-${base}">陣</span>` : '') +
       (trapShown ? `<span class="trap ${tr.side === 'player' ? 'own' : 'foe'}">🪤</span>` : '') +
@@ -903,7 +914,7 @@ function renderStratBody() {
         ${!sel.acted && opts.length ? `<select id="sm-station"><option value="">副将を駐留させる…</option>${opts.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}</select>` : ''}
         ${hub ? `<button id="sm-reorg">🏯 ${hub.name}で再編成</button>` : ''}
       </div>
-      ${hub ? `<div class="sub">${hub.name}の近く（${HUB_RANGE}マス以内）にいるので、再編成できます${m.forts.some(f => f.owner === 'player' && sqDist(f, sel) <= 1) ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
+      ${hub ? `<div class="sub">${hub.name}の近く（${HUB_RANGE}マス以内）にいるので、再編成できます${m.forts.some(f => f.owner === 'player' && sDist(f, sel) <= 1) ? `。戦闘になると砦の守り（DEF +${Math.round(FORT_DEF * 100)}%）` : ''}。</div>` : ''}`;
   } else if (ui.info && ui.info.startsWith('tok:')) {
     // 見えている敵の隊の詳細
     const e = liveTokens().find(o => o.id === ui.info.slice(4));

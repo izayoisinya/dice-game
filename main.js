@@ -666,42 +666,45 @@ function searchPoint(unit) {
   return best || home;
 }
 
-/** マンハッタン距離（4方向移動なので斜めは距離2） */
-/** 正方形のマス目の距離（上下左右の歩数）。戦域図はいつもこれ */
+/** 正方形のマス目の距離（上下左右の歩数） */
 function sqDist(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
 // ------------------------------------------------------------
-// 局地戦のマス目の形: 正方形（上下左右の4方向）/ 六角形（6方向）。map.hex で切り替える
+// マス目の形: 正方形（上下左右の4方向）/ 六角形（6方向）。マップの hex で切り替える（局地戦は state.map、戦域図は smap()）
 //   六角形は「辺が上下」の向きで、奇数の列を半マス下にずらす（odd-q）。縦一列はまっすぐ並ぶ（前後にまっすぐ進める）
 //   内部では斜めの座標（axial: q, r）に直して計算する
+//   下の関数は最後の引数 hex でマスの形を選ぶ。省略すると局地戦のマップの形（isHex()）
 // ------------------------------------------------------------
 function isHex() { return !!state.map?.hex; }
-const SQ_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // 上下左右の4方向（戦域図も使う）
+const SQ_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // 上下左右の4方向
 const SQ_RING = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];   // 周りの8マス（時計回り）
 const HEX_DIRS = [[0, -1], [1, -1], [1, 0], [0, 1], [-1, 1], [-1, 0]];                     // axial: ↑ ↗ ↘ ↓ ↙ ↖（時計回り）
 const toAxial = (x, y) => [x, y - (x - (x & 1)) / 2];
 const fromAxial = (q, r) => [q, r + (q - (q & 1)) / 2];
-/** 戦場の向き（まっすぐ進める方向）の一覧 */
-function dirList() { return isHex() ? HEX_DIRS : SQ_DIRS; }
+/** まっすぐ進める向きの一覧 */
+function dirList(hex = isHex()) { return hex ? HEX_DIRS : SQ_DIRS; }
 /** 周りのマスを時計回りに（薙ぎ払いの弧に使う）。正方形は斜めを含む8マス、六角形は隣の6マス */
-function ringList() { return isHex() ? HEX_DIRS : SQ_RING; }
+function ringList(hex = isHex()) { return hex ? HEX_DIRS : SQ_RING; }
 /** (x, y) から向き d に k マス進んだマス */
-function stepXY(x, y, d, k = 1) {
-  if (!isHex()) return [x + d[0] * k, y + d[1] * k];
+function stepXY(x, y, d, k = 1, hex = isHex()) {
+  if (!hex) return [x + d[0] * k, y + d[1] * k];
   const [q, r] = toAxial(x, y);
   return fromAxial(q + d[0] * k, r + d[1] * k);
 }
 /** 隣のマス */
-function neighbors(x, y) { return dirList().map(d => stepXY(x, y, d)); }
-/** 局地戦の距離（歩数）。正方形は上下左右、六角形は6方向 */
-function distance(a, b) {
-  if (!isHex()) return sqDist(a, b);
+function neighbors(x, y, hex = isHex()) { return dirList(hex).map(d => stepXY(x, y, d, 1, hex)); }
+/** 六角形のマス目の距離（6方向の歩数） */
+function hexDist(a, b) {
   const [aq, ar] = toAxial(a.x, a.y), [bq, br] = toAxial(b.x, b.y);
   const dq = aq - bq, dr = ar - br;
   return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
 }
+/** マスの形に合わせた距離（歩数） */
+function gridDist(a, b, hex) { return hex ? hexDist(a, b) : sqDist(a, b); }
+/** 局地戦の距離（歩数）。正方形は上下左右、六角形は6方向 */
+function distance(a, b) { return gridDist(a, b, isHex()); }
 /** from から to がまっすぐの向きなら、その向き（そうでなければ null） */
 function lineDir(from, to) {
   const k = distance(from, to);
@@ -709,10 +712,10 @@ function lineDir(from, to) {
   return dirList().find(d => { const [x, y] = stepXY(from.x, from.y, d, k); return x === to.x && y === to.y; }) || null;
 }
 /** (cx, cy) からちょうど r マス（le = true なら r マス以内）のマス */
-function cellsAround(cx, cy, r, le = false) {
+function cellsAround(cx, cy, r, le = false, hex = isHex()) {
   const out = [];
   for (let y = cy - r - 1; y <= cy + r + 1; y++) for (let x = cx - r - 1; x <= cx + r + 1; x++) {
-    const dd = distance({ x: cx, y: cy }, { x, y });
+    const dd = gridDist({ x: cx, y: cy }, { x, y }, hex);
     if (le ? dd <= r : dd === r) out.push([x, y]);
   }
   return out;
@@ -2334,7 +2337,7 @@ function applyZoom(kind) {
   const maxH = parseFloat(getComputedStyle(wrap).maxHeight);
   const availH = Math.max(160, Number.isFinite(maxH) ? maxH : (wrap.clientHeight || window.innerHeight * 0.6));
   const edge = 2;   // マップの外側1段も入れて収める
-  const hex = kind === 'field' && !!map.hex, colK = hex ? HEX_COL : 1;
+  const hex = !!map.hex, colK = hex ? HEX_COL : 1;
   const fit = Math.min((wrap.clientWidth - 12) / ((map.w + edge) * colK), (availH - 12) / (map.h + edge + (hex ? 0.5 : 0)));   // 全体が収まるマスの大きさ
   const cell = Math.max(8, fit * zoom[kind]);
   const pad = kind === 'smap' ? (typeof ui !== 'undefined' && ui.pad) : fieldPad;
@@ -3398,6 +3401,13 @@ function onCampaignChange(e) {
 $('campaign').addEventListener('click', onCampaignClick);
 $('campaign').addEventListener('change', onCampaignChange);
 $('mode').addEventListener('change', onModeChange);
+// 戦域図のマス目を六角形にする（試作）。次に出陣するときの戦域図から。オン・オフは覚えておく
+{
+  try { $('hexmap').checked = localStorage.getItem('stratHex') === '1'; } catch {}
+  $('hexmap').addEventListener('change', () => {
+    try { localStorage.setItem('stratHex', $('hexmap').checked ? '1' : '0'); } catch {}
+  });
+}
 // 局地戦のマス目を六角形にする（標準）。次の局地戦から。オン・オフは覚えておく
 {
   let saved = null;
