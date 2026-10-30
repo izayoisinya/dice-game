@@ -708,14 +708,37 @@ function startMapStage() {
 // 戦闘（戦術レイヤーへ）
 // ------------------------------------------------------------
 
+/**
+ * 局地戦に一緒に加わる隊（援軍）: main と同じ陣営で、相手 foe の隣にいて、main と（同じ条件の味方を伝って）隣どうしでつながっている隊。
+ * 単独の斥候と砦の守備隊は加わらない。戦域図で左にいる順に並べる（局地戦でも左右の並びをそろえる）
+ */
+function battleGroup(main, foe) {
+  const group = [main], seen = new Set([main.id]);
+  for (let i = 0; i < group.length; i++) {
+    for (const o of liveTokens()) {
+      if (seen.has(o.id) || o.side !== main.side || sDist(o, foe) !== 1 || sDist(o, group[i]) !== 1) continue;
+      if (['斥候', '守備隊'].includes(tokenKind(o))) continue;
+      seen.add(o.id);
+      group.push(o);
+    }
+  }
+  return group.sort((a, b) => a.x - b.x);
+}
+
 function attackToken(t, target) {
   const m = smap();
   const pt = t.side === 'player' ? t : target, ct = t.side === 'player' ? target : t;
   t.acted = true;
-  m.battle = { player: pt.id, cpu: ct.id, attacker: t.side };
+  const groups = { player: battleGroup(pt, ct), cpu: battleGroup(ct, pt) };
+  for (const o of groups[t.side]) o.acted = true;   // 攻めた側の援軍も、このターンの行動を使う
+  m.battle = { player: pt.id, cpu: ct.id, attacker: t.side, squads: { player: groups.player.map(o => o.id), cpu: groups.cpu.map(o => o.id) } };
   smapLog(`⚔ ${squadLabel(t.side, tokenSquad(t))} が ${squadLabel(target.side, tokenSquad(target))} に攻撃！`, t.side);
+  for (const side of ['player', 'cpu']) {
+    const extra = groups[side].filter(o => o !== pt && o !== ct);
+    if (extra.length) smapLog(`🤝 援軍: ${extra.map(o => squadLabel(side, tokenSquad(o))).join('・')} が加わる`, side);
+  }
   saveCampaign();
-  startCampaignBattle(pt.id, ct.id);
+  startCampaignBattle(pt.id, ct.id, m.battle.squads);
   if (t.side === 'cpu') log(`CPU軍の攻撃！ 迎え撃つのは ${nm(tokenSquad(pt).name)} です。`, 'turn');
   // 砦の守り: 自軍の砦の上か隣にいる隊（守備隊を含む）は DEF +20%
   if (state.campaignBattle) {
@@ -742,8 +765,8 @@ function resolvePending() {
   const m = smap(), p = m.pending, A = campaign.armies;
   if (!p) return;
   const winner = /勝利/.test(p.msg) ? 'player' : /敗北/.test(p.msg) ? 'cpu' : null;
-  for (const side of ['player', 'cpu']) {
-    const t = m.tokens.find(x => x.id === p[side]);
+  for (const side of ['player', 'cpu']) for (const id of p.squads?.[side] || [p[side]]) {
+    const t = m.tokens.find(x => x.id === id);
     if (!t) continue;
     const q = tokenSquad(t);
     const lost = winner && winner !== side;
@@ -819,9 +842,8 @@ function cpuRun() {
 
 /** CPU が攻撃したい相手（隣接・見えている・勝てそうな相手。弱い順） */
 function cpuTarget(t) {
-  // 相手を囲んでいる味方（隣接しているCPUの隊）の戦力も合わせて考える（順に攻めかかれば削り切れる）
-  const around = o => liveTokens().filter(x => x.side === t.side && sDist(x, o) === 1 && tokenKind(x) !== '斥候')
-    .reduce((a, x) => a + tokenStrength(x), 0);
+  // 援軍として一緒に加わる隊（相手の隣でつながっている味方）の戦力も合わせて考える
+  const around = o => battleGroup(t, o).reduce((a, x) => a + tokenStrength(x), 0);
   // 相手の戦力は見積もり（プレイヤーと同じく正確には分からない）。同じターンのうちは同じ見積もりを使う
   const m = smap();
   const guess = o => {
@@ -830,7 +852,7 @@ function cpuTarget(t) {
   };
   return tokenTargets(t)
     .filter(o => ['守備隊', '斥候'].includes(tokenKind(o)) || tokenKind(t) === '暗殺者' || (t.stare || 0) >= CPU_STARE_TURNS
-      || around(o) >= guess(o) * CPU_ATTACK_RATIO)
+      || around(o) >= battleGroup(o, t).reduce((a, x) => a + guess(x), 0) * CPU_ATTACK_RATIO)   // 相手側の援軍も見積もりに入れる
     .sort((a, b) => tokenStrength(a) - tokenStrength(b))[0] || null;
 }
 
@@ -1021,6 +1043,10 @@ function renderStratBody() {
     info = `<div><b>${nm(q.name)}</b>（${tokenKind(sel)}）兵 ${tokenTroops(sel)}人 ／ 移動 ${tokenMove(sel)} ／ 視界 ${tokenVision(sel)}${sel.acted ? ' ／ 行動済み' : ''}</div>
       ${squadDetail(sel, ui.detailOpen)}
       <div class="sub">${sel.acted ? '' : ui.mode === 'trap' ? '黄色のマスをクリックして罠を仕掛けます（行動を使います）。' : ui.mode === 'disarm' ? '黄色のマスの罠をクリックして解除します（行動を使います）。' : sel.moved ? '点滅する赤枠（⚔）の敵をクリックで攻撃、または「待機」。' : '青いマスをクリックで移動。隣の点滅する赤枠（⚔）の敵をクリックで攻撃。'}</div>
+      ${!sel.acted ? tokenTargets(sel).map(o => {
+        const mine = battleGroup(sel, o).filter(x => x !== sel), theirs = battleGroup(o, sel).filter(x => x !== o && tokenVisibleTo('player', x));
+        return mine.length || theirs.length ? `<div class="sub">🤝 ${squadLabel('cpu', tokenSquad(o))}を攻めると、${mine.length ? `味方の援軍: ${mine.map(x => nm(tokenSquad(x).name)).join('・')}` : ''}${mine.length && theirs.length ? '／' : ''}${theirs.length ? `敵の援軍: ${theirs.map(x => squadLabel('cpu', tokenSquad(x))).join('・')}` : ''}</div>` : '';
+      }).join('') : ''}
       <div class="ap-buttons">
         ${!sel.acted ? '<button id="sm-wait">待機</button>' : ''}
         ${!sel.acted && hasScout(sel) ? `<button id="sm-trap" class="${ui.mode === 'trap' ? 'skill' : ''}" ${trapCells(sel).length ? '' : 'disabled'}>🪤 罠を仕掛ける（残り${trapsLeft('player')}）</button>` : ''}

@@ -2077,17 +2077,17 @@ function renderArmy(army, side, acting) {
      ...['斥候', '暗殺者'].filter(specials).map(k => `${k}${specials(k)}`)].join(' / ') +
     `　兵 ${troops}人　生存 ${alive.length}/${known.length}${fogged ? '（ほかに見えない敵）' : ''}　総コスト ${cost}`;
   // 戦役の局地戦: 隊の名前と隊長。敵の隊長は姿を見るまで「？」（見えたら隊ごと覚える）
-  const sq = state.campaignBattle && campaign.armies?.[side]?.squads.find(x => x.id === state.campaignBattle[side]);
-  if (sq && side === 'cpu' && !sq.known) {
+  const sqs = battleSquads(side);
+  for (const sq of side === 'cpu' ? sqs : []) {
+    if (sq.known) continue;
     const lead = memberById(campaign.armies.cpu, sq.leader);
     if (!state.fog || (lead && army.units.some(u => u.name === lead.name && visibleTo('player', u)))) {
       sq.known = true;
-      const pq = campaign.armies.player.squads.find(x => x.id === state.campaignBattle.player);
-      $('battle-title').textContent = `⚔ ${nm(pq?.name ?? '')} vs ${squadLabel('cpu', sq)}`;
+      $('battle-title').textContent = battleTitle();
     }
   }
-  $(`${side}-dice`).textContent = sq
-    ? `【${squadLabel(side, sq)}（隊長 ${side === 'cpu' && state.fog && !sq.known ? '？' : nm(memberById(campaign.armies[side], sq.leader)?.name ?? '—')}）】`
+  $(`${side}-dice`).textContent = sqs.length
+    ? sqs.map(sq => `【${squadLabel(side, sq)}（隊長 ${side === 'cpu' && state.fog && !sq.known ? '？' : nm(memberById(campaign.armies[side], sq.leader)?.name ?? '—')}）】`).join('')
     : army.squadName
     ? `【${army.squadName}】`
     : `3d6: [${army.dice.dice.join('][')}] = ${army.dice.total}`;
@@ -2916,83 +2916,112 @@ function removeMember(army, id) {
 // 隊 → 局地戦の駒
 // ------------------------------------------------------------
 
-function buildBattleArmy(side, army, q, map) {
-  const back = side === 'player' ? map.h - 1 : 0;
-  const dir = side === 'player' ? -1 : 1;
-  const cx = Math.floor(map.w / 2);
-  const cells = [];
-  for (let r = 0; r < DEPLOY_ROWS; r++) {
-    for (let x = 0; x < map.w; x++) {
-      if (r === 0 && x === cx) continue;
-      cells.push([x, back + dir * r]);
-    }
-  }
-  for (let i = cells.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [cells[i], cells[j]] = [cells[j], cells[i]];
-  }
-  cells.sort((a, b) => Math.abs(b[1] - back) - Math.abs(a[1] - back));
-
-  const units = [];
+/** 隊の駒（隊長・配下の将・兵士の駒）を作る。ref.squad = どの隊の駒か（結果を隊ごとに持ち帰るため） */
+function squadUnits(side, army, q) {
+  const mk = (m, x, y) => (m.rank ? new Unit(side, m.rank, COMMANDER_TYPE, m.name, x, y, m.build)
+    : m.kind ? new Unit(side, m.kind === '暗殺者' ? '兵長' : '雑兵', m.kind, m.name, x, y)
+    : new Unit(side, '兵長', m.type, m.name, x, y));
   const lead = memberById(army, q.leader);
-  const leader = lead.rank ? new Unit(side, lead.rank, COMMANDER_TYPE, lead.name, cx, back, lead.build)
-    : lead.kind ? new Unit(side, lead.kind === '暗殺者' ? '兵長' : '雑兵', lead.kind, lead.name, cx, back)
-    : new Unit(side, '兵長', lead.type, lead.name, cx, back);
-  leader.ref = { kind: 'member', id: lead.id };
-  units.push(leader);
+  const leader = mk(lead, 0, 0);
+  leader.ref = { kind: 'member', id: lead.id, squad: q.id };
   const troops = [];
   for (const id of q.members) {
-    const m = memberById(army, id);
-    const u = m.rank ? new Unit(side, m.rank, COMMANDER_TYPE, m.name, 0, 0, m.build)
-      : m.kind ? new Unit(side, m.kind === '暗殺者' ? '兵長' : '雑兵', m.kind, m.name, 0, 0)
-      : new Unit(side, '兵長', m.type, m.name, 0, 0);
-    u.ref = { kind: 'member', id };
+    const u = mk(memberById(army, id), 0, 0);
+    u.ref = { kind: 'member', id, squad: q.id };
     troops.push(u);
   }
   const seq = {};
   q.pieces.forEach((p, i) => {
     seq[p.type] = (seq[p.type] || 0) + 1;
-    const u = new Unit(side, '雑兵', p.type, `${side === 'player' ? 'P' : 'C'}${p.type}${seq[p.type]}`, 0, 0, AUTO_BUILD, p.size);
-    u.ref = { kind: 'piece', index: i };
+    const u = new Unit(side, '雑兵', p.type, `${side === 'player' ? 'P' : 'C'}${p.type}${seq[p.type]}${q.short || ''}`, 0, 0, AUTO_BUILD, p.size);
+    u.ref = { kind: 'piece', index: i, squad: q.id };
     troops.push(u);
   });
-  // 前衛は前の列から、後衛は後ろの列から。入りきらない駒は出陣できない
-  let front = 0, rear = cells.length - 1;
-  const benched = [];
-  for (const u of troops) {
-    if (front > rear) { if (u.ref.kind === 'piece') benched.push(u.ref.index); continue; }
-    [u.x, u.y] = u.rear ? cells[rear--] : cells[front++];
-    units.push(u);
-  }
-  return { units, benched, leaders: 0, soldiers: 0, dice: { dice: [], total: 0 }, squadName: `${q.name}（隊長 ${lead.name}）` };
+  return { leader, troops };
 }
 
-function startCampaignBattle(pid, cid) {
+/**
+ * 局地戦の軍を作る。qs = 加わる隊（戦域図で左にいる隊から順）。援軍があるときは、自陣の列を隊ごとに左右に分けて、隊ごとにまとまって布陣する
+ * （隊長は自分の列の最後列の真ん中、前衛は前の列から、後衛は後ろの列から。入りきらない兵士の駒は出陣できない）
+ */
+function buildBattleArmy(side, army, qs, map) {
+  if (!Array.isArray(qs)) qs = [qs];
+  const back = side === 'player' ? map.h - 1 : 0;
+  const dir = side === 'player' ? -1 : 1;
+  const per = qs.map(q => ({ q, ...squadUnits(side, army, q) }));
+  const total = per.reduce((a, p) => a + 1 + p.troops.length, 0);
+  const units = [], benched = [];
+  let x0 = 0;
+  per.forEach((p, k) => {
+    const n = 1 + p.troops.length;
+    const width = k === per.length - 1 ? map.w - x0 : Math.max(2, Math.min(map.w - x0 - 2 * (per.length - 1 - k), Math.round(map.w * n / total)));
+    const x1 = x0 + width - 1, cx = Math.floor((x0 + x1) / 2);
+    const cells = [];
+    for (let r = 0; r < DEPLOY_ROWS; r++) for (let x = x0; x <= x1; x++) if (!(r === 0 && x === cx)) cells.push([x, back + dir * r]);
+    for (let i = cells.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [cells[i], cells[j]] = [cells[j], cells[i]];
+    }
+    cells.sort((a, b) => Math.abs(b[1] - back) - Math.abs(a[1] - back));
+    [p.leader.x, p.leader.y] = [cx, back];
+    units.push(p.leader);
+    let front = 0, rear = cells.length - 1;
+    for (const u of p.troops) {
+      if (front > rear) { if (u.ref.kind === 'piece') benched.push({ squad: p.q.id, index: u.ref.index }); continue; }
+      [u.x, u.y] = u.rear ? cells[rear--] : cells[front++];
+      units.push(u);
+    }
+    x0 = x1 + 1;
+  });
+  return { units, benched, leaders: 0, soldiers: 0, dice: { dice: [], total: 0 }, squadName: qs.map(q => q.name).join('＋') };
+}
+
+/** 局地戦に加わっている隊（戦役のとき） */
+function battleSquads(side) {
+  const cb = state.campaignBattle, army = campaign.armies?.[side];
+  if (!cb || !army) return [];
+  return (cb.squads?.[side] || [cb[side]]).map(id => army.squads.find(x => x.id === id)).filter(Boolean);
+}
+/** 局地戦の見出し（例: ⚔ 副将3隊＋副将4隊 vs 敵分隊イ） */
+function battleTitle() {
+  return `⚔ ${battleSquads('player').map(q => nm(q.name)).join('＋')} vs ${battleSquads('cpu').map(q => squadLabel('cpu', q)).join('＋')}`;
+}
+
+/** 戦役の局地戦を始める。order = 加わる隊の id（援軍を含む。戦域図で左にいる順）。省略すると1隊どうし */
+function startCampaignBattle(pid, cid, order = null) {
   const A = campaign.armies;
   const pq = A.player.squads.find(q => q.id === pid);
   const cq = A.cpu.squads.find(q => q.id === cid);
   if (!pq || !cq || state.running) return;
+  const list = (side, main) => {
+    const qs = (order?.[side] || [main.id]).map(id => A[side].squads.find(q => q.id === id)).filter(Boolean);
+    return qs.includes(main) ? qs : [main, ...qs];
+  };
+  const pqs = list('player', pq), cqs = list('cpu', cq);
+  // 同じ兵種の駒の名前がかぶらないよう、援軍があれば隊ごとに印を付ける（イ・ロ・ハ…）
+  for (const qs of [pqs, cqs]) qs.forEach((q, i) => { q.short = qs.length > 1 ? 'イロハニホヘトチリヌ'[i] || String(i) : ''; });
   reset();
   state.mode = $('mode').value;
   state.map = formMap();
   state.map.hex = $('hexgrid').checked;   // 局地戦のマス目の形（設定）。戦いの途中では変えない
-  state.player = withGrid(state.map, () => buildBattleArmy('player', A.player, pq, state.map));
-  state.cpu = withGrid(state.map, () => buildBattleArmy('cpu', A.cpu, cq, state.map));
+  state.player = withGrid(state.map, () => buildBattleArmy('player', A.player, pqs, state.map));
+  state.cpu = withGrid(state.map, () => buildBattleArmy('cpu', A.cpu, cqs, state.map));
   state.cmdReady = true;
   const before = side => {
     const o = {};
     for (const u of state[side].units) if (u.troops) o[u.type] = (o[u.type] || 0) + u.troops;
     return o;
   };
-  state.campaignBattle = { player: pid, cpu: cid, before: { player: before('player'), cpu: before('cpu') } };
+  state.campaignBattle = { player: pid, cpu: cid, squads: { player: pqs.map(q => q.id), cpu: cqs.map(q => q.id) }, before: { player: before('player'), cpu: before('cpu') } };
   ui2.reportClosed = false;
-  log(`⚔ 出陣: ${nm(pq.name)} vs CPU ${squadLabel('cpu', cq)}（マップ ${state.map.type} ${state.map.w}×${state.map.h}）`, 'turn');
+  log(`⚔ 出陣: ${pqs.map(q => nm(q.name)).join('＋')} vs CPU ${cqs.map(q => squadLabel('cpu', q)).join('＋')}（マップ ${state.map.type} ${state.map.w}×${state.map.h}）`, 'turn');
+  for (const [side, qs] of [['player', pqs], ['cpu', cqs]]) if (qs.length > 1) log(`🤝 ${side === 'player' ? '自軍' : 'CPU軍'}の援軍: ${qs.filter(q => q !== (side === 'player' ? pq : cq)).map(q => squadLabel(side, q)).join('・')} が加わる`, side);
   log('「戦闘開始」で開戦します。', 'sys');
   render();
   renderEditor();
   updateButtons();
   saveGame();
-  $('battle-title').textContent = `⚔ ${nm(pq.name)} vs ${squadLabel('cpu', cq)}`;
+  $('battle-title').textContent = battleTitle();
   setBattleOpen(true);
 }
 
@@ -3003,14 +3032,19 @@ function applyBattleResult(msg) {
   if (!cb || cb.applied || !A) return;
   for (const side of ['player', 'cpu']) {
     const army = A[side];
-    const q = army.squads.find(x => x.id === cb[side]);
-    if (!q) continue;
     const units = state[side].units;
-    // 布陣しきれず出陣しなかった駒はそのまま残る
-    q.pieces = [
-      ...(state[side].benched || []).map(i => q.pieces[i]),
-      ...units.filter(u => u.ref?.kind === 'piece' && u.alive).map(u => ({ type: u.type, size: u.troopsNow })),
-    ];
+    const ids = cb.squads?.[side] || [cb[side]];
+    if (!ids.some(id => army.squads.some(x => x.id === id))) continue;
+    // 隊ごとに、残った兵士の駒を持ち帰る。布陣しきれず出陣しなかった駒はそのまま残る（古い保存データは隊の印がない = 1隊だけ）
+    for (const id of ids) {
+      const q = army.squads.find(x => x.id === id);
+      if (!q) continue;
+      const mine = r => (r.squad ?? ids[0]) === id;
+      q.pieces = [
+        ...(state[side].benched || []).map(b => (typeof b === 'number' ? { index: b } : b)).filter(mine).map(b => q.pieces[b.index]),
+        ...units.filter(u => u.ref?.kind === 'piece' && mine(u.ref) && u.alive).map(u => ({ type: u.type, size: u.troopsNow })),
+      ];
+    }
     const after = {};
     for (const u of units) if (u.ref?.kind === 'piece' && u.alive) after[u.type] = (after[u.type] || 0) + u.troopsNow;
     const losses = [];
