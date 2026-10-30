@@ -2076,7 +2076,7 @@ function onDeployClick(x, y) {
 function renderField(acting) {
   const { w, h, type, wd, hd } = state.map;
   const field = $('field');
-  const three = typeof active3d === 'function' && active3d();   // 3D 表示（field3d.js）。マスは今まで通り作って隠し、印を 3D 側が読む
+  const three = want3d('battle3d') && ready3d();   // 3D 表示（field3d.js）。マスは今まで通り作って隠し、印を 3D 側が読む
   $('battle').classList.toggle('three', three);
   // 新しいマスは別の入れ物に作ってから一度に差し替える（途中で空になると、スクロール位置が先頭に戻されるため）
   const cells = document.createDocumentFragment();
@@ -2305,10 +2305,10 @@ function placeActionPanel() {
   panel.classList.toggle('corner', !cell);
   if (!cell) { panel.style.left = panel.style.top = ''; return; }
   let marks = document.querySelectorAll('#field .cell.reach[data-x], #field .cell.target[data-x], #field .cell.charge[data-x]');
-  if (is3d()) {   // 3D: マスの見えている場所を計算して渡す
-    const at = (x, y, tall) => ({ getBoundingClientRect: () => cellRect3d(x, y, tall) });
-    cell = at(cur.x, cur.y, true);
-    marks = [...marks].map(el => at(Number(el.dataset.x), Number(el.dataset.y)));
+  const b = board3d('field');
+  if (b) {   // 3D: マスの見えている場所を計算して渡す
+    cell = b.anchor(cur.x, cur.y, true);
+    marks = [...marks].map(el => b.anchor(Number(el.dataset.x), Number(el.dataset.y)));
   }
   placeFloat(panel, $('battle-stage'), cell, marks);
 }
@@ -2357,7 +2357,8 @@ function applyZoom(kind) {
 
 /** 拡大率を変える。(cx, cy) = 拡大の中心（画面上の座標）。省略すると表示の中央 */
 function setZoom(kind, z, cx, cy) {
-  if (kind === 'field' && is3d()) return zoom3d(z, cx, cy);   // 3D はカメラを寄せる
+  const b = board3d(kind);
+  if (b) return b.zoomTo(z, cx, cy);   // 3D はカメラを寄せる
   const wrap = $(`${kind}-wrap`);
   if (!wrap) return;
   const r = wrap.getBoundingClientRect();
@@ -2389,7 +2390,8 @@ function initZoom(kind) {
   // 端まで来てそれ以上動かせない分は、外側（ページ・局地戦の右の列など）をスクロールする
   const outer = () => { let el = wrap.parentElement; while (el && el !== document.body) { const o = getComputedStyle(el).overflowY; if ((o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight) return el; el = el.parentElement; } return null; };
   const scrollBy = (dx, dy) => {
-    if (kind === 'field' && is3d()) { pan3d(dx, dy); return [dx, dy]; }   // 3D はカメラをずらす
+    const b = board3d(kind);
+    if (b) { b.panBy(dx, dy); return [dx, dy]; }   // 3D はカメラをずらす
     const [l, t] = [wrap.scrollLeft, wrap.scrollTop];
     wrap.scrollLeft -= dx; wrap.scrollTop -= dy;
     const restY = dy - (t - wrap.scrollTop);
@@ -2415,11 +2417,12 @@ function initZoom(kind) {
     const dist = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, ang = Math.atan2(b.y - a.y, b.x - a.x);
     if (!pinch) { pinch = { dist, z: zoom[kind], cx, cy, ang }; return; }
     setZoom(kind, pinch.z * dist / pinch.dist, cx, cy);
-    if (kind === 'field' && is3d()) {   // 3D: ひねると回転、2本指を上下にずらすと見下ろす角度
+    const b3 = board3d(kind);
+    if (b3) {   // 3D: ひねると回転、2本指を上下にずらすと見下ろす角度
       let da = ang - pinch.ang;
       da = Math.atan2(Math.sin(da), Math.cos(da));
-      rotate3d(da);
-      tilt3d(cy - pinch.cy);
+      b3.rotate(da);
+      b3.tilt(cy - pinch.cy);
       pinch.ang = ang;
     }
     else { wrap.scrollLeft -= cx - pinch.cx; wrap.scrollTop -= cy - pinch.cy; }   // 2本指のまま動かすと移動も
@@ -2442,7 +2445,7 @@ function initZoom(kind) {
   wrap.addEventListener('click', e => { if (dragged > 12) { e.stopPropagation(); e.preventDefault(); dragged = 0; } }, true);
   document.querySelectorAll(`[data-zoom-for="${kind}"] button`).forEach(b => b.addEventListener('click', () => {
     const d = b.dataset.zoom;
-    if (b.dataset.rot) return rotateStep3d(Number(b.dataset.rot));   // 3D の回転ボタン
+    if (b.dataset.rot) return board3d(kind)?.rotateStep(Number(b.dataset.rot));   // 3D の回転ボタン
     setZoom(kind, d === '0' ? 1 : zoom[kind] * (d === '+' ? 1.5 : 1 / 1.5));
   }));
 }
@@ -3417,12 +3420,13 @@ $('mode').addEventListener('change', onModeChange);
     try { localStorage.setItem('battleHex', $('hexgrid').checked ? '1' : '0'); } catch {}
   });
 }
-// 局地戦の 3D 表示（試作、field3d.js）。オン・オフは覚えておく
-{
-  try { $('battle3d').checked = localStorage.getItem('battle3d') === '1'; } catch {}
-  $('battle3d').addEventListener('change', () => {
-    try { localStorage.setItem('battle3d', $('battle3d').checked ? '1' : '0'); } catch {}
-    if (state.player) render();
+// 局地戦・戦域図の 3D 表示（試作、field3d.js）。オン・オフは覚えておく
+for (const [id, key] of [['battle3d', 'battle3d'], ['strat3d', 'strat3d']]) {
+  try { $(id).checked = localStorage.getItem(key) === '1'; } catch {}
+  $(id).addEventListener('change', () => {
+    try { localStorage.setItem(key, $(id).checked ? '1' : '0'); } catch {}
+    if (id === 'battle3d' && state.player) render();
+    if (id === 'strat3d' && campaign.smap) renderStrat();
   });
 }
 // 局地戦の 2.5D 表示（試作）。オン・オフは覚えておく

@@ -521,12 +521,14 @@ tr.tap:hover td { background: #2f3440; }
 .field.hex .cell.piece .tgt-mark { bottom: 0; }
 
 /* 局地戦の 3D 表示（試作、field3d.js）: マスの DOM は隠して、キャンバスに描く */
-#field3d { display: none; position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
-#battle.three #field3d { display: block; }
+canvas.board3d { display: none; position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#battle.three #field-wrap > canvas.board3d, #view-map.three #smap-wrap > canvas.board3d { display: block; }
+#view-map.three #smap { display: none; }
+#view-map.three #smap-wrap { overflow: hidden; }
 #battle.three #field { display: none; }
 #battle.three #field-wrap { overflow: hidden; }
 .rot3d { display: none; }
-#battle.three .rot3d { display: inline-block; }
+#battle.three .rot3d, #view-map.three .rot3d { display: inline-block; }
 
 /* 戦域図の六角マス（試作）: 局地戦と同じ並べ方（辺が上下、奇数の列を半マス下に）。マスは --x, --y で置く */
 .smap.hex { display: block; position: relative; box-sizing: border-box; }

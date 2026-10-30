@@ -813,6 +813,8 @@ function renderStratBody() {
   box.classList.toggle('hidden', !m);
   $('strat-empty').classList.toggle('hidden', !!m);
   if (!m) return;
+  const three = want3d('strat3d') && ready3d();   // 3D 表示（field3d.js）。マスは今まで通り作って隠し、印を 3D 側が読む
+  $('view-map').classList.toggle('three', three);
   const A = campaign.armies;
   const sight = state.fog ? smapSight('player') : null;
   const sel = liveTokens().find(t => t.id === ui.selected);
@@ -873,6 +875,7 @@ function renderStratBody() {
   }
   grid.innerHTML = html;
   applyZoom('smap');
+  if (three) renderStrat3d();
   // 開いたときは、マップが真ん中に来るようにスクロールしておく
   if (!ui.scrolled && wrap.clientWidth) {
     wrap.scrollLeft = (wrap.scrollWidth - wrap.clientWidth) / 2;
@@ -1014,8 +1017,14 @@ function placeStratInfo() {
   if (!box || box.classList.contains('hidden')) return;
   box.classList.toggle('center', ui.anchor === 'center');
   if (!Array.isArray(ui.anchor)) { box.style.left = box.style.top = ''; return; }
-  const cell = document.querySelector(`#smap .scell[data-x="${ui.anchor[0]}"][data-y="${ui.anchor[1]}"]`);
-  if (cell) placeFloat(box, stage, cell, document.querySelectorAll('#smap .scell.reach, #smap .scell.target, #smap .scell.trapmode'));
+  let cell = document.querySelector(`#smap .scell[data-x="${ui.anchor[0]}"][data-y="${ui.anchor[1]}"]`);
+  let marks = document.querySelectorAll('#smap .scell.reach, #smap .scell.target, #smap .scell.trapmode');
+  const b = board3d('smap');
+  if (b && cell) {   // 3D: マスの見えている場所を計算して渡す
+    cell = b.anchor(ui.anchor[0], ui.anchor[1], true);
+    marks = [...marks].map(el => b.anchor(Number(el.dataset.x), Number(el.dataset.y)));
+  }
+  if (cell) placeFloat(box, stage, cell, marks);
 }
 
 /** 隊の中身（隊長・配下の将・兵士の駒・位置）。open = 最初から開いておく */

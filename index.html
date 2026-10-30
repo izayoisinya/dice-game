@@ -33,6 +33,7 @@
           <label title="味方の視界に入っている敵だけが見え、狙える"><input type="checkbox" id="fog" checked> 視界（霧）</label>
           <label title="局地戦のマップを斜め上から見下ろし、駒を立てて表示する（試作）"><input type="checkbox" id="tilt" checked> 局地戦を2.5Dで表示</label>
           <label title="局地戦を立体で描く（Three.js）。オンの間は 2.5D 表示より優先"><input type="checkbox" id="battle3d"> 局地戦を3Dで表示（試作）</label>
+          <label title="戦域図を立体で描く（地形の高さ・砦・本陣）"><input type="checkbox" id="strat3d"> 戦域図を3Dで表示（試作）</label>
           <label title="局地戦のマス目を六角形にする（6方向に動ける。横一列はまっすぐ）。次の局地戦から"><input type="checkbox" id="hexgrid" checked> 六角マス</label>
           <label title="戦域図のマス目を六角形にする（6方向に動ける）。次に出陣するときの戦域図から"><input type="checkbox" id="hexmap"> 戦域図も六角マス（試作）</label>
           <label>速度
@@ -92,7 +93,7 @@
       <div id="strat-empty" class="panel sub">まだ出陣していません。「📋 編成」で隊を組んで「🗺 出陣（戦域図へ）」を押してください。</div>
       <div id="strat-box" class="panel hidden">
         <h2>戦域図 <small id="strat-label"></small>
-          <span class="zoom" data-zoom-for="smap"><button data-zoom="-" title="縮小">−</button><button data-zoom="0" title="全体を表示">全体</button><button data-zoom="+" title="拡大">＋</button></span></h2>
+          <span class="zoom" data-zoom-for="smap"><button data-zoom="-" title="縮小">−</button><button data-zoom="0" title="全体を表示">全体</button><button data-zoom="+" title="拡大">＋</button><button data-rot="-1" class="rot3d" title="左に回す（3D）">⟲</button><button data-rot="1" class="rot3d" title="右に回す（3D）">⟳</button></span></h2>
         <!-- マップを画面いっぱいに。操作・ログ・凡例はマップの上に重ねる半透明の箱 -->
         <div class="strat-stage" id="strat-stage">
           <div class="zoom-wrap" id="smap-wrap"><div id="smap" class="smap"></div></div>
