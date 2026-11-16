@@ -22,9 +22,15 @@ const FORT_VISION = 3;                    // 守備隊のいる砦の視界
 const SCOUT_MOVE_MAP = 6;
 const TOKEN_MOVE_MIN = 2;                 // 戦域図の隊の最低移動力（兵が多くても・統率オーバーでも）
 const ASSASSIN_MOVE_MAP = 4;
-const CPU_ATTACK_RATIO = 0.7;             // CPU は相手を囲む自軍の戦力の合計が、見積もった相手の戦力の 0.7 倍以上なら攻撃する
+const CPU_ATTACK_RATIO = 1.0;             // CPU は援軍を含めた自軍の戦力が、見積もった相手の戦力（相手の援軍も含む）以上なら攻撃する（以前は 0.7 倍。1隊ずつ突っ込んで各個撃破されたので）
 const CPU_GUESS = 0.3;                     // CPU は相手の戦力を正確には知らない: 見積もりは ±30% ずれる（相手ごと・ターンごとに振る）
-const CPU_STARE_TURNS = 2;                 // 隣で睨み合ったまま、このターン数たったら戦力に関係なく攻めかかる
+const CPU_STARE_TURNS = 2;                 // 隣で睨み合ったまま、このターン数たったら、劣勢でも攻めかかる
+const CPU_STARE_RATIO = 0.5;               // ただし、相手の半分以上の戦力があるときだけ（ずっと弱い隊が突っ込まないように）
+const CPU_SAFE_RATIO = 1.0;                // CPU は、次の自軍の番に攻めかかってこられる敵の戦力が、そこで一緒に戦える味方の戦力のこの倍を超えるマスを避ける
+const CPU_DANGER_COST = 30;                // 危ないマスへの移動を避ける強さ（目標までの移動コストに足す。後続が追いつくまで手前で待つ）
+const CPU_DETOUR_TURNS = 2;                // 危なくて進めないまま、このターン数たったら、危ない場所を避けて回り道する（別の浅瀬など）
+const CPU_HOLD_TURNS = 6;                  // それでも進めないまま、このターン数たったら構わず進む（睨み合いで止まらないように）
+const CPU_CROWD_COST = 3;                  // 隣に来る敵の隊が2つ以上になるマスは、1隊ごとにこれだけ避ける（敵の端から倒す）
 const HUB_RANGE = 2;                      // 砦・本陣から何マス以内の隊が再編成できるか
 const FORT_NAMES = ['東砦', '西砦', '南砦', '北砦', '中砦', '旧砦'];
 // 罠（落とし穴）: 斥候が仕掛ける。仕掛けたマスに乗るまで相手には分からない
@@ -63,8 +69,8 @@ function blob(m, type, size) {
   }
 }
 
-/** 地形のコストで最短の移動コスト（ユニットは無視）。from から各マスまで */
-function costMap(m, from) {
+/** 地形のコストで最短の移動コスト（ユニットは無視）。from から各マスまで。extra(x, y) = そのマスに入るときに足すコスト（避けたいマス） */
+function costMap(m, from, extra = null) {
   const dist = new Array(m.w * m.h).fill(Infinity);
   dist[from.y * m.w + from.x] = 0;
   const open = [[0, from.x, from.y]];
@@ -75,7 +81,7 @@ function costMap(m, from) {
     for (const [nx, ny] of sNeighbors(x, y, m)) {
       const t = smapCell(m, nx, ny);
       if (!t) continue;
-      const nc = c + TERRAIN[t].cost;
+      const nc = c + TERRAIN[t].cost + (extra ? extra(nx, ny) : 0);
       if (nc < dist[ny * m.w + nx]) { dist[ny * m.w + nx] = nc; open.push([nc, nx, ny]); }
     }
   }
@@ -116,13 +122,20 @@ function genStrategicMap() {
     // 川: 半分の確率で、中央付近を横切る。浅瀬が 2〜3か所
     if (d(2) === 1) {
       let y = Math.floor(m.h / 2) + d(3) - 2;
-      const river = [];
+      const runs = [];   // 列ごとの川のマス（上端・下端）
       for (let x = 0; x < m.w; x++) {
         const ny = Math.max(3, Math.min(m.h - 4, y + d(3) - 2));
-        for (let yy = Math.min(y, ny); yy <= Math.max(y, ny); yy++) { setCell(m, x, yy, '川'); river.push([x, yy]); }
+        for (let yy = Math.min(y, ny); yy <= Math.max(y, ny); yy++) setCell(m, x, yy, '川');
+        runs.push([Math.min(y, ny), Math.max(y, ny)]);
         y = ny;
       }
-      for (let i = 0; i < 1 + d(2); i++) { const [x, yy] = pick(river); setCell(m, x, yy, '浅瀬'); }
+      // 浅瀬: 川を左右に 2〜3 区間に分け、区間ごとに1列（その列の川をすべて浅瀬にして、必ず渡れるように）。
+      // 以前は川のマスから選んでいたので、同じ場所に重なって実質1か所しかないことがあり、出口で待ち伏せされやすかった
+      const k = 1 + d(2), span = (m.w - 2) / k;
+      for (let i = 0; i < k; i++) {
+        const x = 1 + Math.floor(span * i + span * (0.25 + Math.random() * 0.5));
+        for (let yy = runs[x][0]; yy <= runs[x][1]; yy++) setCell(m, x, yy, '浅瀬');
+      }
     }
     // 本陣: 自軍は下の真ん中（出陣のときに自分で動かせる）。CPU軍は上の3段のどこか（ランダム）
     m.bases = { player: { x: Math.floor(m.w / 2), y: m.h - 1 }, cpu: { x: 1 + Math.floor(Math.random() * (m.w - 2)), y: Math.floor(Math.random() * BASE_ROWS) } };
@@ -133,7 +146,7 @@ function genStrategicMap() {
     const nForts = 1 + d(3);
     for (let tries = 0; m.forts.length < nForts && tries < 500; tries++) {
       const x = Math.floor(Math.random() * m.w), y = 3 + Math.floor(Math.random() * (m.h - 6));
-      if (smapCell(m, x, y) === '川') continue;
+      if (smapCell(m, x, y) === '川' || smapCell(m, x, y) === '浅瀬') continue;   // 砦は川・浅瀬には建てない
       const p = { x, y };
       if (m.forts.some(f => sDist(f, p, m) < 4) || sDist(p, m.bases.player, m) < 4 || sDist(p, m.bases.cpu, m) < 4) continue;
       setCell(m, x, y, '平地');
@@ -623,6 +636,35 @@ function historyTable(hist) {
     hist.map(h => `<tr><td>${h.title}</td><td>${h.result.replace(/プレイヤー軍の/, '')}</td><td>${fmtN(h.player.start)} : ${fmtN(h.cpu.start)} <small class="sub">（${ratioText(h.player.start, h.cpu.start)}）</small></td><td>${fmtN(h.player.end)} : ${fmtN(h.cpu.end)}</td></tr>`).join('') + '</tbody></table>';
 }
 
+/**
+ * ダイス運: 兵力のダイスの出目を、平均（期待値）と比べる。コスト換算で、兵士・副将・兵長・斥候・暗殺者ごとと全体
+ * （総大将は固定なので全体には入れるが、運には関係しない）
+ */
+function diceLuck(army) {
+  if (!army.troopDice || !army.generalRoll) return null;
+  const exp = e => e.n * (e.sides + 1) / 2 + e.plus;
+  const per = RANKS['雑兵'].cost / BASE_TROOPS;   // 兵士1人あたりのコスト
+  const sum = f => TYPE_NAMES.reduce((a, t) => a + f(t), 0);
+  const parts = [
+    ['兵士', sum(t => (army.troopDice[t] || 0) * TROOP_DICE.unit * per), TYPE_NAMES.length * (TROOP_DICE.sides + 1) / 2 * TROOP_DICE.unit * per],
+    ['副将', army.generalRoll.total * RANKS['副将'].cost, exp(GENERAL_DICE) * RANKS['副将'].cost],
+    ['兵長', sum(t => army.sergeantDice?.[t]?.total || 0) * RANKS['兵長'].cost, TYPE_NAMES.length * exp(SERGEANT_DICE) * RANKS['兵長'].cost],
+    ['斥候', (army.scoutRoll?.total || 0) * RANKS['雑兵'].cost, exp(SCOUT_DICE) * RANKS['雑兵'].cost],
+    ['暗殺者', (army.assassinRoll?.total || 0) * RANKS['兵長'].cost, exp(ASSASSIN_DICE) * RANKS['兵長'].cost],
+  ].map(([label, actual, expected]) => ({ label, actual, expected, pct: expected ? actual / expected - 1 : 0 }));
+  const actual = parts.reduce((a, p) => a + p.actual, 0), expected = parts.reduce((a, p) => a + p.expected, 0);
+  return { actual, expected, pct: actual / expected - 1, parts };
+}
+const pctText = v => `${v >= 0 ? '+' : '−'}${Math.round(Math.abs(v) * 100)}%`;
+/** ダイス運の表（自軍・CPU軍） */
+function luckHtml(luck) {
+  if (!luck?.player || !luck?.cpu) return '';
+  const row = (name, cls, l) => `<tr><th class="${cls}">${name}</th><td><b>${pctText(l.pct)}</b><small class="sub">（${fmtN(l.actual)} / 平均 ${fmtN(l.expected)}）</small></td><td>${l.parts.map(p => `<span class="luck-part ${p.pct >= 0 ? 'up' : 'down'}">${p.label} ${pctText(p.pct)}</span>`).join(' ')}</td></tr>`;
+  const d = luck.player.pct - luck.cpu.pct;
+  return `<table class="rep-table"><tbody>${row('自軍', 'nm-p', luck.player)}${row('CPU軍', 'nm-c', luck.cpu)}</tbody></table>
+    <div class="sub">出目の合計（コスト換算）を平均と比べた値。${Math.abs(d) < 0.05 ? '両軍の運はほぼ同じ' : d > 0 ? `自軍の方が ${Math.round(d * 100)} ポイント運が良かった` : `CPU軍の方が ${Math.round(-d * 100)} ポイント運が良かった`}。</div>`;
+}
+
 const ARCHIVE_KEY = 'diceSenkiArchive';
 /** 決着した戦いの記録を残す（記録のページの「これまでの戦い」。新しい順に30件まで） */
 function archiveCampaign() {
@@ -632,6 +674,7 @@ function archiveCampaign() {
   let list = [];
   try { list = JSON.parse(localStorage.getItem(ARCHIVE_KEY)) || []; } catch {}
   list.unshift({ date: new Date().toISOString(), win: !!A.cpu.defeated, turn: m.turn, start: { player: A.player.start || null, cpu: A.cpu.start || null },
+    luck: { player: diceLuck(A.player), cpu: diceLuck(A.cpu) },
     end: { player: armySnapshot(A.player), cpu: armySnapshot(A.cpu) }, history: m.history || [], size: `${m.w}×${m.h}${m.hex ? '・六角' : ''}` });
   try { localStorage.setItem(ARCHIVE_KEY, JSON.stringify(list.slice(0, 30))); } catch {}
 }
@@ -644,6 +687,7 @@ function renderRecords() {
   if (m) {
     html += `<section class="panel"><h2>今の戦い <small class="sub">ターン ${m.turn}${m.phase === 'over' ? '（決着）' : ''}</small></h2>
       ${A.player.start && A.cpu.start ? `<div>出陣したときの軍全体の戦力: 自軍 ${fmtN(A.player.start.worth)} : CPU軍 ${fmtN(A.cpu.start.worth)}（${ratioText(A.player.start.worth, A.cpu.start.worth)}）</div>` : ''}
+      ${m.phase === 'over' || !state.fog ? `<div class="rep-head">ダイス運（兵力の出目）</div>${luckHtml({ player: diceLuck(A.player), cpu: diceLuck(A.cpu) })}` : '<div class="sub">ダイス運は決着すると見られます（霧ありの間は敵の兵力は分からないので）。</div>'}
       ${analysisHtml(m.history || [])}${historyTable(m.history || [])}</section>`;
   }
   let list = [];
@@ -652,8 +696,9 @@ function renderRecords() {
     const d = new Date(g.date);
     const st = g.start.player && g.start.cpu ? `開始時 ${fmtN(g.start.player.worth)} : ${fmtN(g.start.cpu.worth)}（${ratioText(g.start.player.worth, g.start.cpu.worth)}）` : '';
     const w = g.history.filter(h => /勝利/.test(h.result)).length;
-    return `<details class="rec-game"><summary>${g.win ? '🏆 勝利' : '💀 敗北'}　${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}　${g.turn}ターン・戦域図 ${g.size}　${st}　局地戦 ${w}勝${g.history.length - w}敗</summary>
-      ${analysisHtml(g.history)}${historyTable(g.history)}</details>`;
+    const lk = g.luck?.player && g.luck?.cpu ? `　ダイス運 自軍${pctText(g.luck.player.pct)} / CPU${pctText(g.luck.cpu.pct)}` : '';
+    return `<details class="rec-game"><summary>${g.win ? '🏆 勝利' : '💀 敗北'}　${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}　${g.turn}ターン・戦域図 ${g.size}　${st}　局地戦 ${w}勝${g.history.length - w}敗${lk}</summary>
+      ${g.luck ? `<div class="rep-head">ダイス運（兵力の出目）</div>${luckHtml(g.luck)}` : ''}${analysisHtml(g.history)}${historyTable(g.history)}</details>`;
   }).join('') : '<div class="sub">決着した戦いはまだありません（戦域図で決着すると、ここに残ります）。</div>') + '</section>';
   $('records').innerHTML = html;
 }
@@ -679,6 +724,7 @@ function renderFinal() {
     <tr><th>兵長</th>${['player', 'cpu'].map(sd => `<td>${start[sd] ? `${start[sd].sergeants} → ` : ''}<b>${now[sd].sergeants}</b>人</td>`).join('')}</tr>
     <tr><th>砦</th>${['player', 'cpu'].map(sd => `<td><b>${m.forts.filter(f => f.owner === sd).length}</b> / ${m.forts.length}</td>`).join('')}</tr>
     </tbody></table>`;
+  html += `<div class="rep-head">ダイス運（兵力の出目）</div>${luckHtml({ player: diceLuck(A.player), cpu: diceLuck(A.cpu) })}`;
   const hist = m.history || [];
   if (hist.length) html += `<div class="rep-head">戦闘の分析</div>${analysisHtml(hist)}<div class="rep-head">戦闘の記録（${hist.length}回）</div>${historyTable(hist)}`;
   html += `<div class="sub">戦力 = コスト換算（兵士100人で1,000、兵長1,000・副将1,500・総大将2,000、斥候500・暗殺者1,000）。予備の兵も含む軍全体。</div>`;
@@ -851,9 +897,36 @@ function cpuTarget(t) {
     return tokenStrength(o) * o.guess.k;
   };
   return tokenTargets(t)
-    .filter(o => ['守備隊', '斥候'].includes(tokenKind(o)) || tokenKind(t) === '暗殺者' || (t.stare || 0) >= CPU_STARE_TURNS
-      || around(o) >= battleGroup(o, t).reduce((a, x) => a + guess(x), 0) * CPU_ATTACK_RATIO)   // 相手側の援軍も見積もりに入れる
-    .sort((a, b) => tokenStrength(a) - tokenStrength(b))[0] || null;
+    .filter(o => {
+      const theirs = battleGroup(o, t).reduce((a, x) => a + guess(x), 0);   // 相手側の援軍も見積もりに入れる
+      return ['守備隊', '斥候'].includes(tokenKind(o)) || tokenKind(t) === '暗殺者' || around(o) >= theirs * CPU_ATTACK_RATIO
+        || ((t.stare || 0) >= CPU_STARE_TURNS && around(o) >= theirs * CPU_STARE_RATIO);   // 睨み合いが続いたら、半分以上の戦力があれば攻める
+    })
+    // 援軍を含めた相手の戦力が小さい順（固まった敵の真ん中より、端の孤立した隊から倒す）
+    .sort((a, b) => battleGroup(a, t).reduce((s, x) => s + guess(x), 0) - battleGroup(b, t).reduce((s, x) => s + guess(x), 0))[0] || null;
+}
+
+/** CPU の見積もり（相手の戦力は ±30% ずれる。同じターンのうちは同じ見積もり） */
+function cpuGuess(o) {
+  const m = smap();
+  if (!o.guess || o.guess.turn !== m.turn) o.guess = { turn: m.turn, k: 1 + (Math.random() * 2 - 1) * CPU_GUESS };
+  return tokenStrength(o) * o.guess.k;
+}
+
+/** マス c に、次の自軍の番に攻めかかってこられる（見えている）敵の戦力の見積もり。敵ごとの移動コストの地図はターンごとに使い回す */
+const threatMaps = new Map();
+function cpuThreat(c) {
+  const m = smap();
+  let sum = 0;
+  for (const o of liveTokens()) {
+    if (o.side === 'cpu' || !tokenVisibleTo('cpu', o) || ['斥候', '守備隊'].includes(tokenKind(o))) continue;
+    const key = `${m.turn}|${o.id}|${o.x},${o.y}`;
+    if (!threatMaps.has(key)) threatMaps.set(key, costMap(m, o));
+    const ter = smapCell(m, c.x, c.y);
+    if (threatMaps.get(key)[c.y * m.w + c.x] <= tokenMove(o) + TERRAIN[ter].cost) sum += cpuGuess(o);   // 隣まで来られる
+  }
+  if (threatMaps.size > 200) threatMaps.clear();
+  return sum;
 }
 
 /** CPU の1隊分の行動。戦闘を始めたら true */
@@ -881,15 +954,42 @@ function cpuAct(t) {
     if (forts[0]) { goal = forts[0]; t.goal = forts[0].id; }
     else goal = foes[0] || m.bases.player;
   }
-  const dist = costMap(m, goal);
+  // 進めずに待ったターンが続いたら、強い敵のそば（そこで単独になるマス）を避けた道で目標を目指す（別の浅瀬から回り込む）
+  const detour = kind !== '斥候' && (t.hold || 0) >= CPU_DETOUR_TURNS && (t.hold || 0) < CPU_HOLD_TURNS;
+  const strong = detour ? liveTokens().filter(o => o.side !== t.side && tokenVisibleTo(t.side, o) && !['斥候', '守備隊'].includes(tokenKind(o))
+    && battleGroup(o, t).reduce((a, x) => a + cpuGuess(x), 0) > tokenStrength(t)) : [];
+  const dist = costMap(m, goal, strong.length ? (x, y) => (strong.some(o => sDist(o, { x, y }) <= 1) ? CPU_DANGER_COST : 0) : null);
   const reach = tokenReach(t);
   // 斥候は見えている敵から3マス以上離れる
   const safe = ([x, y]) => kind !== '斥候' || liveTokens().every(o => o.side === 'cpu' || !sight.has(o.id) || sDist(o, { x, y }) >= 3);
-  let best = null, bestC = dist[t.y * m.w + t.x];
+  // 危ない場所を避ける: 次の自軍の番にそのマスへ攻めかかれる（見えている）敵の戦力が、そこで一緒に戦える味方より大きいマスには、
+  // 後続が追いつくまで出ない。攻めかかる位置は、隣に来る敵の隊が少ないマス（敵の端）を選ぶ
+  const foes = liveTokens().filter(o => sight.has(o.id) && tokenKind(o) !== '斥候');
+  const cautious = kind !== '斥候' && (t.hold || 0) < CPU_HOLD_TURNS;
+  const score = ([x, y]) => {
+    const c = { x, y };
+    let v = dist[y * m.w + x] + Math.random() * 0.3;
+    if (kind === '斥候') return v;
+    const adj = foes.filter(o => sDist(o, c) === 1);
+    if (adj.length > 1) v += (adj.length - 1) * CPU_CROWD_COST;
+    if (cautious) {
+      const allies = liveTokens().filter(o => o.side === t.side && o !== t && sDist(o, c) <= 1 && !['斥候', '守備隊'].includes(tokenKind(o)));
+      const support = tokenStrength(t) + allies.reduce((a, o) => a + tokenStrength(o), 0);   // そこで攻められたら一緒に戦える味方
+      // ここから攻めかかって勝てそうか: 局地戦に加われるのは、相手の隣にもいる味方だけ（浅瀬のような狭い所では1隊ずつになる）
+      const joiners = tokenStrength(t) + allies.filter(o => adj.some(e => sDist(o, e) === 1)).reduce((a, o) => a + tokenStrength(o), 0);
+      const strike = adj.length && joiners >= adj.reduce((a, o) => a + cpuGuess(o), 0) * CPU_ATTACK_RATIO;
+      if (!strike && cpuThreat(c) > support * CPU_SAFE_RATIO) v += CPU_DANGER_COST;
+    }
+    return v;
+  };
+  let best = null, bestC = safe([t.x, t.y]) ? score([t.x, t.y]) : Infinity;
+  const here = dist[t.y * m.w + t.x];
   for (const [x, y] of reach) {
-    const c = dist[y * m.w + x] + Math.random() * 0.3;
+    const c = score([x, y]);
     if (safe([x, y]) && c < bestC) { bestC = c; best = [x, y]; }
   }
+  // 危なくて目標に近づけなかったターンを数える（CPU_HOLD_TURNS たったら構わず進む）
+  t.hold = cautious && foes.length && (!best || dist[best[1] * m.w + best[0]] >= here) ? (t.hold || 0) + 1 : detour ? t.hold : 0;   // 回り道の間は数え直さない
   // 見つけている罠が隣にあれば解除してこのターンは終わり
   const dis = disarmCells(t);
   if (dis.length) { disarmTrap(t, dis[0][0], dis[0][1]); return false; }
@@ -905,7 +1005,9 @@ function cpuAct(t) {
     return false;
   }
   // 見えている敵を目指して隣まで来たなら、戦力で劣っていても攻めかかる（隣で睨み合ったまま動かなくなるのを防ぐ）
-  target = cpuTarget(t) || (goal && goal.side === 'player' && tokenTargets(t).includes(goal) ? goal : null);
+  // （以前は目指した敵の隣まで来たら劣勢でも攻めかかっていたが、浅瀬などで1隊ずつ突っ込んで各個撃破されたのでやめた。
+  //   睨み合いで止まらないよう、隣で CPU_STARE_TURNS ターン睨み合ったら攻める（cpuTarget）のは残す）
+  target = cpuTarget(t);
   if (target) { t.stare = 0; attackToken(t, target); return true; }
   // 隣に敵がいるのに攻めなかったターンを数える（CPU_STARE_TURNS で攻めかかる）
   t.stare = tokenTargets(t).length ? (t.stare || 0) + 1 : 0;

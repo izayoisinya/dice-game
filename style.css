@@ -583,3 +583,6 @@ canvas.board3d { display: none; position: absolute; inset: 0; width: 100%; heigh
 #view-records { padding: 8px; }
 .rec-game { border-top: 1px solid #333; padding: 6px 0; }
 .rec-game > summary { cursor: pointer; }
+.luck-part { display: inline-block; padding: 0 5px; margin: 1px 0; border-radius: 4px; font-size: 0.78rem; }
+.luck-part.up { background: rgba(90, 200, 120, 0.2); color: #9fe3b0; }
+.luck-part.down { background: rgba(230, 90, 80, 0.2); color: #f0a8a0; }
